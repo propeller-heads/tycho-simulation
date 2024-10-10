@@ -12,9 +12,9 @@ on:
         type: number
         default: 15
     secrets:
-      gh_token:
+      APP_ID:
         required: true
-      infura_api_key:
+      APP_PRIVATE_KEY:
         required: true
 
 permissions:
