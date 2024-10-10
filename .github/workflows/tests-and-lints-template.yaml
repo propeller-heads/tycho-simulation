@@ -39,8 +39,8 @@ jobs:
         id: generate-token
         uses: getsentry/action-github-app-token@v2
         with:
-          app_id: ${{ secrets.app_id }}
-          private_key: ${{ secrets.app_private_key }}
+          app_id: ${{ secrets.APP_ID }}
+          private_key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Install git
         run: sudo apt update && sudo apt install -y git
@@ -79,8 +79,8 @@ jobs:
         id: generate-token
         uses: getsentry/action-github-app-token@v2
         with:
-          app_id: ${{ secrets.app_id }}
-          private_key: ${{ secrets.app_private_key }}
+          app_id: ${{ secrets.APP_ID }}
+          private_key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Install git
         run: sudo apt update && sudo apt install -y git
