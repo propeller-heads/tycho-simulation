@@ -63,7 +63,7 @@ tempfile = "3.13.0"
 default = ["evm"]
 network_tests = []
 evm = [
-    "dep:ethabi", "foundry-config", "foundry-evm", "revm", "revm-inspectors"
+    "dep:ethabi", "dep:foundry-config", "dep:foundry-evm", "dep:revm", "dep:revm-inspectors"
 ]
 
 [profile.bench]
