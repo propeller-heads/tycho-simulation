@@ -12,7 +12,7 @@ use ethers::types::{H160, U256};
 use serde::{Deserialize, Serialize};
 use tycho_core::dto::ResponseToken;
 
-use crate::protocol::BytesConvertible;
+use crate::evm::protocol::BytesConvertible;
 
 #[derive(Clone, Debug, Eq)]
 pub struct ERC20Token {

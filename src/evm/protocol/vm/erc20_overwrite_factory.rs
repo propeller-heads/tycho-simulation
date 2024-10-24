@@ -1,6 +1,8 @@
 // TODO: remove skip for clippy dead_code check
 #![allow(dead_code)]
-use crate::protocol::vm::utils::{get_contract_bytecode, get_storage_slot_index_at_key, SlotHash};
+use crate::evm::protocol::vm::utils::{
+    get_contract_bytecode, get_storage_slot_index_at_key, SlotHash,
+};
 use ethers::{addressbook::Address, prelude::U256};
 use std::{collections::HashMap, path::Path};
 use thiserror::Error;
@@ -115,7 +117,7 @@ impl ERC20OverwriteFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::vm::utils::SlotHash;
+    use crate::evm::protocol::vm::utils::SlotHash;
 
     fn setup_factory() -> ERC20OverwriteFactory {
         let token_address = Address::random();

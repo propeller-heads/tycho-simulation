@@ -2,7 +2,7 @@ use crate::u256_num::u256_to_f64;
 
 use super::solidity_math::{mul_div, mul_div_rounding_up};
 use crate::{
-    protocol::errors::TradeSimulationError,
+    evm::protocol::errors::TradeSimulationError,
     safe_math::{safe_add_u256, safe_div_u256, safe_mul_u256, safe_sub_u256},
 };
 use ethers::types::U256;

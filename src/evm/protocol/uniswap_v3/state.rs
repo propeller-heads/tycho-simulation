@@ -5,8 +5,7 @@ use tracing::trace;
 use tycho_core::{dto::ProtocolStateDelta, Bytes};
 
 use crate::{
-    models::ERC20Token,
-    protocol::{
+    evm::protocol::{
         errors::{TradeSimulationError, TradeSimulationErrorKind, TransitionError},
         events::{check_log_idx, EVMLogMeta, LogIndex},
         models::GetAmountOutResult,
@@ -14,6 +13,7 @@ use crate::{
         tycho::i24_le_bytes_to_i32,
         BytesConvertible,
     },
+    models::ERC20Token,
     safe_math::{safe_add_u256, safe_sub_u256},
 };
 
@@ -431,7 +431,7 @@ mod tests {
     use rstest::rstest;
     use tycho_core::hex_bytes::Bytes;
 
-    use crate::protocol::uniswap_v3::events::{BurnEvent, MintEvent, SwapEvent};
+    use crate::evm::protocol::uniswap_v3::events::{BurnEvent, MintEvent, SwapEvent};
 
     use super::*;
 

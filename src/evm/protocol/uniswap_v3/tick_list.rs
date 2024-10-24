@@ -256,7 +256,7 @@ mod tests {
 
     use rstest::rstest;
 
-    use crate::protocol::uniswap_v3::tick_math;
+    use crate::evm::protocol::uniswap_v3::tick_math;
 
     use super::*;
 

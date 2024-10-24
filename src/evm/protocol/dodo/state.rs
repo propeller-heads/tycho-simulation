@@ -14,12 +14,14 @@ use revm::{
 use tycho_core::dto::ProtocolStateDelta;
 
 use crate::{
-    evm::simulation::{SimulationEngine, SimulationParameters},
-    protocol::{
-        errors::TransitionError,
-        events::{EVMLogMeta, LogIndex},
-        models::GetAmountOutResult,
-        state::{ProtocolEvent, ProtocolSim},
+    evm::{
+        protocol::{
+            errors::TransitionError,
+            events::{EVMLogMeta, LogIndex},
+            models::GetAmountOutResult,
+            state::{ProtocolEvent, ProtocolSim},
+        },
+        simulation::{SimulationEngine, SimulationParameters},
     },
     u256_num::u256_to_f64,
 };
@@ -144,8 +146,8 @@ where
         token_in: &crate::models::ERC20Token,
         _token_out: &crate::models::ERC20Token,
     ) -> Result<
-        crate::protocol::models::GetAmountOutResult,
-        crate::protocol::errors::TradeSimulationError,
+        crate::evm::protocol::models::GetAmountOutResult,
+        crate::evm::protocol::errors::TradeSimulationError,
     > {
         let calldata = if self.base_token == token_in.address {
             self.helper_abi

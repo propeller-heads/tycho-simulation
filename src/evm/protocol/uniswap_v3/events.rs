@@ -2,7 +2,7 @@ use std::any::Any;
 
 use ethers::types::U256;
 
-use crate::protocol::state::ProtocolEvent;
+use crate::evm::protocol::state::ProtocolEvent;
 
 /// Underlying data structure for mint and burns
 ///

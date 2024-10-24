@@ -2,7 +2,7 @@ use ethers::types::U256;
 use tycho_client::feed::synchronizer::ComponentWithState;
 use tycho_core::Bytes;
 
-use crate::protocol::{
+use crate::evm::protocol::{
     errors::InvalidSnapshotError,
     uniswap_v2::state::UniswapV2State,
     uniswap_v3::{enums::FeeAmount, state::UniswapV3State},
