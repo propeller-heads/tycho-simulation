@@ -6,14 +6,15 @@ use tycho_core::{dto::ProtocolStateDelta, Bytes};
 
 use crate::{
     evm::protocol::{
-        errors::{TradeSimulationError, TradeSimulationErrorKind, TransitionError},
         events::{check_log_idx, EVMLogMeta, LogIndex},
-        models::GetAmountOutResult,
         state::{ProtocolEvent, ProtocolSim},
         tycho::i24_le_bytes_to_i32,
-        BytesConvertible,
     },
-    models::ERC20Token,
+    models::{BytesConvertible, ERC20Token},
+    protocol::{
+        errors::{TradeSimulationError, TradeSimulationErrorKind, TransitionError},
+        models::GetAmountOutResult,
+    },
     safe_math::{safe_add_u256, safe_sub_u256},
 };
 

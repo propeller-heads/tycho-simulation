@@ -47,14 +47,13 @@ use ethers::types::U256;
 use tycho_core::dto::ProtocolStateDelta;
 
 use crate::{
-    evm::protocol::{
+    evm::protocol::events::{EVMLogMeta, LogIndex},
+    models::ERC20Token,
+    protocol::{
         errors::{TradeSimulationError, TransitionError},
-        events::{EVMLogMeta, LogIndex},
         models::GetAmountOutResult,
     },
-    models::ERC20Token,
 };
-
 /// ProtocolSim trait
 /// This trait defines the methods that a protocol state must implement in order to be used
 /// in the trade simulation.

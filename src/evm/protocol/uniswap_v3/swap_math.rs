@@ -1,4 +1,4 @@
-use crate::{evm::protocol::errors::TradeSimulationError, safe_math::safe_sub_u256};
+use crate::{protocol::errors::TradeSimulationError, safe_math::safe_sub_u256};
 use ethers::types::{I256, U256};
 
 use super::{

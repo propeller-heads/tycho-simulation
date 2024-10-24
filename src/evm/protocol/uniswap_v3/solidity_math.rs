@@ -1,5 +1,5 @@
 use crate::{
-    evm::protocol::errors::TradeSimulationError,
+    protocol::errors::TradeSimulationError,
     safe_math::{safe_div_u512, safe_mul_u512},
 };
 use ethers::types::{U256, U512};

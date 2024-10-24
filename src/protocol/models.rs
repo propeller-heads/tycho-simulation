@@ -24,11 +24,10 @@
 //! It's worth emphasizin that although the term "pair" used in this
 //! module refers to a trading pair, it does not necessarily imply two
 //! tokens only. Some pairs might have more than two tokens.
+use crate::evm::protocol::state::ProtocolSim;
 use ethers::types::{H160, U256};
 
 use crate::models::ERC20Token;
-
-use super::state::ProtocolSim;
 
 /// ProtocolComponent struct represents the properties of a trading pair
 ///

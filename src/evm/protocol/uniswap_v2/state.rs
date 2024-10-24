@@ -5,13 +5,14 @@ use tycho_core::dto::ProtocolStateDelta;
 
 use crate::{
     evm::protocol::{
-        errors::{TradeSimulationError, TradeSimulationErrorKind, TransitionError},
         events::{check_log_idx, EVMLogMeta, LogIndex},
-        models::GetAmountOutResult,
         state::{ProtocolEvent, ProtocolSim},
-        BytesConvertible,
     },
-    models::ERC20Token,
+    models::{BytesConvertible, ERC20Token},
+    protocol::{
+        errors::{TradeSimulationError, TradeSimulationErrorKind, TransitionError},
+        models::GetAmountOutResult,
+    },
     safe_math::{safe_add_u256, safe_div_u256, safe_mul_u256},
 };
 

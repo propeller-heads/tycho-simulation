@@ -1,7 +1,7 @@
 use std::ops::BitOr;
 
 use crate::{
-    evm::protocol::errors::TradeSimulationError,
+    protocol::errors::TradeSimulationError,
     safe_math::{safe_div_u256, safe_mul_u256},
 };
 use ethers::types::{Sign, I256, U256};

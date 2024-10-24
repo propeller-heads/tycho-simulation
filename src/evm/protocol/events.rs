@@ -1,9 +1,8 @@
+use crate::protocol::errors::TransitionError;
 use ethers::{
     prelude::LogMeta,
     types::{H160, H256},
 };
-
-use super::errors::TransitionError;
 
 pub type LogIndex = (u64, u32);
 

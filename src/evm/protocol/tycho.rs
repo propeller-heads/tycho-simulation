@@ -2,13 +2,16 @@ use ethers::types::U256;
 use tycho_client::feed::synchronizer::ComponentWithState;
 use tycho_core::Bytes;
 
-use crate::evm::protocol::{
-    errors::InvalidSnapshotError,
-    uniswap_v2::state::UniswapV2State,
-    uniswap_v3::{enums::FeeAmount, state::UniswapV3State},
+use crate::{
+    evm::protocol::{
+        uniswap_v2::state::UniswapV2State,
+        uniswap_v3::{enums::FeeAmount, state::UniswapV3State},
+    },
+    models::BytesConvertible,
+    protocol::errors::InvalidSnapshotError,
 };
 
-use super::{uniswap_v3::tick_list::TickInfo, BytesConvertible};
+use super::uniswap_v3::tick_list::TickInfo;
 
 impl TryFrom<ComponentWithState> for UniswapV2State {
     type Error = InvalidSnapshotError;
