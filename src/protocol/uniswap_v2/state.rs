@@ -2,6 +2,7 @@ use std::any::Any;
 
 use ethers::types::U256;
 use tycho_core::dto::ProtocolStateDelta;
+use tycho_ethereum::BytesCodec;
 
 use crate::{
     models::ERC20Token,
@@ -10,7 +11,6 @@ use crate::{
         events::{check_log_idx, EVMLogMeta, LogIndex},
         models::GetAmountOutResult,
         state::{ProtocolEvent, ProtocolSim},
-        BytesCodec,
     },
     safe_math::{safe_add_u256, safe_div_u256, safe_mul_u256},
 };

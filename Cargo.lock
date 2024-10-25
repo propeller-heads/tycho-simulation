@@ -3868,6 +3868,19 @@ dependencies = [
 
 [[package]]
 name = "hyper-tls"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6183ddfa99b85da61a140bea0efc93fdf56ceaa041b37d553518030827f9905"
+dependencies = [
+ "bytes",
+ "hyper 0.14.27",
+ "native-tls",
+ "tokio",
+ "tokio-native-tls",
+]
+
+[[package]]
+name = "hyper-tls"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70206fc6890eaca9fde8a0bf71caa2ddfc9fe045ac9e5c70df101a7dbde866e0"
@@ -3930,6 +3943,16 @@ name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
+
+[[package]]
+name = "idna"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d20d6b07bfbc108882d88ed8e37d39636dcc260e15e30c45e6ba089610b917c"
+dependencies = [
+ "unicode-bidi",
+ "unicode-normalization",
+]
 
 [[package]]
 name = "idna"
@@ -4164,6 +4187,21 @@ checksum = "eaa63191d68230cccb81c5aa23abd53ed64d83337cacbb25a7b8c7979523774f"
 dependencies = [
  "log",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jsonrpc-core"
+version = "18.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14f7f76aef2d054868398427f6c54943cf3d1caa9a7ec7d0c38d69df97a965eb"
+dependencies = [
+ "futures 0.3.28",
+ "futures-executor",
+ "futures-util",
+ "log",
+ "serde",
+ "serde_derive",
  "serde_json",
 ]
 
@@ -4486,11 +4524,10 @@ dependencies = [
 
 [[package]]
 name = "native-tls"
-version = "0.2.11"
+version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07226173c32f2926027b63cce4bcd8076c3552846cbe7925f3aaffeac0a3b92e"
+checksum = "a8614eb2c83d59d1c8cc974dd3f920198647674a0a035e1af1fa58707e317466"
 dependencies = [
- "lazy_static",
  "libc",
  "log",
  "openssl",
@@ -4699,11 +4736,11 @@ dependencies = [
 
 [[package]]
 name = "openssl"
-version = "0.10.50"
+version = "0.10.68"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e30d8bc91859781f0a943411186324d580f2bbeb71b452fe91ae344806af3f1"
+checksum = "6174bc48f102d208783c2c84bf931bb75927a617866870de8a4ea85597f871f5"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags 2.6.0",
  "cfg-if",
  "foreign-types",
  "libc",
@@ -4731,9 +4768,9 @@ checksum = "ff011a302c396a5197692431fc1948019154afc178baf7d8e37367442a4601cf"
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.85"
+version = "0.9.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d3d193fb1488ad46ffe3aaabc912cc931d02ee8518fe2959aea8ef52718b0c0"
+checksum = "45abf306cbf99debc8195b66b7346498d7b10c210de50418b5ccd7ceba08c741"
 dependencies = [
  "cc",
  "libc",
@@ -5274,6 +5311,7 @@ dependencies = [
  "tracing-subscriber",
  "tycho-client",
  "tycho-core",
+ "tycho-ethereum",
  "uuid 1.4.1",
  "warp",
 ]
@@ -5606,10 +5644,12 @@ dependencies = [
  "http-body 0.4.5",
  "hyper 0.14.27",
  "hyper-rustls 0.24.2",
+ "hyper-tls 0.5.0",
  "ipnet",
  "js-sys",
  "log",
  "mime",
+ "native-tls",
  "once_cell",
  "percent-encoding",
  "pin-project-lite",
@@ -5620,6 +5660,7 @@ dependencies = [
  "serde_urlencoded",
  "system-configuration 0.5.1",
  "tokio",
+ "tokio-native-tls",
  "tokio-rustls 0.24.1",
  "tower-service",
  "url",
@@ -5648,7 +5689,7 @@ dependencies = [
  "http-body-util",
  "hyper 1.4.1",
  "hyper-rustls 0.27.2",
- "hyper-tls",
+ "hyper-tls 0.6.0",
  "hyper-util",
  "ipnet",
  "js-sys",
@@ -7310,7 +7351,7 @@ dependencies = [
 [[package]]
 name = "tycho-client"
 version = "0.34.1"
-source = "git+ssh://github.com/propeller-heads/tycho-indexer.git?rev=ee02eb4#ee02eb4670493eecdaf88b8f1d45114dab58443d"
+source = "git+ssh://github.com/propeller-heads/tycho-indexer.git?rev=cdc2e48#cdc2e488be49629cf40d831a2d900e5fccc091f3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7336,7 +7377,7 @@ dependencies = [
 [[package]]
 name = "tycho-core"
 version = "0.34.1"
-source = "git+ssh://github.com/propeller-heads/tycho-indexer.git?rev=ee02eb4#ee02eb4670493eecdaf88b8f1d45114dab58443d"
+source = "git+ssh://github.com/propeller-heads/tycho-indexer.git?rev=cdc2e48#cdc2e488be49629cf40d831a2d900e5fccc091f3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7354,6 +7395,27 @@ dependencies = [
  "typetag",
  "utoipa",
  "uuid 1.4.1",
+]
+
+[[package]]
+name = "tycho-ethereum"
+version = "0.34.1"
+source = "git+ssh://github.com/propeller-heads/tycho-indexer.git?rev=cdc2e48#cdc2e488be49629cf40d831a2d900e5fccc091f3"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "ethers",
+ "primitive-types 0.12.1",
+ "reqwest 0.11.22",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tycho-core",
+ "url",
+ "web3",
 ]
 
 [[package]]
@@ -7493,7 +7555,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22784dbdf76fdde8af1aeda5622b546b422b6fc585325248a2bf9f5e41e94d6c"
 dependencies = [
  "form_urlencoded",
- "idna",
+ "idna 0.5.0",
  "percent-encoding",
 ]
 
@@ -7730,6 +7792,30 @@ checksum = "e33b99f4b23ba3eec1a53ac264e35a755f00e966e0065077d6027c0f575b0b97"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "web3"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5388522c899d1e1c96a4c307e3797e0f697ba7c77dd8e0e625ecba9dd0342937"
+dependencies = [
+ "arrayvec 0.7.2",
+ "derive_more",
+ "ethabi 18.0.0",
+ "ethereum-types 0.14.1",
+ "futures 0.3.28",
+ "futures-timer",
+ "hex",
+ "idna 0.4.0",
+ "jsonrpc-core",
+ "log",
+ "parking_lot",
+ "pin-project",
+ "rlp",
+ "serde",
+ "serde_json",
+ "tiny-keccak",
 ]
 
 [[package]]

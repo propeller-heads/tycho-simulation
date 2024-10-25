@@ -11,8 +11,7 @@ use std::{convert::TryFrom, str::FromStr};
 use ethers::types::{H160, U256};
 use serde::{Deserialize, Serialize};
 use tycho_core::dto::ResponseToken;
-
-use crate::protocol::BytesCodec;
+use tycho_ethereum::BytesCodec;
 
 #[derive(Clone, Debug, Eq)]
 pub struct ERC20Token {

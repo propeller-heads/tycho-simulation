@@ -3,6 +3,7 @@ use std::any::Any;
 use ethers::types::{Sign, I256, U256};
 use tracing::trace;
 use tycho_core::{dto::ProtocolStateDelta, Bytes};
+use tycho_ethereum::BytesCodec;
 
 use crate::{
     models::ERC20Token,
@@ -12,7 +13,6 @@ use crate::{
         models::GetAmountOutResult,
         state::{ProtocolEvent, ProtocolSim},
         tycho::i24_bytes_to_i32,
-        BytesCodec,
     },
     safe_math::{safe_add_u256, safe_sub_u256},
 };

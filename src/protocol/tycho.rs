@@ -1,12 +1,12 @@
 use ethers::types::U256;
 use tycho_client::feed::synchronizer::ComponentWithState;
 use tycho_core::hex_bytes::Bytes;
+use tycho_ethereum::BytesCodec;
 
 use crate::protocol::{
     errors::InvalidSnapshotError,
     uniswap_v2::state::UniswapV2State,
     uniswap_v3::{enums::FeeAmount, state::UniswapV3State, tick_list::TickInfo},
-    BytesCodec,
 };
 
 impl TryFrom<ComponentWithState> for UniswapV2State {
