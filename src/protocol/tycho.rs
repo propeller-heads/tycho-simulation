@@ -109,7 +109,7 @@ impl TryFrom<ComponentWithState> for UniswapV3State {
         } else {
             tick
         };
-        let tick = i24_bytes_to_i32(&ticks_4_bytes);
+        let tick = i24_be_bytes_to_i32(&ticks_4_bytes);
 
         let ticks: Result<Vec<_>, _> = snapshot
             .state
@@ -152,7 +152,7 @@ impl TryFrom<ComponentWithState> for UniswapV3State {
 ///
 /// # Returns
 /// * The 32-bit signed integer representation of the input bytes.
-pub fn i24_bytes_to_i32(val: &Bytes) -> i32 {
+pub fn i24_be_bytes_to_i32(val: &Bytes) -> i32 {
     let bytes_slice = val.as_ref();
     let bytes_len = bytes_slice.len();
     let mut result = 0i32;
@@ -383,15 +383,15 @@ mod tests {
     }
 
     #[test]
-    fn test_i24_bytes_to_i32() {
+    fn test_i24_be_bytes_to_i32() {
         let val = Bytes::from_str("0xfeafc6").unwrap();
-        let converted = i24_bytes_to_i32(&val);
+        let converted = i24_be_bytes_to_i32(&val);
         assert_eq!(converted, -86074);
         let val = Bytes::from_str("0x02dd").unwrap();
-        let converted = i24_bytes_to_i32(&val);
+        let converted = i24_be_bytes_to_i32(&val);
         assert_eq!(converted, 733);
         let val = Bytes::from_str("0xe2bb").unwrap();
-        let converted = i24_bytes_to_i32(&val);
+        let converted = i24_be_bytes_to_i32(&val);
         assert_eq!(converted, -7493);
     }
 }

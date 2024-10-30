@@ -12,7 +12,7 @@ use crate::{
         events::{check_log_idx, EVMLogMeta, LogIndex},
         models::GetAmountOutResult,
         state::{ProtocolEvent, ProtocolSim},
-        tycho::i24_bytes_to_i32,
+        tycho::i24_be_bytes_to_i32,
     },
     safe_math::{safe_add_u256, safe_sub_u256},
 };
@@ -335,7 +335,7 @@ impl ProtocolSim for UniswapV3State {
             } else {
                 tick.clone()
             };
-            self.tick = i24_bytes_to_i32(&ticks_4_bytes);
+            self.tick = i24_be_bytes_to_i32(&ticks_4_bytes);
         }
 
         // apply tick changes
