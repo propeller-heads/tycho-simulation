@@ -1,3 +1,6 @@
+pub mod data_feed;
+extern crate protosim;
+
 use clap::Parser;
 use ethers::types::U256;
 use protosim::protocol::state::ProtocolSim;
@@ -14,13 +17,13 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 use protosim::models::ERC20Token;
 
-use tutorial::data_feed::{state::BlockState, tycho};
+use data_feed::{state::BlockState, tycho};
 
 /// Graph based solver
 #[derive(Parser)]
 struct Cli {
     /// The tvl threshold to filter the graph by
-    #[arg(short, long, default_value_t = 10.0)]
+    #[arg(short, long, default_value_t = 100.0)]
     tvl_threshold: f64,
 }
 
@@ -112,9 +115,9 @@ pub async fn start_app() {
     // Parse command-line arguments into a Cli struct
     let cli = Cli::parse();
 
-    let tycho_url = env::var("TYCHO_URL").expect("Please set 'TYCHO_URL' env variable!");
+    let tycho_url = env::var("TYCHO_URL").unwrap_or_else(|_| "tycho-beta.propellerheads.xyz".to_string());
     let tycho_api_key: String =
-        env::var("TYCHO_API_KEY").expect("Please set 'TYCHO_API_KEY' env variable!");
+        env::var("TYCHO_API_KEY").unwrap_or_else(|_| "sampletoken".to_string());
 
     // Create communication channels for inter-thread communication
     let (ctrl_tx, ctrl_rx) = mpsc::channel::<()>();
