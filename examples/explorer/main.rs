@@ -7,8 +7,7 @@ use clap::Parser;
 use data_feed::{state::BlockState, tycho};
 use futures::future::select_all;
 use std::env;
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::{sync::mpsc, task::JoinHandle};
 
 #[derive(Parser)]
 struct Cli {
