@@ -2,8 +2,8 @@ use crate::data_feed::state::BlockState;
 use ethers::types::U256;
 use futures::StreamExt;
 use itertools::Itertools;
-use protosim::protocol::models::ProtocolComponent;
-use protosim::protocol::state::ProtocolSim;
+use tycho_simulation::protocol::models::ProtocolComponent;
+use tycho_simulation::protocol::state::ProtocolSim;
 use ratatui::layout::Flex;
 use ratatui::widgets::{Clear, Wrap};
 use ratatui::{

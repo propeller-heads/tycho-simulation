@@ -1,7 +1,7 @@
 pub mod data_feed;
 mod ui;
 
-extern crate protosim;
+extern crate tycho_simulation;
 
 use clap::Parser;
 use data_feed::{state::BlockState, tycho};

@@ -7446,20 +7446,24 @@ dependencies = [
 name = "tycho-simulation"
 version = "0.32.0"
 dependencies = [
+ "anyhow",
  "approx",
  "chrono",
+ "clap",
+ "crossterm 0.28.1",
  "dotenv",
  "ethabi 13.0.0",
  "ethers",
  "foundry-config",
  "foundry-evm",
- "futures 0.3.28",
+ "futures 0.3.31",
  "hex",
  "itertools 0.10.5",
  "lazy_static",
  "mini-moka",
  "mockito",
  "num-traits",
+ "ratatui",
  "revm",
  "revm-inspectors",
  "rstest",
@@ -7474,6 +7478,7 @@ dependencies = [
  "tracing-subscriber",
  "tycho-client",
  "tycho-core",
+ "unicode-width 0.1.13",
  "uuid 1.4.1",
  "warp",
 ]
