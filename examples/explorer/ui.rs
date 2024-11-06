@@ -182,7 +182,7 @@ impl App {
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> anyhow::Result<()> {
         let mut reader = event::EventStream::new();
         loop {
-            terminal.draw(|frame| self.draw(frame))?;
+            terminal.draw(|frame| self.draw(frame).await)?;
 
             select! {
                 maybe_data = self.rx.recv() => {
@@ -246,7 +246,7 @@ impl App {
         }
     }
 
-    fn draw(&mut self, frame: &mut Frame) {
+    async fn draw(&mut self, frame: &mut Frame) {
         let vertical = &Layout::vertical([Constraint::Min(5), Constraint::Length(4)]);
         let rects = vertical.split(frame.area());
 
@@ -257,7 +257,7 @@ impl App {
             self.render_loading(frame);
         }
         if self.show_popup {
-            self.render_quote_popup(frame);
+            self.render_quote_popup(frame).await;
         }
     }
 
@@ -358,7 +358,7 @@ impl App {
         frame.render_widget(popup, area);
     }
 
-    fn render_quote_popup(&self, frame: &mut Frame) {
+    async fn render_quote_popup(&self, frame: &mut Frame) {
         let area = frame.area();
 
         if let Some(idx) = self.state.selected() {
@@ -368,9 +368,17 @@ impl App {
 
                 let start = Instant::now();
                 let res = if self.zero2one {
-                    state.get_amount_out(self.quote_amount, &comp.tokens[0], &comp.tokens[1])
+                    state.get_amount_out(
+                        self.quote_amount,
+                        comp.tokens[0].address,
+                        comp.tokens[1].address,
+                    ).await
                 } else {
-                    state.get_amount_out(self.quote_amount, &comp.tokens[1], &comp.tokens[0])
+                    state.get_amount_out(
+                        self.quote_amount,
+                        comp.tokens[1].address,
+                        comp.tokens[0].address,
+                    ).await
                 };
                 let duration = start.elapsed();
 

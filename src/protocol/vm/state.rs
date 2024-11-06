@@ -7,6 +7,7 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
+use async_trait::async_trait;
 use chrono::Utc;
 use ethers::{
     abi::{decode, ParamType},
@@ -14,6 +15,7 @@ use ethers::{
     types::H160,
     utils::to_checksum,
 };
+
 use itertools::Itertools;
 use revm::{
     precompile::{Address as rAddress, Bytes},
@@ -544,11 +546,25 @@ impl VMPoolState<PreCachedDB> {
 
         merged
     }
+}
+
+#[async_trait]
+impl ProtocolSim for VMPoolState<PreCachedDB> {
+    fn fee(&self) -> f64 {
+        todo!()
+    }
+
+    fn spot_price(&self, base: &ERC20Token, quote: &ERC20Token) -> Result<f64, SimulationError> {
+        self.spot_prices
+            .get(&(base.address, quote.address))
+            .cloned()
+            .ok_or(SimulationError::NotFound("Spot prices".to_string()))
+    }
 
     async fn get_amount_out(
         &self,
-        sell_token: H160,
         sell_amount: U256,
+        sell_token: H160,
         buy_token: H160,
     ) -> Result<GetAmountOutResult, SimulationError> {
         let mut sell_amount_respecting_limit = sell_amount;
@@ -648,28 +664,6 @@ impl VMPoolState<PreCachedDB> {
             ));
         }
         Ok(GetAmountOutResult::new(buy_amount, trade.gas_used, Box::new(new_state.clone())))
-    }
-}
-
-impl ProtocolSim for VMPoolState<PreCachedDB> {
-    fn fee(&self) -> f64 {
-        todo!()
-    }
-
-    fn spot_price(&self, base: &ERC20Token, quote: &ERC20Token) -> Result<f64, SimulationError> {
-        self.spot_prices
-            .get(&(base.address, quote.address))
-            .cloned()
-            .ok_or(SimulationError::NotFound("Spot prices".to_string()))
-    }
-
-    fn get_amount_out(
-        &self,
-        _amount_in: U256,
-        _token_in: &ERC20Token,
-        _token_out: &ERC20Token,
-    ) -> Result<GetAmountOutResult, SimulationError> {
-        todo!()
     }
 
     fn delta_transition(
@@ -885,8 +879,8 @@ mod tests {
 
         let result = pool_state
             .get_amount_out(
-                pool_state.tokens[0],
                 U256::from_dec_str("1000000000000000000").unwrap(),
+                pool_state.tokens[0],
                 pool_state.tokens[1],
             )
             .await
@@ -912,7 +906,7 @@ mod tests {
         let pool_state = setup_pool_state().await;
 
         let result = pool_state
-            .get_amount_out(pool_state.tokens[0], U256::from(1), pool_state.tokens[1])
+            .get_amount_out(U256::from(1), pool_state.tokens[0], pool_state.tokens[1])
             .await
             .unwrap();
 
@@ -936,9 +930,9 @@ mod tests {
 
         let result = pool_state
             .get_amount_out(
-                pool_state.tokens[0],
                 // sell limit is 100279494253364362835
                 U256::from_dec_str("100379494253364362835").unwrap(),
+                pool_state.tokens[0],
                 pool_state.tokens[1],
             )
             .await;

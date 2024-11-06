@@ -11,7 +11,8 @@ use crate::{
     },
     safe_math::{safe_add_u256, safe_div_u256, safe_mul_u256, safe_sub_u256},
 };
-use ethers::types::U256;
+use async_trait::async_trait;
+use ethers::types::{H160, U256};
 use tycho_core::dto::ProtocolStateDelta;
 
 use super::{events::UniswapV2Sync, reserve_price::spot_price_from_reserves};
@@ -37,6 +38,7 @@ impl UniswapV2State {
     }
 }
 
+#[async_trait]
 impl ProtocolSim for UniswapV2State {
     /// Returns the fee for the protocol
     ///
@@ -87,16 +89,16 @@ impl ProtocolSim for UniswapV2State {
     ///
     /// * `Result<GetAmountOutResult, TradeSimulationError>` - A `Result` containing the amount of
     ///   output and the slippage of the trade, or an error.
-    fn get_amount_out(
+    async fn get_amount_out(
         &self,
         amount_in: U256,
-        token_in: &ERC20Token,
-        token_out: &ERC20Token,
+        token_in: H160,
+        token_out: H160,
     ) -> Result<GetAmountOutResult, SimulationError> {
         if amount_in == U256::zero() {
             return Err(SimulationError::InsufficientAmount());
         }
-        let zero2one = token_in.address < token_out.address;
+        let zero2one = token_in < token_out;
         let reserve_sell = if zero2one { self.reserve0 } else { self.reserve1 };
         let reserve_buy = if zero2one { self.reserve1 } else { self.reserve0 };
 
@@ -198,31 +200,17 @@ mod tests {
         U256::from_dec_str(s).unwrap()
     }
 
-    #[rstest]
-    #[case::same_dec(
-        u256("6770398782322527849696614"),
-        u256("5124813135806900540214"),
-        18,
-        18,
-        u256("10000000000000000000000"),
-        u256("7535635391574243447")
-    )]
-    #[case::diff_dec(
-        u256("33372357002392258830279"),
-        u256("43356945776493"),
-        18,
-        6,
-        u256("10000000000000000000"),
-        u256("12949029867")
-    )]
-    fn test_get_amount_out(
-        #[case] r0: U256,
-        #[case] r1: U256,
-        #[case] token_0_decimals: usize,
-        #[case] token_1_decimals: usize,
-        #[case] amount_in: U256,
-        #[case] exp: U256,
-    ) {
+    #[tokio::test]
+    async fn test_get_amount_out_same_dec() {
+        // Define parameters for the `same_dec` test case
+        let r0 = U256::from_dec_str("6770398782322527849696614").unwrap();
+        let r1 = U256::from_dec_str("5124813135806900540214").unwrap();
+        let token_0_decimals = 18;
+        let token_1_decimals = 18;
+        let amount_in = U256::from_dec_str("10000000000000000000000").unwrap();
+        let exp = U256::from_dec_str("7535635391574243447").unwrap();
+
+        // Initialize tokens and state
         let t0 = ERC20Token::new(
             "0x0000000000000000000000000000000000000000",
             token_0_decimals,
@@ -237,8 +225,10 @@ mod tests {
         );
         let state = UniswapV2State::new(r0, r1);
 
+        // Call the function and check the result
         let res = state
-            .get_amount_out(amount_in, &t0, &t1)
+            .get_amount_out(amount_in, t0.address, t1.address)
+            .await
             .unwrap();
 
         assert_eq!(res.amount, exp);
@@ -260,8 +250,58 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_get_amount_out_overflow() {
+    #[tokio::test]
+    async fn test_get_amount_out_diff_dec() {
+        // Define parameters for the `diff_dec` test case
+        let r0 = U256::from_dec_str("33372357002392258830279").unwrap();
+        let r1 = U256::from_dec_str("43356945776493").unwrap();
+        let token_0_decimals = 18;
+        let token_1_decimals = 6;
+        let amount_in = U256::from_dec_str("10000000000000000000").unwrap();
+        let exp = U256::from_dec_str("12949029867").unwrap();
+
+        // Initialize tokens and state
+        let t0 = ERC20Token::new(
+            "0x0000000000000000000000000000000000000000",
+            token_0_decimals,
+            "T0",
+            U256::from(10_000),
+        );
+        let t1 = ERC20Token::new(
+            "0x0000000000000000000000000000000000000001",
+            token_1_decimals,
+            "T0",
+            U256::from(10_000),
+        );
+        let state = UniswapV2State::new(r0, r1);
+
+        // Call the function and check the result
+        let res = state
+            .get_amount_out(amount_in, t0.address, t1.address)
+            .await
+            .unwrap();
+
+        assert_eq!(res.amount, exp);
+        assert_eq!(
+            res.new_state
+                .as_any()
+                .downcast_ref::<UniswapV2State>()
+                .unwrap()
+                .reserve0,
+            r0 + amount_in
+        );
+        assert_eq!(
+            res.new_state
+                .as_any()
+                .downcast_ref::<UniswapV2State>()
+                .unwrap()
+                .reserve1,
+            r1 - exp
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_amount_out_overflow() {
         let r0 = u256("33372357002392258830279");
         let r1 = u256("43356945776493");
         let amount_in = U256::max_value();
@@ -281,7 +321,9 @@ mod tests {
         );
         let state = UniswapV2State::new(r0, r1);
 
-        let res = state.get_amount_out(amount_in, &t0, &t1);
+        let res = state
+            .get_amount_out(amount_in, t0.address, t1.address)
+            .await;
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(matches!(err, SimulationError::ArithmeticOverflow()));

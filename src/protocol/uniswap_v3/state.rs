@@ -1,6 +1,6 @@
 use std::any::Any;
 
-use ethers::types::{Sign, I256, U256};
+use ethers::types::{Sign, H160, I256, U256};
 use tracing::trace;
 use tycho_core::{dto::ProtocolStateDelta, Bytes};
 
@@ -15,6 +15,7 @@ use crate::{
     },
     safe_math::{safe_add_u256, safe_sub_u256},
 };
+use async_trait::async_trait;
 
 use super::{
     enums::FeeAmount,
@@ -242,6 +243,7 @@ impl UniswapV3State {
     }
 }
 
+#[async_trait]
 impl ProtocolSim for UniswapV3State {
     fn fee(&self) -> f64 {
         (self.fee as u32) as f64 / 1_000_000.0
@@ -256,11 +258,11 @@ impl ProtocolSim for UniswapV3State {
         }
     }
 
-    fn get_amount_out(
+    async fn get_amount_out(
         &self,
         amount_in: U256,
-        token_a: &ERC20Token,
-        token_b: &ERC20Token,
+        token_a: H160,
+        token_b: H160,
     ) -> Result<GetAmountOutResult, SimulationError> {
         let zero_for_one = token_a < token_b;
         let amount_specified = I256::checked_from_sign_and_abs(Sign::Positive, amount_in).unwrap();
@@ -434,8 +436,8 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_get_amount_out_full_range_liquidity() {
+    #[tokio::test]
+    async fn test_get_amount_out_full_range_liquidity() {
         let token_x = ERC20Token::new(
             "0x6b175474e89094c44da98b954eedeac495271d0f",
             18,
@@ -460,7 +462,8 @@ mod tests {
         let expected = U256::from_dec_str("61927070842678722935941").unwrap();
 
         let res = pool
-            .get_amount_out(sell_amount, &token_x, &token_y)
+            .get_amount_out(sell_amount, token_x.address, token_y.address)
+            .await
             .unwrap();
 
         assert_eq!(res.amount, expected);
@@ -472,8 +475,8 @@ mod tests {
         exp: U256,
     }
 
-    #[test]
-    fn test_get_amount_out() {
+    #[tokio::test]
+    async fn test_get_amount_out() {
         let wbtc = ERC20Token::new(
             "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
             8,
@@ -562,15 +565,16 @@ mod tests {
             let (token_a, token_b) =
                 if case.symbol == "WBTC" { (&wbtc, &weth) } else { (&weth, &wbtc) };
             let res = pool
-                .get_amount_out(case.sell, token_a, token_b)
+                .get_amount_out(case.sell, token_a.address, token_b.address)
+                .await
                 .unwrap();
 
             assert_eq!(res.amount, case.exp);
         }
     }
 
-    #[test]
-    fn test_err_with_partial_trade() {
+    #[tokio::test]
+    async fn test_err_with_partial_trade() {
         let dai = ERC20Token::new(
             "0x6b175474e89094c44da98b954eedeac495271d0f",
             18,
@@ -614,7 +618,8 @@ mod tests {
         let exp = U256::from_dec_str("6820591625999718100883").unwrap();
 
         let err = pool
-            .get_amount_out(amount_in, &usdc, &dai)
+            .get_amount_out(amount_in, usdc.address, dai.address)
+            .await
             .unwrap_err();
 
         match err {

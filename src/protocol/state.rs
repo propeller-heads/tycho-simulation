@@ -43,7 +43,8 @@
 //! ```
 use std::any::Any;
 
-use ethers::types::U256;
+use async_trait::async_trait;
+use ethers::types::{H160, U256};
 use tycho_core::dto::ProtocolStateDelta;
 
 use crate::{
@@ -58,6 +59,7 @@ use crate::{
 /// ProtocolSim trait
 /// This trait defines the methods that a protocol state must implement in order to be used
 /// in the trade simulation.
+#[async_trait]
 pub trait ProtocolSim: std::fmt::Debug + Send + Sync + 'static {
     /// Returns the fee of the protocol as ratio
     ///
@@ -86,18 +88,18 @@ pub trait ProtocolSim: std::fmt::Debug + Send + Sync + 'static {
     /// # Arguments
     ///
     /// * `amount_in` - The amount in of the input token.
-    /// * `token_in` - The input token ERC20 token.
-    /// * `token_out` - The output token ERC20 token.
+    /// * `token_in` - The input token ERC20 token address.
+    /// * `token_out` - The output token ERC20 token address.
     ///
     /// # Returns
     ///
     /// A `Result` containing a `GetAmountOutResult` struct on success or a
     ///  `TradeSimulationError` on failure.
-    fn get_amount_out(
+    async fn get_amount_out(
         &self,
         amount_in: U256,
-        token_in: &ERC20Token,
-        token_out: &ERC20Token,
+        token_in: H160,
+        token_out: H160,
     ) -> Result<GetAmountOutResult, SimulationError>;
 
     /// Decodes and applies a protocol state delta to the state
