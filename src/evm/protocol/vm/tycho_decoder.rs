@@ -1,3 +1,7 @@
+use ethers::{
+    prelude::U256,
+    types::{H160, H256},
+};
 use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},
@@ -179,6 +183,7 @@ mod tests {
     use chrono::DateTime;
     use std::{collections::HashSet, str::FromStr};
 
+    use crate::protocol::models::TryFromWithBlock;
     use tycho_core::{
         dto::{Chain, ChangeType, ProtocolComponent, ResponseProtocolState},
         Bytes,

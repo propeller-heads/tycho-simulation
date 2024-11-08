@@ -25,7 +25,7 @@
 //! module refers to a trading pair, it does not necessarily imply two
 //! tokens only. Some pairs might have more than two tokens.
 use std::collections::HashMap;
-
+use std::future::Future;
 use ethers::types::{H160, U256};
 use tycho_core::Bytes;
 
@@ -57,12 +57,11 @@ impl ProtocolComponent {
 pub trait TryFromWithBlock<T> {
     type Error;
 
-    #[allow(async_fn_in_trait)]
-    async fn try_from_with_block(
+    fn try_from_with_block(
         value: T,
         block: Header,
-        all_tokens: HashMap<H160, ERC20Token>,
-    ) -> Result<Self, Self::Error>
+        all_tokens: HashMap<H160, ERC20Token>
+    ) -> impl Future<Output = Result<Self, Self::Error>> + Send + Sync
     where
         Self: Sized;
 }

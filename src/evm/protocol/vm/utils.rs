@@ -14,6 +14,7 @@ use ethers::{
     providers::{Http, Middleware, Provider},
     types::{Address, H160},
 };
+use ethers::prelude::ProviderError;
 use hex::FromHex;
 use mini_moka::sync::Cache;
 use revm::primitives::{Bytecode, Bytes};
@@ -251,10 +252,6 @@ pub async fn get_code_for_contract(
         }
     };
 
-    // Create a provider with the URL
-    let provider =
-        Provider::<Http>::try_from(connection_string).expect("could not instantiate HTTP Provider");
-
     // Parse the address
     let addr: H160 = address.parse().map_err(|_| {
         SimulationError::FatalError(format!(
@@ -265,15 +262,12 @@ pub async fn get_code_for_contract(
 
     // Call eth_getCode to get the bytecode of the contract
     match provider.get_code(addr, None).await {
-        Ok(code) if code.is_empty() => {
-            Err(SimulationError::FatalError("Empty code response from RPC".to_string()))
-        }
+        Ok(code) if code.is_empty() => Err(SimulationError::FatalError("Empty code response from RPC".to_string())),
         Ok(code) => {
             let bytecode = Bytecode::new_raw(Bytes::from(code.to_vec()));
             Ok(bytecode)
         }
         Err(e) => {
-            println!("Error fetching code for address {}: {:?}", address, e);
             match e {
                 ProviderError::JsonRpcClientError(err) => Err(SimulationError::RecoverableError(
                     format!("Failed to get code for contract due to internal RPC error: {:?}", err),

@@ -43,10 +43,6 @@
 //! ```
 use std::any::Any;
 
-use ethers::types::U256;
-
-use tycho_core::dto::ProtocolStateDelta;
-
 use crate::{
     models::ERC20Token,
     protocol::{
@@ -55,6 +51,8 @@ use crate::{
         models::GetAmountOutResult,
     },
 };
+use ethers::types::U256;
+use tycho_core::dto::ProtocolStateDelta;
 
 /// ProtocolSim trait
 /// This trait defines the methods that a protocol state must implement in order to be used

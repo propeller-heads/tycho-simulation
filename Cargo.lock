@@ -7750,6 +7750,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-stream",
  "tokio-test",
  "tracing",
  "tracing-subscriber",
