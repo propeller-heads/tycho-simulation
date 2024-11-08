@@ -193,6 +193,7 @@ mod tests {
     use chrono::DateTime;
     use std::{collections::HashSet, str::FromStr};
 
+    use crate::protocol::models::TryFromWithBlock;
     use tycho_core::{
         dto::{Chain, ChangeType, ProtocolComponent, ResponseProtocolState},
         Bytes,

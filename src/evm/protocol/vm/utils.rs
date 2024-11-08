@@ -262,12 +262,13 @@ pub(crate) async fn get_code_for_contract(
         Ok(code) if code.is_empty() => {
             Err(SimulationError::FatalError("Empty code response from RPC".to_string()))
         }
+    match provider.get_code(addr, None).await {
+        Ok(code) if code.is_empty() => Err(SimulationError::FatalError("Empty code response from RPC".to_string())),
         Ok(code) => {
             let bytecode = Bytecode::new_raw(Bytes::from(code.to_vec()));
             Ok(bytecode)
         }
         Err(e) => {
-            println!("Error fetching code for address {}: {:?}", address, e);
             match e {
                 RpcError::Transport(err) => Err(SimulationError::RecoverableError(format!(
                     "Failed to get code for contract due to internal RPC error: {:?}",

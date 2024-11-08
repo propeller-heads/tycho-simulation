@@ -6,11 +6,11 @@ extern crate tycho_simulation;
 use std::env;
 
 use clap::Parser;
+use data_feed::tycho;
 use futures::future::select_all;
-use tokio::{sync::mpsc, task::JoinHandle};
 use tracing_subscriber::{fmt, EnvFilter};
-
-use data_feed::{state::BlockState, tycho};
+use tokio::{sync::mpsc, task::JoinHandle};
+use tycho_simulation::protocol::stream_decoder::BlockUpdate;
 
 #[derive(Parser)]
 struct Cli {
@@ -39,7 +39,7 @@ async fn main() {
         env::var("TYCHO_API_KEY").unwrap_or_else(|_| "sampletoken".to_string());
 
     // Create communication channels for inter-thread communication
-    let (tick_tx, tick_rx) = mpsc::channel::<BlockState>(12);
+    let (tick_tx, tick_rx) = mpsc::channel::<BlockUpdate>(12);
 
     let tycho_message_processor: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
         tycho::process_messages(tycho_url, Some(tycho_api_key), tick_tx, cli.tvl_threshold).await;
