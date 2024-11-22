@@ -571,11 +571,27 @@ impl ProtocolSim for VMPoolState<PreCachedDB> {
         todo!()
     }
 
+    // TODO can we not change this to take address as input so that I can use it for the tvl method?
     fn spot_price(&self, base: &ERC20Token, quote: &ERC20Token) -> Result<f64, SimulationError> {
         self.spot_prices
             .get(&(base.address, quote.address))
             .cloned()
             .ok_or(SimulationError::NotFound("Spot prices".to_string()))
+    }
+
+    fn tvl(&self, quote: &ERC20Token) -> Result<U256, SimulationError> {
+        let mut tvl: U256 = U256::from(0);
+        for (token, balance) in self.balances.iter() {
+            let spot_price = self
+                .spot_prices
+                .get(&(*token, quote.address))
+                .cloned()
+                .ok_or(SimulationError::NotFound("Spot prices".to_string()))?;
+
+            // TODO double-check decimal conversion
+            tvl = tvl + balance * U256::from_f64(spot_price * quote.decimals as f64);
+        }
+        Ok(tvl)
     }
 
     fn get_amount_out(

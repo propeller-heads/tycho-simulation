@@ -231,6 +231,9 @@ pub async fn process_messages(
                 let mut pair_tokens = Vec::new();
                 let mut skip_pool = false;
 
+                println!("Static attributes: {:?}", snapshot.component.static_attributes);
+                println!("State attributes: {:?}", snapshot.state.attributes);
+
                 for token in snapshot.component.tokens.clone() {
                     match all_tokens.get(&H160::from_bytes(&token)) {
                         Some(token) => pair_tokens.push(token.clone()),

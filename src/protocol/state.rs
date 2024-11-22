@@ -82,6 +82,10 @@ pub trait ProtocolSim: std::fmt::Debug + Send + Sync + 'static {
     ///   BTC/USDT, USDT would be the quote asset.
     fn spot_price(&self, base: &ERC20Token, quote: &ERC20Token) -> Result<f64, SimulationError>;
 
+    /// TODO: Add documentation
+    /// Returns the protocols current TVL
+    fn tvl(&self, quote: &ERC20Token) -> Result<f64, SimulationError>;
+
     /// Returns the amount out given an amount in and input/output tokens.
     ///
     /// # Arguments
