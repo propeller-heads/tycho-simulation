@@ -10,7 +10,7 @@ use data_feed::tycho;
 use futures::future::select_all;
 use tracing_subscriber::{fmt, EnvFilter};
 use tokio::{sync::mpsc, task::JoinHandle};
-use tycho_simulation::protocol::stream_decoder::BlockUpdate;
+use tycho_simulation::protocol::stream::BlockUpdate;
 
 #[derive(Parser)]
 struct Cli {

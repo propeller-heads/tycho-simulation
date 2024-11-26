@@ -30,12 +30,12 @@ use tycho_simulation::{
     },
     models::Token,
     protocol::{
-        stream_decoder::{BlockUpdate},
+        stream::{BlockUpdate},
         uniswap_v2::state::UniswapV2State,
         uniswap_v3::state::UniswapV3State,
     },
 };
-use tycho_simulation::protocol::stream_decoder::{ProtocolStreamBuilder};
+use tycho_simulation::protocol::stream::{ProtocolStreamBuilder};
 
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 

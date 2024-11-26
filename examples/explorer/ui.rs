@@ -18,7 +18,7 @@ use ratatui::{
 use std::{cmp::max, str::FromStr, time::Instant};
 use tokio::{select, sync::mpsc::Receiver};
 use tycho_simulation::protocol::{
-    models::ProtocolComponent, state::ProtocolSim, stream_decoder::BlockUpdate,
+    models::ProtocolComponent, state::ProtocolSim, stream::BlockUpdate,
 };
 
 use crate::data_feed::state::BlockState;
