@@ -9,13 +9,10 @@ use alloy_primitives::{Address, B256};
 use chrono::Utc;
 use num_bigint::BigInt;
 use tokio::sync::mpsc::Sender;
-use tokio_stream::{wrappers::ReceiverStream};
 use tracing::info;
 
 use tycho_client::{
-    feed::{component_tracker::ComponentFilter, synchronizer::ComponentWithState},
-    rpc::RPCClient,
-    stream::TychoStreamBuilder,
+    feed::component_tracker::ComponentFilter, rpc::RPCClient,
     HttpRPCClient,
 };
 use tycho_core::{dto::Chain, Bytes};
@@ -33,12 +30,12 @@ use tycho_simulation::{
     },
     models::Token,
     protocol::{
-        stream_decoder::{BlockUpdate, TychoStreamDecoder},
+        stream_decoder::{BlockUpdate},
         uniswap_v2::state::UniswapV2State,
         uniswap_v3::state::UniswapV3State,
     },
 };
-use tycho_simulation::protocol::stream_decoder::tycho_stream;
+use tycho_simulation::protocol::stream_decoder::{ProtocolStreamBuilder};
 
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
@@ -175,13 +172,9 @@ pub async fn process_messages(
         .exchange("vm:balancer_v2", ComponentFilter::with_tvl_range(tvl_threshold, tvl_threshold))
         .exchange("vm:curve", ComponentFilter::with_tvl_range(tvl_threshold, tvl_threshold))
         .auth_key(auth_key.clone())
+        .set_tokens(all_tokens)
         .build()
-        .await
-        .expect("Failed to build tycho stream");
-
-    let all_tokens = load_all_tokens(tycho_url.as_str(), auth_key.as_deref()).await;
-
-    let mut protocol_stream = tycho_stream(all_tokens, tycho_rx).await;
+        .await;
 
     // Loop through tycho messages
     while let Some(msg) = protocol_stream.next().await {
@@ -190,8 +183,6 @@ pub async fn process_messages(
             .await
             .expect("Sending tick failed!");
     }
-
-    jh.await.unwrap();
 }
 
 pub async fn load_all_tokens(

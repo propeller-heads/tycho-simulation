@@ -15,18 +15,15 @@ use std::{
 };
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Context, Poll};
-use futures::future::BoxFuture;
 use thiserror::Error;
-use tokio::sync::mpsc::Receiver;
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, warn};
 use tycho_client::feed::{synchronizer::ComponentWithState, FeedMessage, Header};
+use tycho_client::feed::component_tracker::ComponentFilter;
+use tycho_client::stream::TychoStreamBuilder;
 use tycho_core::Bytes;
-use crate::evm::tycho_models::Block;
-use crate::protocol::uniswap_v2::state::UniswapV2State;
-use crate::protocol::uniswap_v3::state::UniswapV3State;
+use tycho_core::dto::Chain;
 
 #[derive(Error, Debug)]
 pub enum StreamDecodeError {
@@ -78,7 +75,7 @@ type RegistryFn = dyn Fn(
 ) -> DecodeFut + Send + Sync;
 
 
-pub struct TychoStreamDecoder {
+struct TychoStreamDecoder {
     state: Arc<RwLock<DecoderState>>,
     skip_state_decode_failures: bool,
     min_token_quality: u32,
@@ -96,8 +93,8 @@ impl TychoStreamDecoder
         }
     }
 
-    pub async fn set_tokens(&self, tokens: HashMap<Bytes, ERC20Token>) {
-        let mut guard = self.state.write().await;
+    pub fn set_tokens(&self, tokens: HashMap<Bytes, ERC20Token>) {
+        let mut guard = self.state.blocking_write();
         guard.tokens = tokens;
     }
 
@@ -302,28 +299,76 @@ impl TychoStreamDecoder
 }
 
 
-pub async fn tycho_stream(tokens: HashMap<Bytes, ERC20Token>, tycho_rx: Receiver<FeedMessage>) -> impl Stream<Item=Result<BlockUpdate, StreamDecodeError>> {
-    let mut decoder = TychoStreamDecoder::new();
+pub struct ProtocolStreamBuilder {
+    decoder: TychoStreamDecoder,
+    stream_builder: TychoStreamBuilder,
+}
 
-    decoder
-        .set_tokens(tokens)
-        .await;
-    decoder.register_decoder::<UniswapV2State>("uniswap_v2");
-    decoder.register_decoder::<UniswapV3State>("uniswap_v3");
+impl ProtocolStreamBuilder {
 
-    let decoder = Arc::new(decoder);
+    pub fn new(tycho_url: &str, chain: Chain) -> Self {
+        Self {
+            decoder: TychoStreamDecoder::new(),
+            stream_builder: TychoStreamBuilder::new(tycho_url, chain),
+        }
+    }
 
-    Box::pin(ReceiverStream::new(tycho_rx).then(
-        {
-            let decoder = decoder.clone(); // Clone the decoder for the closure
-            move |msg| {
-                let decoder = decoder.clone(); // Clone again for the async block
-                async move {
-                    decoder.decode(msg).await
+    pub fn exchange<T>(mut self, name: &str, filter: ComponentFilter) -> Self
+    where
+        T: ProtocolSim + TryFromWithBlock<ComponentWithState, Error=InvalidSnapshotError> + Send + 'static,
+    {
+        self.stream_builder = self.stream_builder.exchange(name, filter);
+        self.decoder.register_decoder::<T>(name);
+        self
+    }
+
+    pub fn block_time(mut self, block_time: u64) -> Self {
+        self.stream_builder = self.stream_builder.block_time(block_time);
+        self
+    }
+
+    pub fn timeout(mut self, timeout: u64) -> Self {
+        self.stream_builder = self.stream_builder.timeout(timeout);
+        self
+    }
+
+    pub fn no_state(mut self, no_state: bool) -> Self {
+        self.stream_builder = self.stream_builder.no_state(no_state);
+        self
+    }
+
+    pub fn auth_key(mut self, auth_key: Option<String>) -> Self {
+        self.stream_builder = self.stream_builder.auth_key(auth_key);
+        self
+    }
+
+    pub fn no_tls(mut self, no_tls: bool) -> Self {
+        self.stream_builder = self.stream_builder.no_tls(no_tls);
+        self
+    }
+
+    pub fn set_tokens(self, tokens: HashMap<Bytes, ERC20Token>) -> Self {
+        self.decoder.set_tokens(tokens);
+        self
+    }
+
+    pub async fn build(self) -> impl Stream<Item=Result<BlockUpdate, StreamDecodeError>> {
+        // TODO: do some error handling
+        let (_, rx) = self.stream_builder.build().await.unwrap();
+        let decoder = Arc::new(self.decoder);
+
+        Box::pin(ReceiverStream::new(rx).then(
+            {
+                let decoder = decoder.clone(); // Clone the decoder for the closure
+                move |msg| {
+                    let decoder = decoder.clone(); // Clone again for the async block
+                    async move {
+                        decoder.decode(msg).await
+                    }
                 }
             }
-        }
-    ))
+        ))
+    }
 }
 
 fn string_to_h160(s: &str) -> Result<H160, StreamDecodeError> {
