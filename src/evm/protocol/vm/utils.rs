@@ -14,7 +14,6 @@ use ethers::{
     providers::{Http, Middleware, Provider},
     types::{Address, H160},
 };
-use ethers::prelude::ProviderError;
 use hex::FromHex;
 use mini_moka::sync::Cache;
 use revm::primitives::{Bytecode, Bytes};
