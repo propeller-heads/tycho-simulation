@@ -17,6 +17,7 @@ use ratatui::{
 };
 use std::{cmp::max, str::FromStr, time::Instant};
 use tokio::{select, sync::mpsc::Receiver};
+use tracing::warn;
 use tycho_simulation::protocol::{
     models::ProtocolComponent, state::ProtocolSim, stream::BlockUpdate,
 };
@@ -190,7 +191,6 @@ impl App {
         let mut reader = event::EventStream::new();
         loop {
             terminal.draw(|frame| self.draw(frame))?;
-
             select! {
                 maybe_data = self.rx.recv() => {
                     if let Some(data) = maybe_data {

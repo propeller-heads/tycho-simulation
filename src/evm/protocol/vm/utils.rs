@@ -258,11 +258,7 @@ pub(crate) async fn get_code_for_contract(
     let addr = Address::from_str(address).expect("Failed to parse address to get code for");
 
     // Call eth_getCode to get the bytecode of the contract
-    match provider.get_code_at(addr).await {
-        Ok(code) if code.is_empty() => {
-            Err(SimulationError::FatalError("Empty code response from RPC".to_string()))
-        }
-    match provider.get_code(addr, None).await {
+    match provider.get_code_at(addr, None).await {
         Ok(code) if code.is_empty() => Err(SimulationError::FatalError("Empty code response from RPC".to_string())),
         Ok(code) => {
             let bytecode = Bytecode::new_raw(Bytes::from(code.to_vec()));
