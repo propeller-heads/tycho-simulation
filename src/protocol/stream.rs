@@ -10,20 +10,22 @@ use ethers::prelude::H160;
 use futures::{Stream, StreamExt};
 use std::{
     collections::{hash_map::Entry, HashMap},
+    future::Future,
+    pin::Pin,
     str::FromStr,
     sync::Arc,
 };
-use std::future::Future;
-use std::pin::Pin;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, warn};
-use tycho_client::feed::{synchronizer::ComponentWithState, FeedMessage, Header};
-use tycho_client::feed::component_tracker::ComponentFilter;
-use tycho_client::stream::TychoStreamBuilder;
-use tycho_core::Bytes;
-use tycho_core::dto::Chain;
+use tycho_client::{
+    feed::{
+        component_tracker::ComponentFilter, synchronizer::ComponentWithState, FeedMessage, Header,
+    },
+    stream::{StreamError, TychoStreamBuilder},
+};
+use tycho_core::{dto::Chain, Bytes};
 
 #[derive(Error, Debug)]
 pub enum StreamDecodeError {
@@ -66,14 +68,10 @@ struct DecoderState {
     states: HashMap<String, Box<dyn ProtocolSim>>,
 }
 
+type DecodeFut =
+    Pin<Box<dyn Future<Output = Result<Box<dyn ProtocolSim>, InvalidSnapshotError>> + Send + Sync>>;
 
-type DecodeFut = Pin<Box<dyn Future<Output = Result<Box<dyn ProtocolSim>, InvalidSnapshotError>> + Send + Sync>>;
-
-type RegistryFn = dyn Fn(
-    ComponentWithState,
-    Header,
-) -> DecodeFut + Send + Sync;
-
+type RegistryFn = dyn Fn(ComponentWithState, Header) -> DecodeFut + Send + Sync;
 
 struct TychoStreamDecoder {
     state: Arc<RwLock<DecoderState>>,
@@ -82,8 +80,7 @@ struct TychoStreamDecoder {
     registry: HashMap<String, Box<RegistryFn>>,
 }
 
-impl TychoStreamDecoder
-{
+impl TychoStreamDecoder {
     pub fn new() -> Self {
         Self {
             state: Arc::new(RwLock::new(DecoderState::default())),
@@ -94,26 +91,37 @@ impl TychoStreamDecoder
     }
 
     pub fn set_tokens(&self, tokens: HashMap<Bytes, ERC20Token>) {
-        let mut guard = self.state.blocking_write();
-        guard.tokens = tokens;
+        let state = self.state.clone();
+        // We prefer this to be sync since it is used mainly in builders.
+        tokio::task::spawn_blocking(move || {
+            let mut guard = state.blocking_write();
+            guard.tokens = tokens;
+        });
     }
 
     // Method to register a decoder
     pub fn register_decoder<T>(&mut self, exchange: &str)
     where
-        T: ProtocolSim + TryFromWithBlock<ComponentWithState, Error=InvalidSnapshotError> + Send + 'static,
+        T: ProtocolSim
+            + TryFromWithBlock<ComponentWithState, Error = InvalidSnapshotError>
+            + Send
+            + 'static,
     {
         let decoder = Box::new(move |component: ComponentWithState, header: Header| {
             Box::pin(async move {
-                T::try_from_with_block(component, header).await.map(|c| Box::new(c) as Box<dyn ProtocolSim>)
+                T::try_from_with_block(component, header)
+                    .await
+                    .map(|c| Box::new(c) as Box<dyn ProtocolSim>)
             }) as DecodeFut
         });
-        self.registry.insert(exchange.to_string(), decoder);
+        self.registry
+            .insert(exchange.to_string(), decoder);
     }
 
     pub async fn decode(&self, msg: FeedMessage) -> Result<BlockUpdate, StreamDecodeError> {
         // stores all states updated in this tick/msg
-        // TODO: this is box cause we need to modify it, but later we clone it so it seems inefficient...
+        // TODO: this is box cause we need to modify it, but later we clone it so it seems
+        // inefficient...
         let mut updated_states = HashMap::new();
         let mut new_pairs = HashMap::new();
         let mut removed_pairs = HashMap::new();
@@ -140,7 +148,8 @@ impl TychoStreamDecoder
                             return None;
                         }
 
-                        let token: Result<ERC20Token, std::num::TryFromIntError> = t.clone().try_into();
+                        let token: Result<ERC20Token, std::num::TryFromIntError> =
+                            t.clone().try_into();
                         let result = match token {
                             Ok(t) => Ok((addr.clone(), t)),
                             Err(e) => Err(StreamDecodeError::Fatal(format!(
@@ -185,7 +194,7 @@ impl TychoStreamDecoder
             let mut new_components = HashMap::new();
 
             // PROCESS SNAPSHOTS
-            for (id, snapshot) in protocol_msg
+            'outer: for (id, snapshot) in protocol_msg
                 .snapshots
                 .get_states()
                 .clone()
@@ -209,7 +218,7 @@ impl TychoStreamDecoder
                         Some(token) => component_tokens.push(token.clone()),
                         None => {
                             debug!("Token not found {}, ignoring pool {:x?}", token, id);
-                            continue;
+                            continue 'outer;
                         }
                     }
                 }
@@ -224,7 +233,7 @@ impl TychoStreamDecoder
                         Err(e) => {
                             if self.skip_state_decode_failures {
                                 warn!(pool = id, error = %e, "StateDecodingFailure");
-                                continue;
+                                continue 'outer;
                             } else {
                                 return Err(StreamDecodeError::Fatal(format!("{e}")));
                             }
@@ -232,7 +241,7 @@ impl TychoStreamDecoder
                     }
                 } else if self.skip_state_decode_failures {
                     warn!(pool = id, "MissingDecoderRegistration");
-                    continue;
+                    continue 'outer;
                 } else {
                     return Err(StreamDecodeError::Fatal(format!(
                         "Missing decoder registration for: {id}"
@@ -295,9 +304,7 @@ impl TychoStreamDecoder
         Ok(BlockUpdate::new(block.number, updated_states, new_pairs)
             .set_removed_pairs(removed_pairs))
     }
-
 }
-
 
 pub struct ProtocolStreamBuilder {
     decoder: TychoStreamDecoder,
@@ -305,7 +312,6 @@ pub struct ProtocolStreamBuilder {
 }
 
 impl ProtocolStreamBuilder {
-
     pub fn new(tycho_url: &str, chain: Chain) -> Self {
         Self {
             decoder: TychoStreamDecoder::new(),
@@ -315,15 +321,22 @@ impl ProtocolStreamBuilder {
 
     pub fn exchange<T>(mut self, name: &str, filter: ComponentFilter) -> Self
     where
-        T: ProtocolSim + TryFromWithBlock<ComponentWithState, Error=InvalidSnapshotError> + Send + 'static,
+        T: ProtocolSim
+            + TryFromWithBlock<ComponentWithState, Error = InvalidSnapshotError>
+            + Send
+            + 'static,
     {
-        self.stream_builder = self.stream_builder.exchange(name, filter);
+        self.stream_builder = self
+            .stream_builder
+            .exchange(name, filter);
         self.decoder.register_decoder::<T>(name);
         self
     }
 
     pub fn block_time(mut self, block_time: u64) -> Self {
-        self.stream_builder = self.stream_builder.block_time(block_time);
+        self.stream_builder = self
+            .stream_builder
+            .block_time(block_time);
         self
     }
 
@@ -352,22 +365,19 @@ impl ProtocolStreamBuilder {
         self
     }
 
-    pub async fn build(self) -> impl Stream<Item=Result<BlockUpdate, StreamDecodeError>> {
-        // TODO: do some error handling
-        let (_, rx) = self.stream_builder.build().await.unwrap();
+    pub async fn build(
+        self,
+    ) -> Result<impl Stream<Item = Result<BlockUpdate, StreamDecodeError>>, StreamError> {
+        let (_, rx) = self.stream_builder.build().await?;
         let decoder = Arc::new(self.decoder);
 
-        Box::pin(ReceiverStream::new(rx).then(
-            {
-                let decoder = decoder.clone(); // Clone the decoder for the closure
-                move |msg| {
-                    let decoder = decoder.clone(); // Clone again for the async block
-                    async move {
-                        decoder.decode(msg).await
-                    }
-                }
+        Ok(Box::pin(ReceiverStream::new(rx).then({
+            let decoder = decoder.clone(); // Clone the decoder for the closure
+            move |msg| {
+                let decoder = decoder.clone(); // Clone again for the async block
+                async move { decoder.decode(msg).await }
             }
-        ))
+        })))
     }
 }
 

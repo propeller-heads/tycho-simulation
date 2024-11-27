@@ -260,7 +260,17 @@ pub async fn get_code_for_contract(
     })?;
 
     // Call eth_getCode to get the bytecode of the contract
-    match provider.get_code(addr, None).await {
+    sync_get_code(connection_string.as_str(), addr)
+}
+
+fn sync_get_code(connection_string: &str, addr: H160) -> Result<Bytecode, SimulationError> {
+    let provider =
+        Provider::<Http>::try_from(connection_string).expect("could not instantiate HTTP Provider");
+
+    let response = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(provider.get_code(addr, None))
+    });
+    match response {
         Ok(code) if code.is_empty() => Err(SimulationError::FatalError("Empty code response from RPC".to_string())),
         Ok(code) => {
             let bytecode = Bytecode::new_raw(Bytes::from(code.to_vec()));

@@ -7753,6 +7753,7 @@ dependencies = [
  "tokio-stream",
  "tokio-test",
  "tracing",
+ "tracing-appender",
  "tracing-subscriber",
  "tycho-client",
  "tycho-core",
