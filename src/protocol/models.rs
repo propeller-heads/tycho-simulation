@@ -95,3 +95,29 @@ impl GetAmountOutResult {
         self.gas += &other.gas;
     }
 }
+
+#[derive(Debug)]
+pub struct BlockUpdate {
+    pub block_number: u64,
+    /// The current state of all pools
+    pub states: HashMap<String, Box<dyn ProtocolSim>>,
+    /// The new pairs that were added in this block
+    pub new_pairs: HashMap<String, ProtocolComponent>,
+    /// The pairs that were removed in this block
+    pub removed_pairs: HashMap<String, ProtocolComponent>,
+}
+
+impl BlockUpdate {
+    pub fn new(
+        block_number: u64,
+        states: HashMap<String, Box<dyn ProtocolSim>>,
+        new_pairs: HashMap<String, ProtocolComponent>,
+    ) -> Self {
+        BlockUpdate { block_number, states, new_pairs, removed_pairs: HashMap::new() }
+    }
+
+    pub fn set_removed_pairs(mut self, pairs: HashMap<String, ProtocolComponent>) -> Self {
+        self.removed_pairs = pairs;
+        self
+    }
+}

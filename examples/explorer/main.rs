@@ -12,8 +12,7 @@ use tracing_subscriber::{fmt, EnvFilter};
 use tycho_client::feed::component_tracker::ComponentFilter;
 use tycho_core::dto::Chain;
 use tycho_simulation::protocol::{
-    stream::{BlockUpdate, ProtocolStreamBuilder},
-    uniswap_v2::state::UniswapV2State,
+    models::BlockUpdate, stream::ProtocolStreamBuilder, uniswap_v2::state::UniswapV2State,
     uniswap_v3::state::UniswapV3State,
 };
 
@@ -96,4 +95,3 @@ async fn main() {
     let _ = select_all(tasks).await;
     ratatui::restore();
 }
-
