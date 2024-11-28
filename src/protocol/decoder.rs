@@ -1,0 +1,426 @@
+use crate::{
+    models::ERC20Token,
+    protocol::{
+        errors::InvalidSnapshotError,
+        models::{BlockUpdate, ProtocolComponent, TryFromWithBlock},
+        state::ProtocolSim,
+    },
+};
+use ethers::prelude::H160;
+use std::{
+    collections::{hash_map::Entry, HashMap},
+    future::Future,
+    pin::Pin,
+    str::FromStr,
+    sync::Arc,
+};
+use thiserror::Error;
+use tokio::sync::RwLock;
+use tracing::{debug, warn};
+use tycho_client::feed::{synchronizer::ComponentWithState, FeedMessage, Header};
+use tycho_core::Bytes;
+
+#[derive(Error, Debug)]
+pub enum StreamDecodeError {
+    #[error("{0}")]
+    Fatal(String),
+}
+
+#[derive(Default)]
+struct DecoderState {
+    tokens: HashMap<Bytes, ERC20Token>,
+    states: HashMap<String, Box<dyn ProtocolSim>>,
+}
+
+type DecodeFut =
+    Pin<Box<dyn Future<Output = Result<Box<dyn ProtocolSim>, InvalidSnapshotError>> + Send + Sync>>;
+type RegistryFn = dyn Fn(ComponentWithState, Header) -> DecodeFut + Send + Sync;
+
+pub(super) struct TychoStreamDecoder {
+    state: Arc<RwLock<DecoderState>>,
+    skip_state_decode_failures: bool,
+    min_token_quality: u32,
+    registry: HashMap<String, Box<RegistryFn>>,
+}
+
+impl TychoStreamDecoder {
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(RwLock::new(DecoderState::default())),
+            skip_state_decode_failures: false,
+            min_token_quality: 51,
+            registry: HashMap::new(),
+        }
+    }
+
+    pub fn set_tokens(&self, tokens: HashMap<Bytes, ERC20Token>) {
+        let state = self.state.clone();
+        // We prefer this to be sync since it is used mainly in builders.
+        tokio::task::spawn_blocking(move || {
+            let mut guard = state.blocking_write();
+            guard.tokens = tokens;
+        });
+    }
+
+    // Method to register a decoder
+    pub fn register_decoder<T>(&mut self, exchange: &str)
+    where
+        T: ProtocolSim
+            + TryFromWithBlock<ComponentWithState, Error = InvalidSnapshotError>
+            + Send
+            + 'static,
+    {
+        let decoder = Box::new(move |component: ComponentWithState, header: Header| {
+            Box::pin(async move {
+                T::try_from_with_block(component, header)
+                    .await
+                    .map(|c| Box::new(c) as Box<dyn ProtocolSim>)
+            }) as DecodeFut
+        });
+        self.registry
+            .insert(exchange.to_string(), decoder);
+    }
+
+    pub async fn decode(&self, msg: FeedMessage) -> Result<BlockUpdate, StreamDecodeError> {
+        // stores all states updated in this tick/msg
+        let mut updated_states = HashMap::new();
+        let mut new_pairs = HashMap::new();
+        let mut removed_pairs = HashMap::new();
+
+        let block = msg
+            .state_msgs
+            .values()
+            .next()
+            .ok_or_else(|| StreamDecodeError::Fatal("Missing block!".into()))?
+            .header
+            .clone();
+
+        for (protocol, protocol_msg) in msg.state_msgs.iter() {
+            // Add any new tokens
+            if let Some(deltas) = protocol_msg.deltas.as_ref() {
+                let mut state_guard = self.state.write().await;
+                let res = deltas
+                    .new_tokens
+                    .iter()
+                    .filter_map(|(addr, t)| {
+                        if t.quality < self.min_token_quality ||
+                            !state_guard.tokens.contains_key(addr)
+                        {
+                            return None;
+                        }
+
+                        let token: Result<ERC20Token, std::num::TryFromIntError> =
+                            t.clone().try_into();
+                        let result = match token {
+                            Ok(t) => Ok((addr.clone(), t)),
+                            Err(e) => Err(StreamDecodeError::Fatal(format!(
+                                "Failed decoding token {e} {addr:#044x}"
+                            ))),
+                        };
+                        Some(result)
+                    })
+                    .collect::<Result<HashMap<Bytes, ERC20Token>, StreamDecodeError>>()?;
+
+                if !res.is_empty() {
+                    debug!(n = res.len(), "NewTokens");
+                    state_guard.tokens.extend(res);
+                }
+            }
+
+            let state_guard = self.state.read().await;
+            removed_pairs.extend(
+                protocol_msg
+                    .removed_components
+                    .iter()
+                    .flat_map(|(id, comp)| match string_to_h160(id) {
+                        Ok(addr) => Some(Ok((id, addr, comp.clone()))),
+                        Err(e) => {
+                            return if self.skip_state_decode_failures { None } else { Some(Err(e)) }
+                        }
+                    })
+                    .collect::<Result<Vec<_>, StreamDecodeError>>()?
+                    .into_iter()
+                    .flat_map(|(id, address, comp)| {
+                        let tokens = comp
+                            .tokens
+                            .iter()
+                            .flat_map(|addr| state_guard.tokens.get(addr).cloned())
+                            .collect::<Vec<_>>();
+
+                        if tokens.len() == comp.tokens.len() {
+                            Some((id.clone(), ProtocolComponent::new(address, tokens)))
+                        } else {
+                            // We may reach this point if the removed component
+                            //  contained low quality tokens, in this case the component
+                            //  was never added so we can skip emitting it.
+                            None
+                        }
+                    }),
+            );
+
+            let mut new_components = HashMap::new();
+
+            // PROCESS SNAPSHOTS
+            'outer: for (id, snapshot) in protocol_msg
+                .snapshots
+                .get_states()
+                .clone()
+            {
+                let addr = match string_to_h160(id.as_str()) {
+                    Ok(res) => res,
+                    Err(e) => {
+                        warn!(pool = id, error = %e, "StateDecodingFailure");
+                        if self.skip_state_decode_failures {
+                            continue;
+                        } else {
+                            return Err(e);
+                        }
+                    }
+                };
+
+                // Construct component from snapshot
+                let mut component_tokens = Vec::new();
+                for token in snapshot.component.tokens.clone() {
+                    match state_guard.tokens.get(&token) {
+                        Some(token) => component_tokens.push(token.clone()),
+                        None => {
+                            debug!("Token not found {}, ignoring pool {:x?}", token, id);
+                            continue 'outer;
+                        }
+                    }
+                }
+                new_pairs.insert(id.clone(), ProtocolComponent::new(addr, component_tokens));
+
+                // Construct state from snapshot
+                if let Some(state_decode_f) = self.registry.get(protocol.as_str()) {
+                    match state_decode_f(snapshot, block.clone()).await {
+                        Ok(state) => {
+                            new_components.insert(id.clone(), state);
+                        }
+                        Err(e) => {
+                            if self.skip_state_decode_failures {
+                                warn!(pool = id, error = %e, "StateDecodingFailure");
+                                continue 'outer;
+                            } else {
+                                return Err(StreamDecodeError::Fatal(format!("{e}")));
+                            }
+                        }
+                    }
+                } else if self.skip_state_decode_failures {
+                    warn!(pool = id, "MissingDecoderRegistration");
+                    continue 'outer;
+                } else {
+                    return Err(StreamDecodeError::Fatal(format!(
+                        "Missing decoder registration for: {id}"
+                    )));
+                }
+            }
+
+            if !new_components.is_empty() {
+                debug!("Decoded {} snapshots for protocol {}", new_components.len(), protocol);
+            }
+            updated_states.extend(new_components);
+
+            // PROCESS DELTAS
+            if let Some(deltas) = protocol_msg.deltas.clone() {
+                for (id, update) in deltas.state_updates {
+                    match updated_states.entry(id.clone()) {
+                        Entry::Occupied(mut entry) => {
+                            // if state exists in updated_states, apply the delta to it
+                            let state: &mut Box<dyn ProtocolSim> = entry.get_mut();
+                            state
+                                .delta_transition(update)
+                                .map_err(|e| {
+                                    StreamDecodeError::Fatal(format!("TransitionFailure: {e:?}"))
+                                })?;
+                        }
+                        Entry::Vacant(_) => {
+                            match state_guard.states.get(&id) {
+                                // if state does not exist in updated_states, apply the delta to the
+                                // stored state
+                                Some(stored_state) => {
+                                    let mut state = stored_state.clone();
+                                    state
+                                        .delta_transition(update)
+                                        .map_err(|e| {
+                                            StreamDecodeError::Fatal(format!(
+                                                "TransitionFailure: {e:?}"
+                                            ))
+                                        })?;
+                                    updated_states.insert(id, state);
+                                }
+                                None => warn!(
+                                    pool = id,
+                                    reason = "MissingState",
+                                    "DeltaTransitionError"
+                                ),
+                            }
+                        }
+                    }
+                }
+            };
+        }
+
+        // Persist the newly added/updated states
+        let mut state_guard = self.state.write().await;
+        state_guard
+            .states
+            .extend(updated_states.clone().into_iter());
+
+        // Send the tick with all updated states
+        Ok(BlockUpdate::new(block.number, updated_states, new_pairs)
+            .set_removed_pairs(removed_pairs))
+    }
+}
+
+fn string_to_h160(s: &str) -> Result<H160, StreamDecodeError> {
+    let trimmed = if let Some(stripped) = s.strip_prefix("0x") { stripped } else { s };
+
+    // Ensure the string has at least 20 characters (40 hex digits)
+    if trimmed.len() < 40 {
+        return Err(StreamDecodeError::Fatal(format!("Failed to decode {s} as H160")));
+    }
+
+    // Slice off the first 40 characters (20 bytes as hex)
+    let sliced = &trimmed[..40];
+
+    H160::from_str(sliced)
+        .map_err(|e| StreamDecodeError::Fatal(format!("Failed to decode {trimmed} as H160: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        models::ERC20Token,
+        protocol::{
+            decoder::{StreamDecodeError, TychoStreamDecoder},
+            uniswap_v2::state::UniswapV2State,
+        },
+    };
+    use ethers::types::U256;
+    use rstest::*;
+    use std::{fs, path::Path};
+    use tycho_client::feed::FeedMessage;
+    use tycho_core::Bytes;
+
+    fn setup_decoder(set_tokens: bool) -> TychoStreamDecoder {
+        let mut decoder = TychoStreamDecoder::new();
+        decoder.register_decoder::<UniswapV2State>("uniswap_v2");
+        if set_tokens {
+            let tokens = [
+                Bytes::from("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").lpad(20, 0),
+                Bytes::from("0xdac17f958d2ee523a2206206994597c13d831ec7").lpad(20, 0),
+            ]
+            .iter()
+            .map(|addr| {
+                let addr_str = format!("{:x}", addr);
+                (addr.clone(), ERC20Token::new(&addr_str, 18, &addr_str, U256::from(100_000)))
+            })
+            .collect();
+            decoder.set_tokens(tokens);
+        }
+        decoder
+    }
+
+    fn load_test_msg(name: &str) -> FeedMessage {
+        let project_root = env!("CARGO_MANIFEST_DIR");
+        let asset_path =
+            Path::new(project_root).join(format!("tests/assets/decoder/{}.json", name));
+        let json_data = fs::read_to_string(asset_path).expect("Failed to read test asset");
+        serde_json::from_str(&json_data).expect("Failed to deserialize FeedMsg json!")
+    }
+
+    #[tokio::test]
+    async fn test_decode() {
+        let decoder = setup_decoder(true);
+
+        let msg = load_test_msg("uniswap_v2_snapshot");
+        let res1 = decoder
+            .decode(msg)
+            .await
+            .expect("decode failure");
+        let msg = load_test_msg("uniswap_v2_delta");
+        let res2 = decoder
+            .decode(msg)
+            .await
+            .expect("decode failure");
+
+        assert_eq!(res1.states.len(), 1);
+        assert_eq!(res2.states.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_decode_component_missing_token() {
+        let decoder = setup_decoder(false);
+        let tokens = [Bytes::from("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").lpad(20, 0)]
+            .iter()
+            .map(|addr| {
+                let addr_str = format!("{:x}", addr);
+                (addr.clone(), ERC20Token::new(&addr_str, 18, &addr_str, U256::from(100_000)))
+            })
+            .collect();
+        decoder.set_tokens(tokens);
+
+        let msg = load_test_msg("uniswap_v2_snapshot");
+        let res1 = decoder
+            .decode(msg)
+            .await
+            .expect("decode failure");
+
+        assert_eq!(res1.states.len(), 0);
+    }
+
+    #[rstest]
+    #[case(true)]
+    #[case(false)]
+    #[tokio::test]
+    async fn test_decode_component_bad_id(#[case] skip_failures: bool) {
+        let mut decoder = setup_decoder(true);
+        decoder.skip_state_decode_failures = skip_failures;
+
+        let msg = load_test_msg("uniswap_v2_snapshot_broken_id");
+        match decoder.decode(msg).await {
+            Err(StreamDecodeError::Fatal(msg)) => {
+                if !skip_failures {
+                    assert_eq!(msg, "Failed to decode 0xZzzz as H160");
+                } else {
+                    panic!("Expected failures to be ignored. Err: {}", msg)
+                }
+            }
+            Ok(res) => {
+                if !skip_failures {
+                    panic!("Expected failures to be raised")
+                } else {
+                    assert_eq!(res.states.len(), 1);
+                }
+            }
+        }
+    }
+
+    #[rstest]
+    #[case(true)]
+    #[case(false)]
+    #[tokio::test]
+    async fn test_decode_component_bad_state(#[case] skip_failures: bool) {
+        let mut decoder = setup_decoder(true);
+        decoder.skip_state_decode_failures = skip_failures;
+
+        let msg = load_test_msg("uniswap_v2_snapshot_broken_state");
+        match decoder.decode(msg).await {
+            Err(StreamDecodeError::Fatal(msg)) => {
+                if !skip_failures {
+                    assert_eq!(msg, "Missing attributes reserve0");
+                } else {
+                    panic!("Expected failures to be ignored. Err: {}", msg)
+                }
+            }
+            Ok(res) => {
+                if !skip_failures {
+                    panic!("Expected failures to be raised")
+                } else {
+                    assert_eq!(res.states.len(), 0);
+                }
+            }
+        }
+    }
+}

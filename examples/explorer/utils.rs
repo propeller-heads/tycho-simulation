@@ -1,9 +1,8 @@
-use futures::StreamExt;
 use std::collections::HashMap;
 
+use tracing_subscriber::{fmt, EnvFilter};
 use tycho_client::{rpc::RPCClient, HttpRPCClient};
 use tycho_core::{dto::Chain, Bytes};
-use tracing_subscriber::{fmt, EnvFilter};
 use tycho_simulation::models::ERC20Token;
 
 pub async fn load_all_tokens(
@@ -39,5 +38,5 @@ pub fn setup_tracing() {
         .with_env_filter(EnvFilter::from_default_env())
         .finish();
     // Set the subscriber as the global default
-    tracing::subscriber::set_global_default(subscriber);
+    tracing::subscriber::set_global_default(subscriber).unwrap();
 }
