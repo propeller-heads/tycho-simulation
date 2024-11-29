@@ -41,8 +41,6 @@
 //! assert_eq!(state.spot_price(&weth, &usdc).unwrap(), 1218.0683462769755f64);
 //! assert_eq!(out, U256::from(1214374202));
 //! ```
-use std::any::Any;
-use std::collections::HashMap;
 use crate::{
     models::ERC20Token,
     protocol::{
@@ -52,8 +50,8 @@ use crate::{
     },
 };
 use ethers::types::U256;
-use tycho_core::Bytes;
-use tycho_core::dto::ProtocolStateDelta;
+use std::{any::Any, collections::HashMap};
+use tycho_core::{dto::ProtocolStateDelta, Bytes};
 
 /// ProtocolSim trait
 /// This trait defines the methods that a protocol state must implement in order to be used

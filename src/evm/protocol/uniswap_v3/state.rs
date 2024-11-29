@@ -1,6 +1,5 @@
-use std::any::Any;
-use std::collections::HashMap;
 use ethers::types::{Sign, I256, U256};
+use std::{any::Any, collections::HashMap};
 use tracing::trace;
 
 use crate::{

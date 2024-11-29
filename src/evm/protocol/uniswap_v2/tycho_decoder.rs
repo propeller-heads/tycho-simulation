@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use ethers::types::U256;
 
 use tycho_client::feed::{synchronizer::ComponentWithState, Header};
-use tycho_ethereum::BytesCodec;
 use tycho_core::Bytes;
+use tycho_ethereum::BytesCodec;
 
 use crate::{
     models::ERC20Token,

@@ -10,9 +10,9 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     future::Future,
     pin::Pin,
+    str::FromStr,
     sync::Arc,
 };
-use std::str::FromStr;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
@@ -33,7 +33,8 @@ struct DecoderState {
 
 type DecodeFut =
     Pin<Box<dyn Future<Output = Result<Box<dyn ProtocolSim>, InvalidSnapshotError>> + Send + Sync>>;
-type RegistryFn = dyn Fn(ComponentWithState, Header, Arc<RwLock<DecoderState>>) -> DecodeFut + Send + Sync;
+type RegistryFn =
+    dyn Fn(ComponentWithState, Header, Arc<RwLock<DecoderState>>) -> DecodeFut + Send + Sync;
 
 pub(super) struct TychoStreamDecoder {
     state: Arc<RwLock<DecoderState>>,
@@ -69,14 +70,18 @@ impl TychoStreamDecoder {
             + Send
             + 'static,
     {
-        let decoder = Box::new(move |component: ComponentWithState, header: Header, state: Arc<RwLock<DecoderState>> | {
-            Box::pin(async move {
-                let guard = state.read().await;
-                T::try_from_with_block(component, header, &guard.tokens)
-                    .await
-                    .map(|c| Box::new(c) as Box<dyn ProtocolSim>)
-            }) as DecodeFut
-        });
+        let decoder = Box::new(
+            move |component: ComponentWithState,
+                  header: Header,
+                  state: Arc<RwLock<DecoderState>>| {
+                Box::pin(async move {
+                    let guard = state.read().await;
+                    T::try_from_with_block(component, header, &guard.tokens)
+                        .await
+                        .map(|c| Box::new(c) as Box<dyn ProtocolSim>)
+                }) as DecodeFut
+            },
+        );
         self.registry
             .insert(exchange.to_string(), decoder);
     }
@@ -135,7 +140,11 @@ impl TychoStreamDecoder {
                     .flat_map(|(id, comp)| match Bytes::from_str(id) {
                         Ok(addr) => Some(Ok((id, addr, comp))),
                         Err(e) => {
-                            return if self.skip_state_decode_failures { None } else { Some(Err(StreamDecodeError::Fatal(e.to_string()))) }
+                            return if self.skip_state_decode_failures {
+                                None
+                            } else {
+                                Some(Err(StreamDecodeError::Fatal(e.to_string())))
+                            }
                         }
                     })
                     .collect::<Result<Vec<_>, StreamDecodeError>>()?
@@ -148,10 +157,7 @@ impl TychoStreamDecoder {
                             .collect::<Vec<_>>();
 
                         if tokens.len() == comp.tokens.len() {
-                            Some((
-                                id.clone(),
-                                ProtocolComponent::new(address, tokens),
-                            ))
+                            Some((id.clone(), ProtocolComponent::new(address, tokens)))
                         } else {
                             // We may reach this point if the removed component
                             //  contained low quality tokens, in this case the component
@@ -270,11 +276,9 @@ impl TychoStreamDecoder {
 #[cfg(test)]
 mod tests {
     use crate::{
-        models::ERC20Token,
         evm::protocol::uniswap_v2::state::UniswapV2State,
-        protocol::{
-            decoder::{StreamDecodeError, TychoStreamDecoder},
-        },
+        models::ERC20Token,
+        protocol::decoder::{StreamDecodeError, TychoStreamDecoder},
     };
     use ethers::types::U256;
     use rstest::*;
@@ -361,7 +365,10 @@ mod tests {
         match decoder.decode(msg).await {
             Err(StreamDecodeError::Fatal(msg)) => {
                 if !skip_failures {
-                    assert_eq!(msg, "Failed to parse bytes: Invalid hex: Invalid character 'Z' at position 0");
+                    assert_eq!(
+                        msg,
+                        "Failed to parse bytes: Invalid hex: Invalid character 'Z' at position 0"
+                    );
                 } else {
                     panic!("Expected failures to be ignored. Err: {}", msg)
                 }

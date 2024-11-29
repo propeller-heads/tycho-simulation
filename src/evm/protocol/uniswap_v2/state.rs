@@ -1,7 +1,3 @@
-use std::any::Any;
-use std::collections::HashMap;
-use ethers::types::U256;
-use tycho_core::Bytes;
 use crate::{
     models::ERC20Token,
     protocol::{
@@ -12,7 +8,9 @@ use crate::{
     },
     safe_math::{safe_add_u256, safe_div_u256, safe_mul_u256, safe_sub_u256},
 };
-use tycho_core::dto::ProtocolStateDelta;
+use ethers::types::U256;
+use std::{any::Any, collections::HashMap};
+use tycho_core::{dto::ProtocolStateDelta, Bytes};
 use tycho_ethereum::BytesCodec;
 
 use super::{events::UniswapV2Sync, reserve_price::spot_price_from_reserves};

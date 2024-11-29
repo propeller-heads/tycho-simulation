@@ -1,4 +1,4 @@
-use ethers::{ types::U256};
+use ethers::types::U256;
 use futures::StreamExt;
 use itertools::Itertools;
 use ratatui::{
