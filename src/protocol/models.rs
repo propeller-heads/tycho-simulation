@@ -24,13 +24,11 @@
 //! It's worth emphasizin that although the term "pair" used in this
 //! module refers to a trading pair, it does not necessarily imply two
 //! tokens only. Some pairs might have more than two tokens.
-use std::collections::HashMap;
-use std::future::Future;
-use ethers::types::{H160, U256};
+use ethers::types::U256;
+use std::{collections::HashMap, future::Future};
 use tycho_core::Bytes;
 
 use crate::models::ERC20Token;
-use std::collections::HashMap;
 use tycho_client::feed::Header;
 
 use super::state::ProtocolSim;
@@ -60,7 +58,7 @@ pub trait TryFromWithBlock<T> {
     fn try_from_with_block(
         value: T,
         block: Header,
-        all_tokens: HashMap<H160, ERC20Token>
+        all_tokens: &HashMap<Bytes, ERC20Token>,
     ) -> impl Future<Output = Result<Self, Self::Error>> + Send + Sync
     where
         Self: Sized;

@@ -42,7 +42,7 @@
 //! assert_eq!(out, U256::from(1214374202));
 //! ```
 use std::any::Any;
-
+use std::collections::HashMap;
 use crate::{
     models::ERC20Token,
     protocol::{
@@ -52,6 +52,7 @@ use crate::{
     },
 };
 use ethers::types::U256;
+use tycho_core::Bytes;
 use tycho_core::dto::ProtocolStateDelta;
 
 /// ProtocolSim trait
@@ -115,7 +116,7 @@ pub trait ProtocolSim: std::fmt::Debug + Send + Sync + 'static {
     fn delta_transition(
         &mut self,
         delta: ProtocolStateDelta,
-        tokens: Vec<ERC20Token>,
+        tokens: &HashMap<Bytes, ERC20Token>,
     ) -> Result<(), TransitionError<String>>;
 
     /// Applies an event transition to the protocol's state.

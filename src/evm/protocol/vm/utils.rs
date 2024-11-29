@@ -271,22 +271,22 @@ fn sync_get_code(connection_string: &str, addr: H160) -> Result<Bytecode, Simula
         tokio::runtime::Handle::current().block_on(provider.get_code(addr, None))
     });
     match response {
-        Ok(code) if code.is_empty() => Err(SimulationError::FatalError("Empty code response from RPC".to_string())),
+        Ok(code) if code.is_empty() => {
+            Err(SimulationError::FatalError("Empty code response from RPC".to_string()))
+        }
         Ok(code) => {
             let bytecode = Bytecode::new_raw(Bytes::from(code.to_vec()));
             Ok(bytecode)
         }
-        Err(e) => {
-            match e {
-                ProviderError::JsonRpcClientError(err) => Err(SimulationError::RecoverableError(
-                    format!("Failed to get code for contract due to internal RPC error: {:?}", err),
-                )),
-                _ => Err(SimulationError::FatalError(format!(
-                    "Failed to get code for contract. Invalid response from RPC: {:?}",
-                    e.to_string()
-                ))),
-            }
-        }
+        Err(e) => match e {
+            ProviderError::JsonRpcClientError(err) => Err(SimulationError::RecoverableError(
+                format!("Failed to get code for contract due to internal RPC error: {:?}", err),
+            )),
+            _ => Err(SimulationError::FatalError(format!(
+                "Failed to get code for contract. Invalid response from RPC: {:?}",
+                e.to_string()
+            ))),
+        },
     }
 }
 

@@ -7698,8 +7698,8 @@ dependencies = [
 
 [[package]]
 name = "tycho-ethereum"
-version = "0.42.0"
-source = "git+https://github.com/propeller-heads/tycho-indexer.git?tag=0.42.0#8d6e9edb826378e5ca54278705f99a8906aaf719"
+version = "0.42.3"
+source = "git+https://github.com/propeller-heads/tycho-indexer.git?rev=f8d765554194ddd222e4c6f07811e8c99700615a#f8d765554194ddd222e4c6f07811e8c99700615a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8232,7 +8232,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

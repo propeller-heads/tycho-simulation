@@ -1,7 +1,3 @@
-use ethers::{
-    prelude::U256,
-    types::{H160, H256},
-};
 use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},
@@ -11,6 +7,7 @@ use ethers::types::{H160, H256, U256};
 use tracing::info;
 
 use tycho_client::feed::{synchronizer::ComponentWithState, Header};
+use tycho_core::Bytes;
 use tycho_ethereum::BytesCodec;
 
 use crate::{
@@ -40,15 +37,14 @@ impl TryFromWithBlock<ComponentWithState> for EVMPoolState<PreCachedDB> {
     async fn try_from_with_block(
         snapshot: ComponentWithState,
         block: Header,
-        all_tokens: HashMap<H160, ERC20Token>,
+        all_tokens: &HashMap<Bytes, ERC20Token>,
     ) -> Result<Self, Self::Error> {
         let id = snapshot.component.id.clone();
         let tokens: Vec<H160> = snapshot
             .component
             .tokens
-            .clone()
-            .into_iter()
-            .map(|t| H160::from_bytes(&t))
+            .iter()
+            .map(|t| H160::from_bytes(t))
             .collect();
         let block = BlockHeader::from(block);
         let balances = snapshot
@@ -144,13 +140,7 @@ impl TryFromWithBlock<ComponentWithState> for EVMPoolState<PreCachedDB> {
             .await
             .map_err(InvalidSnapshotError::VMError)?;
 
-        let erc20_tokens = tokens
-            .iter()
-            .filter_map(|token_address| all_tokens.get(token_address))
-            .cloned()
-            .collect();
-
-        pool_state.set_spot_prices(erc20_tokens)?;
+        pool_state.set_spot_prices(all_tokens)?;
         info!("Finished creating balancer pool with id {}", &id);
 
         Ok(pool_state)
@@ -254,7 +244,7 @@ mod tests {
         };
 
         // TODO: fix test
-        let result = EVMPoolState::try_from_with_block(snapshot, header(), HashMap::new()).await;
+        let result = EVMPoolState::try_from_with_block(snapshot, header(), &HashMap::new()).await;
 
         assert!(result.is_ok());
         let res = result.unwrap();
