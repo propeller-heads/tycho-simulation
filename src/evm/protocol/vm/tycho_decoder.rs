@@ -47,14 +47,14 @@ impl TryFromWithBlock<ComponentWithState> for EVMPoolState<PreCachedDB> {
     async fn try_from_with_block(
         snapshot: ComponentWithState,
         block: Header,
-        all_tokens: HashMap<Bytes, Token>,
+        all_tokens: &HashMap<Bytes, Token>,
     ) -> Result<Self, Self::Error> {
         let id = snapshot.component.id.clone();
         let tokens: Vec<Bytes> = snapshot
             .component
             .tokens
-            .clone()
-            .into_iter()
+            .iter()
+            .map(|t| Address::from_slice(t))
             .collect();
 
         let block = BlockHeader::from(block);
@@ -159,13 +159,9 @@ impl TryFromWithBlock<ComponentWithState> for EVMPoolState<PreCachedDB> {
             .await
             .map_err(InvalidSnapshotError::VMError)?;
 
-        let erc20_tokens = tokens
-            .iter()
-            .filter_map(|token_address| all_tokens.get(token_address))
-            .cloned()
-            .collect();
+        pool_state.set_spot_prices(all_tokens)?;
+        info!("Finished creating balancer pool with id {}", &id);
 
-        pool_state.set_spot_prices(erc20_tokens)?;
         Ok(pool_state)
     }
 }
@@ -263,7 +259,7 @@ mod tests {
             component: vm_component(),
         };
 
-        let result = EVMPoolState::try_from_with_block(snapshot, header(), HashMap::new()).await;
+        let result = EVMPoolState::try_from_with_block(snapshot, header(), &HashMap::new()).await;
 
         assert!(result.is_ok());
         let res = result.unwrap();

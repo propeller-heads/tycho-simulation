@@ -1,6 +1,6 @@
 use alloy_primitives::U256;
 use std::any::Any;
-
+use std::collections::HashMap;
 use num_bigint::{BigUint, ToBigUint};
 
 use crate::{
@@ -15,6 +15,7 @@ use crate::{
         state::ProtocolSim,
     },
 };
+use tycho_core::Bytes;
 use tycho_core::dto::ProtocolStateDelta;
 
 use super::reserve_price::spot_price_from_reserves;
@@ -104,7 +105,7 @@ impl ProtocolSim for UniswapV2State {
     fn delta_transition(
         &mut self,
         delta: ProtocolStateDelta,
-        _tokens: Vec<Token>,
+        _tokens: &HashMap<Bytes, Token>,
     ) -> Result<(), TransitionError<String>> {
         // reserve0 and reserve1 are considered required attributes and are expected in every delta
         // we process
@@ -300,7 +301,7 @@ mod tests {
             deleted_attributes: HashSet::new(), // usv2 doesn't have any deletable attributes
         };
 
-        let res = state.delta_transition(delta, vec![]);
+        let res = state.delta_transition(delta, &HashMap::new());
 
         assert!(res.is_ok());
         assert_eq!(state.reserve0, U256::from_str("1500").unwrap());
@@ -321,7 +322,7 @@ mod tests {
             deleted_attributes: HashSet::new(),
         };
 
-        let res = state.delta_transition(delta, vec![]);
+        let res = state.delta_transition(delta, &HashMap::new());
 
         assert!(res.is_err());
         // assert it errors for the missing reserve1 attribute delta

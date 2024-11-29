@@ -45,6 +45,7 @@
 //! assert_eq!(out, 1214374202.to_biguint().unwrap());
 //! ```
 use std::any::Any;
+use std::collections::HashMap;
 
 use num_bigint::BigUint;
 
@@ -57,6 +58,7 @@ use crate::{
         models::GetAmountOutResult,
     },
 };
+use tycho_core::Bytes;
 use tycho_core::dto::ProtocolStateDelta;
 
 /// ProtocolSim trait

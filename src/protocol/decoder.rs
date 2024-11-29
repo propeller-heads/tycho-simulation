@@ -6,14 +6,13 @@ use crate::{
         state::ProtocolSim,
     },
 };
-use ethers::prelude::H160;
 use std::{
     collections::{hash_map::Entry, HashMap},
     future::Future,
     pin::Pin,
-    str::FromStr,
     sync::Arc,
 };
+use std::str::FromStr;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
@@ -34,7 +33,7 @@ struct DecoderState {
 
 type DecodeFut =
     Pin<Box<dyn Future<Output = Result<Box<dyn ProtocolSim>, InvalidSnapshotError>> + Send + Sync>>;
-type RegistryFn = dyn Fn(ComponentWithState, Header) -> DecodeFut + Send + Sync;
+type RegistryFn = dyn Fn(ComponentWithState, Header, Arc<RwLock<DecoderState>>) -> DecodeFut + Send + Sync;
 
 pub(super) struct TychoStreamDecoder {
     state: Arc<RwLock<DecoderState>>,
@@ -70,9 +69,10 @@ impl TychoStreamDecoder {
             + Send
             + 'static,
     {
-        let decoder = Box::new(move |component: ComponentWithState, header: Header| {
+        let decoder = Box::new(move |component: ComponentWithState, header: Header, state: Arc<RwLock<DecoderState>> | {
             Box::pin(async move {
-                T::try_from_with_block(component, header)
+                let guard = state.read().await;
+                T::try_from_with_block(component, header, &guard.tokens)
                     .await
                     .map(|c| Box::new(c) as Box<dyn ProtocolSim>)
             }) as DecodeFut
@@ -132,10 +132,10 @@ impl TychoStreamDecoder {
                 protocol_msg
                     .removed_components
                     .iter()
-                    .flat_map(|(id, comp)| match string_to_h160(id) {
-                        Ok(addr) => Some(Ok((id, addr, comp.clone()))),
+                    .flat_map(|(id, comp)| match Bytes::from_str(id) {
+                        Ok(addr) => Some(Ok((id, addr, comp))),
                         Err(e) => {
-                            return if self.skip_state_decode_failures { None } else { Some(Err(e)) }
+                            return if self.skip_state_decode_failures { None } else { Some(Err(StreamDecodeError::Fatal(e.to_string()))) }
                         }
                     })
                     .collect::<Result<Vec<_>, StreamDecodeError>>()?
@@ -148,7 +148,10 @@ impl TychoStreamDecoder {
                             .collect::<Vec<_>>();
 
                         if tokens.len() == comp.tokens.len() {
-                            Some((id.clone(), ProtocolComponent::new(address, tokens)))
+                            Some((
+                                id.clone(),
+                                ProtocolComponent::new(address, tokens),
+                            ))
                         } else {
                             // We may reach this point if the removed component
                             //  contained low quality tokens, in this case the component
@@ -166,18 +169,6 @@ impl TychoStreamDecoder {
                 .get_states()
                 .clone()
             {
-                let addr = match string_to_h160(id.as_str()) {
-                    Ok(res) => res,
-                    Err(e) => {
-                        warn!(pool = id, error = %e, "StateDecodingFailure");
-                        if self.skip_state_decode_failures {
-                            continue;
-                        } else {
-                            return Err(e);
-                        }
-                    }
-                };
-
                 // Construct component from snapshot
                 let mut component_tokens = Vec::new();
                 for token in snapshot.component.tokens.clone() {
@@ -189,11 +180,14 @@ impl TychoStreamDecoder {
                         }
                     }
                 }
-                new_pairs.insert(id.clone(), ProtocolComponent::new(addr, component_tokens));
+                new_pairs.insert(
+                    id.clone(),
+                    ProtocolComponent::new(Bytes::from(id.as_str()), component_tokens),
+                );
 
                 // Construct state from snapshot
                 if let Some(state_decode_f) = self.registry.get(protocol.as_str()) {
-                    match state_decode_f(snapshot, block.clone()).await {
+                    match state_decode_f(snapshot, block.clone(), self.state.clone()).await {
                         Ok(state) => {
                             new_components.insert(id.clone(), state);
                         }
@@ -229,7 +223,7 @@ impl TychoStreamDecoder {
                             // if state exists in updated_states, apply the delta to it
                             let state: &mut Box<dyn ProtocolSim> = entry.get_mut();
                             state
-                                .delta_transition(update)
+                                .delta_transition(update, &state_guard.tokens)
                                 .map_err(|e| {
                                     StreamDecodeError::Fatal(format!("TransitionFailure: {e:?}"))
                                 })?;
@@ -241,7 +235,7 @@ impl TychoStreamDecoder {
                                 Some(stored_state) => {
                                     let mut state = stored_state.clone();
                                     state
-                                        .delta_transition(update)
+                                        .delta_transition(update, &state_guard.tokens)
                                         .map_err(|e| {
                                             StreamDecodeError::Fatal(format!(
                                                 "TransitionFailure: {e:?}"
@@ -271,21 +265,6 @@ impl TychoStreamDecoder {
         Ok(BlockUpdate::new(block.number, updated_states, new_pairs)
             .set_removed_pairs(removed_pairs))
     }
-}
-
-fn string_to_h160(s: &str) -> Result<H160, StreamDecodeError> {
-    let trimmed = if let Some(stripped) = s.strip_prefix("0x") { stripped } else { s };
-
-    // Ensure the string has at least 20 characters (40 hex digits)
-    if trimmed.len() < 40 {
-        return Err(StreamDecodeError::Fatal(format!("Failed to decode {s} as H160")));
-    }
-
-    // Slice off the first 40 characters (20 bytes as hex)
-    let sliced = &trimmed[..40];
-
-    H160::from_str(sliced)
-        .map_err(|e| StreamDecodeError::Fatal(format!("Failed to decode {trimmed} as H160: {e}")))
 }
 
 #[cfg(test)]
@@ -382,7 +361,7 @@ mod tests {
         match decoder.decode(msg).await {
             Err(StreamDecodeError::Fatal(msg)) => {
                 if !skip_failures {
-                    assert_eq!(msg, "Failed to decode 0xZzzz as H160");
+                    assert_eq!(msg, "Failed to parse bytes: Invalid hex: Invalid character 'Z' at position 0");
                 } else {
                     panic!("Expected failures to be ignored. Err: {}", msg)
                 }

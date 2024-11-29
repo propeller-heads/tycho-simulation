@@ -646,7 +646,7 @@ mod tests {
             deleted_attributes: HashSet::new(),
         };
 
-        pool.delta_transition(delta, vec![])
+        pool.delta_transition(delta, &HashMap::new())
             .unwrap();
 
         assert_eq!(pool.liquidity, 2000);

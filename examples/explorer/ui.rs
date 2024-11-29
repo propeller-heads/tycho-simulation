@@ -17,12 +17,11 @@ use ratatui::{
 };
 use std::{cmp::max, str::FromStr, time::Instant};
 use tokio::{select, sync::mpsc::Receiver};
+use tycho_core::Bytes;
 use tycho_simulation::protocol::{
     models::{BlockUpdate, ProtocolComponent},
     state::ProtocolSim,
 };
-
-use crate::data_feed::state::BlockState;
 
 const INFO_TEXT: [&str; 2] = [
     "(Esc) quit | (↑) move up | (↓) move down | (↵) Toggle Quote | (+) Increase Quote Amount",
@@ -162,7 +161,7 @@ impl App {
         }
 
         for (address, state) in update.states.iter() {
-            let eth_address = H160::from_str(address).expect("Bad address");
+            let eth_address = Bytes::from_str(address).expect("Bad address");
             let entry = self
                 .items
                 .iter()
