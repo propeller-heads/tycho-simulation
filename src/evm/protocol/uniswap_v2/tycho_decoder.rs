@@ -2,6 +2,7 @@ use alloy_primitives::U256;
 use std::collections::HashMap;
 use tycho_client::feed::{synchronizer::ComponentWithState, Header};
 use tycho_core::Bytes;
+use tycho_ethereum::BytesCodec;
 
 use crate::{
     models::Token,

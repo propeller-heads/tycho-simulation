@@ -11,8 +11,10 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tracing_subscriber::{fmt, EnvFilter};
 use tycho_client::feed::component_tracker::ComponentFilter;
 use tycho_core::dto::Chain;
-use tycho_simulation::evm::protocol::{uniswap_v2::state::UniswapV2State, uniswap_v3::state::UniswapV3State};
-use tycho_simulation::protocol::{models::BlockUpdate, stream::ProtocolStreamBuilder};
+use tycho_simulation::{
+    evm::protocol::{uniswap_v2::state::UniswapV2State, uniswap_v3::state::UniswapV3State},
+    protocol::{models::BlockUpdate, stream::ProtocolStreamBuilder},
+};
 
 #[derive(Parser)]
 struct Cli {

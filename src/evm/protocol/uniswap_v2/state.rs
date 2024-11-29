@@ -15,8 +15,8 @@ use crate::{
         state::ProtocolSim,
     },
 };
-use tycho_core::Bytes;
-use tycho_core::dto::ProtocolStateDelta;
+use std::{any::Any, collections::HashMap};
+use tycho_core::{dto::ProtocolStateDelta, Bytes};
 
 use super::reserve_price::spot_price_from_reserves;
 

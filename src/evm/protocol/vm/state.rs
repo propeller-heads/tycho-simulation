@@ -276,7 +276,10 @@ where
         Ok(limits?.0)
     }
 
-    fn clear_all_cache(&mut self, tokens: &HashMap<Bytes, Token>) -> Result<(), SimulationError> {
+    fn clear_all_cache(
+        &mut self,
+        tokens: &HashMap<Bytes, Token>,
+    ) -> Result<(), SimulationError> {
         self.adapter_contract
             .engine
             .clear_temp_storage();
@@ -899,7 +902,12 @@ mod tests {
         let mut pool_state = setup_pool_state().await;
 
         pool_state
-            .set_spot_prices(&vec![bal(), dai()].into_iter().map(|t| (Bytes::from(t.address.as_bytes()), t)).collect())
+            .set_spot_prices(
+                &vec![bal(), dai()]
+                    .into_iter()
+                    .map(|t| (Bytes::from(t.address.as_bytes()), t))
+                    .collect(),
+            )
             .unwrap();
 
         let dai_bal_spot_price = pool_state
