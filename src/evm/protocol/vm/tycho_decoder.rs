@@ -54,7 +54,7 @@ impl TryFromWithBlock<ComponentWithState> for EVMPoolState<PreCachedDB> {
             .component
             .tokens
             .iter()
-            .map(|t| Address::from_slice(t))
+            .map(Address::from_slice)
             .collect();
 
         let block = BlockHeader::from(block);
