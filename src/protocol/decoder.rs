@@ -140,7 +140,7 @@ impl TychoStreamDecoder {
                     .flat_map(|(id, comp)| match Bytes::from_str(id) {
                         Ok(addr) => Some(Ok((id, addr, comp))),
                         Err(e) => {
-                            return if self.skip_state_decode_failures {
+                            if self.skip_state_decode_failures {
                                 None
                             } else {
                                 Some(Err(StreamDecodeError::Fatal(e.to_string())))

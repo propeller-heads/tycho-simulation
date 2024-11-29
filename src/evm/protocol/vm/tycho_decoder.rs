@@ -44,7 +44,7 @@ impl TryFromWithBlock<ComponentWithState> for EVMPoolState<PreCachedDB> {
             .component
             .tokens
             .iter()
-            .map(|t| H160::from_bytes(t))
+            .map(H160::from_bytes)
             .collect();
         let block = BlockHeader::from(block);
         let balances = snapshot
