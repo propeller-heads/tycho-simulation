@@ -271,9 +271,9 @@ impl TychoStreamDecoder {
 mod tests {
     use crate::{
         models::ERC20Token,
+        evm::protocol::uniswap_v2::state::UniswapV2State,
         protocol::{
             decoder::{StreamDecodeError, TychoStreamDecoder},
-            uniswap_v2::state::UniswapV2State,
         },
     };
     use ethers::types::U256;

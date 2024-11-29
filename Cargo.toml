@@ -40,7 +40,7 @@ lazy_static = "1.4.0"
 # Tycho dependencies
 tycho-core = { git = "https://github.com/propeller-heads/tycho-indexer.git", package = "tycho-core", rev = "f8d765554194ddd222e4c6f07811e8c99700615a" }
 tycho-client = { git = "https://github.com/propeller-heads/tycho-indexer.git", package = "tycho-client", rev = "f8d765554194ddd222e4c6f07811e8c99700615a" }
-tycho-ethereum = { git = "https://github.com/propeller-heads/tycho-indexer.git", package = "tycho-ethereum", tag = "f8d765554194ddd222e4c6f07811e8c99700615a" }
+tycho-ethereum = { git = "https://github.com/propeller-heads/tycho-indexer.git", package = "tycho-ethereum", rev = "f8d765554194ddd222e4c6f07811e8c99700615a" }
 
 # EVM dependencies
 ethabi = { version = "13.0",  optional = true }
