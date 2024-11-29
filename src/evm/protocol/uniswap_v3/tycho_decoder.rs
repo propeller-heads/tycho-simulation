@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ethers::types::{H160, U256};
+use ethers::types::U256;
 
 use tycho_client::feed::{synchronizer::ComponentWithState, Header};
 use tycho_core::Bytes;
@@ -21,7 +21,7 @@ impl TryFromWithBlock<ComponentWithState> for UniswapV3State {
     async fn try_from_with_block(
         snapshot: ComponentWithState,
         _block: Header,
-        _all_tokens: HashMap<H160, ERC20Token>,
+        _all_tokens: &HashMap<Bytes, ERC20Token>,
     ) -> Result<Self, Self::Error> {
         let liq = snapshot
             .state
@@ -218,7 +218,7 @@ mod tests {
             component: usv3_component(),
         };
 
-        let result = UniswapV3State::try_from_with_block(snapshot, header(), HashMap::new()).await;
+        let result = UniswapV3State::try_from_with_block(snapshot, header(), &HashMap::new()).await;
 
         assert!(result.is_ok());
         let expected = UniswapV3State::new(
@@ -267,7 +267,7 @@ mod tests {
             component,
         };
 
-        let result = UniswapV3State::try_from_with_block(snapshot, header(), HashMap::new()).await;
+        let result = UniswapV3State::try_from_with_block(snapshot, header(), &HashMap::new()).await;
 
         assert!(result.is_err());
         assert!(matches!(
@@ -293,7 +293,7 @@ mod tests {
             component,
         };
 
-        let result = UniswapV3State::try_from_with_block(snapshot, header(), HashMap::new()).await;
+        let result = UniswapV3State::try_from_with_block(snapshot, header(), &HashMap::new()).await;
 
         assert!(result.is_err());
         assert!(matches!(

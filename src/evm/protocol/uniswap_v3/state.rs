@@ -1,6 +1,5 @@
-use std::any::Any;
-
 use ethers::types::{Sign, I256, U256};
+use std::{any::Any, collections::HashMap};
 use tracing::trace;
 
 use crate::{
@@ -292,7 +291,7 @@ impl ProtocolSim for UniswapV3State {
     fn delta_transition(
         &mut self,
         delta: ProtocolStateDelta,
-        _tokens: Vec<ERC20Token>,
+        _tokens: &HashMap<Bytes, ERC20Token>,
     ) -> Result<(), TransitionError<String>> {
         // apply attribute changes
         if let Some(liquidity) = delta
@@ -797,7 +796,7 @@ mod tests {
             deleted_attributes: HashSet::new(),
         };
 
-        pool.delta_transition(delta, vec![])
+        pool.delta_transition(delta, &HashMap::new())
             .unwrap();
 
         assert_eq!(pool.liquidity, 2000);

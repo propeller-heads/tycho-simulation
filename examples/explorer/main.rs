@@ -1,16 +1,20 @@
-pub mod data_feed;
 mod ui;
+pub mod utils;
 
 extern crate tycho_simulation;
 
-use std::env;
-
+use crate::utils::load_all_tokens;
 use clap::Parser;
-use futures::future::select_all;
+use futures::{future::select_all, StreamExt};
+use std::env;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing_subscriber::{fmt, EnvFilter};
-
-use data_feed::{state::BlockState, tycho};
+use tycho_client::feed::component_tracker::ComponentFilter;
+use tycho_core::dto::Chain;
+use tycho_simulation::{
+    evm::protocol::{uniswap_v2::state::UniswapV2State, uniswap_v3::state::UniswapV3State},
+    protocol::{models::BlockUpdate, stream::ProtocolStreamBuilder},
+};
 
 #[derive(Parser)]
 struct Cli {
@@ -33,16 +37,40 @@ async fn main() {
         .init();
     let cli = Cli::parse();
 
+    utils::setup_tracing();
+
     let tycho_url =
         env::var("TYCHO_URL").unwrap_or_else(|_| "tycho-dev.propellerheads.xyz".to_string());
     let tycho_api_key: String =
         env::var("TYCHO_API_KEY").unwrap_or_else(|_| "sampletoken".to_string());
 
     // Create communication channels for inter-thread communication
-    let (tick_tx, tick_rx) = mpsc::channel::<BlockState>(12);
+    let (tick_tx, tick_rx) = mpsc::channel::<BlockUpdate>(12);
 
     let tycho_message_processor: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
-        tycho::process_messages(tycho_url, Some(tycho_api_key), tick_tx, cli.tvl_threshold).await;
+        let all_tokens = load_all_tokens(tycho_url.as_str(), Some(tycho_api_key.as_str())).await;
+        let mut protocol_stream = ProtocolStreamBuilder::new(&tycho_url, Chain::Ethereum)
+            .exchange::<UniswapV2State>(
+                "uniswap_v2",
+                ComponentFilter::with_tvl_range(cli.tvl_threshold, cli.tvl_threshold),
+            )
+            .exchange::<UniswapV3State>(
+                "uniswap_v3",
+                ComponentFilter::with_tvl_range(cli.tvl_threshold, cli.tvl_threshold),
+            )
+            .auth_key(Some(tycho_api_key.clone()))
+            .set_tokens(all_tokens)
+            .build()
+            .await
+            .expect("Failed building protocol stream");
+
+        // Loop through block updates
+        while let Some(msg) = protocol_stream.next().await {
+            tick_tx
+                .send(msg.unwrap())
+                .await
+                .expect("Sending tick failed!")
+        }
         anyhow::Result::Ok(())
     });
 

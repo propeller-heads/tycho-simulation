@@ -8,8 +8,7 @@ use ethers::{prelude::U256, types::H160};
 use itertools::Itertools;
 use revm::{precompile::Address as rAddress, primitives::U256 as rU256, DatabaseRef};
 use tracing::info;
-
-use tycho_core::dto::ProtocolStateDelta;
+use tycho_core::{dto::ProtocolStateDelta, Bytes};
 
 use crate::{
     evm::{
@@ -120,28 +119,33 @@ impl EVMPoolState<PreCachedDB> {
         Ok(())
     }
 
-    pub fn set_spot_prices(&mut self, tokens: Vec<ERC20Token>) -> Result<(), SimulationError> {
+    pub fn set_spot_prices(
+        &mut self,
+        tokens: &HashMap<Bytes, ERC20Token>,
+    ) -> Result<(), SimulationError> {
         info!("Setting spot prices for pool {}", self.id.clone());
         self.ensure_capability(Capability::PriceFunction)?;
-        for [sell_token, buy_token] in tokens
+        for [sell_token_address, buy_token_address] in self
+            .tokens
             .iter()
+            .copied()
             .permutations(2)
             .map(|p| [p[0], p[1]])
         {
             let overwrites = Some(self.get_overwrites(
-                vec![(*sell_token).clone().address, (*buy_token).clone().address],
+                vec![sell_token_address, buy_token_address],
                 U256::from_big_endian(&(*MAX_BALANCE / rU256::from(100)).to_be_bytes::<32>()),
             )?);
             let sell_amount_limit = self.get_sell_amount_limit(
-                vec![(sell_token.address), (buy_token.address)],
+                vec![(sell_token_address), (buy_token_address)],
                 overwrites.clone(),
             )?;
             info!("Got sell amount limit for spot prices {:?}", &sell_amount_limit);
             let pool_id_vec = hexstring_to_vec(&self.id.clone())?;
             let price_result = self.adapter_contract.price(
                 pool_id_vec,
-                sell_token.address,
-                buy_token.address,
+                sell_token_address,
+                buy_token_address,
                 vec![sell_amount_limit / U256::from(100)],
                 self.block.number,
                 overwrites,
@@ -158,14 +162,32 @@ impl EVMPoolState<PreCachedDB> {
                 let unscaled_price = price_result.first().ok_or_else(|| {
                     SimulationError::FatalError("Spot price is not a u64".to_string())
                 })?;
-                *unscaled_price * 10f64.powi(sell_token.decimals as i32) /
-                    10f64.powi(buy_token.decimals as i32)
+                let sell_token_decimals = self.get_decimals(tokens, &sell_token_address)?;
+                let buy_token_decimals = self.get_decimals(tokens, &buy_token_address)?;
+                *unscaled_price * 10f64.powi(sell_token_decimals as i32) /
+                    10f64.powi(buy_token_decimals as i32)
             };
 
             self.spot_prices
-                .insert((sell_token.address, buy_token.address), price);
+                .insert((sell_token_address, buy_token_address), price);
         }
         Ok(())
+    }
+
+    fn get_decimals(
+        &self,
+        tokens: &HashMap<Bytes, ERC20Token>,
+        sell_token_address: &H160,
+    ) -> Result<usize, SimulationError> {
+        tokens
+            .get(&Bytes::from(sell_token_address.as_bytes()))
+            .map(|t| t.decimals)
+            .ok_or_else(|| {
+                SimulationError::FatalError(format!(
+                    "Failed to scale spot prices! Pool: {} Token 0x{:x} is not available!",
+                    self.id, sell_token_address
+                ))
+            })
     }
 
     /// Retrieves the sell amount limit for a given pair of tokens, where the first token is treated
@@ -188,7 +210,10 @@ impl EVMPoolState<PreCachedDB> {
         Ok(limits?.0)
     }
 
-    fn clear_all_cache(&mut self, tokens: Vec<ERC20Token>) -> Result<(), SimulationError> {
+    fn clear_all_cache(
+        &mut self,
+        tokens: &HashMap<Bytes, ERC20Token>,
+    ) -> Result<(), SimulationError> {
         self.adapter_contract
             .engine
             .clear_temp_storage();
@@ -439,7 +464,7 @@ impl ProtocolSim for EVMPoolState<PreCachedDB> {
     fn delta_transition(
         &mut self,
         delta: ProtocolStateDelta,
-        tokens: Vec<ERC20Token>,
+        tokens: &HashMap<Bytes, ERC20Token>,
     ) -> Result<(), TransitionError<String>> {
         if self.manual_updates {
             // Directly check for "update_marker" in `updated_attributes`
@@ -750,7 +775,12 @@ mod tests {
         let mut pool_state = setup_pool_state().await;
 
         pool_state
-            .set_spot_prices(vec![bal(), dai()])
+            .set_spot_prices(
+                &vec![bal(), dai()]
+                    .into_iter()
+                    .map(|t| (Bytes::from(t.address.as_bytes()), t))
+                    .collect(),
+            )
             .unwrap();
 
         let dai_bal_spot_price = pool_state

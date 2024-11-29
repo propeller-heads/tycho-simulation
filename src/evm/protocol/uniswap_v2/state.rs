@@ -1,7 +1,3 @@
-use std::any::Any;
-
-use ethers::types::U256;
-
 use crate::{
     models::ERC20Token,
     protocol::{
@@ -12,7 +8,9 @@ use crate::{
     },
     safe_math::{safe_add_u256, safe_div_u256, safe_mul_u256, safe_sub_u256},
 };
-use tycho_core::dto::ProtocolStateDelta;
+use ethers::types::U256;
+use std::{any::Any, collections::HashMap};
+use tycho_core::{dto::ProtocolStateDelta, Bytes};
 use tycho_ethereum::BytesCodec;
 
 use super::{events::UniswapV2Sync, reserve_price::spot_price_from_reserves};
@@ -125,7 +123,7 @@ impl ProtocolSim for UniswapV2State {
     fn delta_transition(
         &mut self,
         delta: ProtocolStateDelta,
-        _tokens: Vec<ERC20Token>,
+        _tokens: &HashMap<Bytes, ERC20Token>,
     ) -> Result<(), TransitionError<String>> {
         // reserve0 and reserve1 are considered required attributes and are expected in every delta
         // we process
@@ -362,7 +360,7 @@ mod tests {
             deleted_attributes: HashSet::new(), // usv2 doesn't have any deletable attributes
         };
 
-        let res = state.delta_transition(delta, vec![]);
+        let res = state.delta_transition(delta, &HashMap::new());
 
         assert!(res.is_ok());
         assert_eq!(state.reserve0, u256("1500"));
@@ -382,7 +380,7 @@ mod tests {
             deleted_attributes: HashSet::new(),
         };
 
-        let res = state.delta_transition(delta, vec![]);
+        let res = state.delta_transition(delta, &HashMap::new());
 
         assert!(res.is_err());
         // assert it errors for the missing reserve1 attribute delta

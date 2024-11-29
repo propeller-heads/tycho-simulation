@@ -24,14 +24,12 @@
 //! It's worth emphasizin that although the term "pair" used in this
 //! module refers to a trading pair, it does not necessarily imply two
 //! tokens only. Some pairs might have more than two tokens.
-use std::collections::HashMap;
-
-use ethers::types::{H160, U256};
+use ethers::types::U256;
+use std::{collections::HashMap, future::Future};
 use tycho_core::Bytes;
 
-use tycho_client::feed::Header;
-
 use crate::models::ERC20Token;
+use tycho_client::feed::Header;
 
 use super::state::ProtocolSim;
 
@@ -57,12 +55,11 @@ impl ProtocolComponent {
 pub trait TryFromWithBlock<T> {
     type Error;
 
-    #[allow(async_fn_in_trait)]
-    async fn try_from_with_block(
+    fn try_from_with_block(
         value: T,
         block: Header,
-        all_tokens: HashMap<H160, ERC20Token>,
-    ) -> Result<Self, Self::Error>
+        all_tokens: &HashMap<Bytes, ERC20Token>,
+    ) -> impl Future<Output = Result<Self, Self::Error>> + Send + Sync
     where
         Self: Sized;
 }
@@ -108,5 +105,31 @@ impl GetAmountOutResult {
     pub fn aggregate(&mut self, other: &Self) {
         self.amount = other.amount;
         self.gas += other.gas;
+    }
+}
+
+#[derive(Debug)]
+pub struct BlockUpdate {
+    pub block_number: u64,
+    /// The current state of all pools
+    pub states: HashMap<String, Box<dyn ProtocolSim>>,
+    /// The new pairs that were added in this block
+    pub new_pairs: HashMap<String, ProtocolComponent>,
+    /// The pairs that were removed in this block
+    pub removed_pairs: HashMap<String, ProtocolComponent>,
+}
+
+impl BlockUpdate {
+    pub fn new(
+        block_number: u64,
+        states: HashMap<String, Box<dyn ProtocolSim>>,
+        new_pairs: HashMap<String, ProtocolComponent>,
+    ) -> Self {
+        BlockUpdate { block_number, states, new_pairs, removed_pairs: HashMap::new() }
+    }
+
+    pub fn set_removed_pairs(mut self, pairs: HashMap<String, ProtocolComponent>) -> Self {
+        self.removed_pairs = pairs;
+        self
     }
 }
