@@ -165,7 +165,9 @@ class ThirdPartyPoolTychoDecoder(TychoDecoder):
             adapter_contract_path=self.adapter_contract,
             trace=self.trace,
             manual_updates=manual_updates,
-            involved_contracts=set(to_checksum_address(b.hex()) for b in component.contract_ids),
+            involved_contracts=set(
+                to_checksum_address(b.hex()) for b in component.contract_ids
+            ),
             **optional_attributes,
         )
 
@@ -204,8 +206,8 @@ class ThirdPartyPoolTychoDecoder(TychoDecoder):
     ):
         balances = {}
         for addr, balance in balances_msg.items():
-            checksum_addr = to_checksum_address(addr)
-            token = next(t for t in tokens if t.address == checksum_addr)
+            checksum_addr = addr.hex().lower()
+            token = next(t for t in tokens if t.address.lower() == checksum_addr)
             balances[token.address] = token.from_onchain_amount(
                 int(balance)  # balances are big endian encoded
             )
@@ -237,8 +239,10 @@ class ThirdPartyPoolTychoDecoder(TychoDecoder):
             pool_id = self.component_pool_id.get(component_id, component_id)
             pool = pools[pool_id]
             for addr, token_balance in balance_update.items():
-                checksum_addr = to_checksum_address(addr)
-                token = next(t for t in pool.tokens if t.address == checksum_addr)
+                checksum_addr = addr.lower()
+                token = next(
+                    t for t in pool.tokens if t.address.lower() == checksum_addr
+                )
                 balance = token.from_onchain_amount(
                     int.from_bytes(token_balance.balance, "big", signed=False)
                 )  # balances are big endian encoded

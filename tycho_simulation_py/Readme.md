@@ -1,19 +1,10 @@
 # Python bindings for Tycho Simulation
 
-`tycho_simulation_py` - a Python module, implemented as a Rust crate, that allows using Rust EVM simulation module from
-Python.
+`tycho_simulation_py` - is a Python module that allows using Tycho's Simulation module, originally written in Rust. 
 
-## Install
+This library is intended for anyone who wants to leverage Tycho's ecosystem and performance, while integrating with their Python applications.
 
-We regularly push wheel to codeartifact. You should be able to install them from there. If there is no wheel for you
-arch available, please consider building it (see below) and pushing it.
-
-```
-aws --region eu-central-1 codeartifact pip --tool twine --domain propeller --domain-owner 827659017777 --repository protosim
-pip install tycho-simulation-py
-```
-
-## Summary
+### How does it work?
 
 `evm` module from `tycho-simulation` crate implements simulating on-chain transactions. This
 crate - `tycho_simulation_py` -
@@ -23,7 +14,7 @@ wraps `evm` in order to allow using it in Python.
  Rust                                                                  Python
 ┌────────────────────────────────────────────────────────────────┐    ┌────────────────────────────┐
 │                                                                │    │                            │
-│  tycho_simulation::evm_simulation      tycho_simulation_py     │    │     tycho_simulation_py    │
+│  tycho_simulation::evm::simulation      tycho_simulation_py     │    │     tycho_simulation_py    │
 │ ┌────────────────────────┐           ┌──────────────────────┐  │    │  ┌──────────────────────┐  │
 │ │                        │           │                      │  │    │  │                      │  │
 │ │                        │    wrap   │                      │  │    │  │                      │  │
@@ -44,10 +35,24 @@ wraps `evm` in order to allow using it in Python.
                                                                 └───────┘
 ```
 
-_Editable
-chart [here](https://asciiflow.com/#/share/eJyrVspLzE1VslIqKMovyS%2FOzI0vqFTSUcpJrEwtAopWxyhVxChZWZpY6sQoVQJZRuamQFZJakUJkBOjpBBUWlyiQDkIqCzJyM%2BLicl7NKXn0ZSGIY4mgLxEM59MAAdTE6VBDjWCgElAaZh1sBRiZZValhsPZJTmJJZk5uehqEdKRnisw6cKah1Vg28CihVUMXgCqpeoaio8CHBGDaoUToVQpzWhs3GrJNrq8qLEAlpaHQxPX6556Zl5qQpIobSHiJCEqZm2C9MoHI7DVEdGuGDlUTFc8FhNvygJSi0uzSmhSpRAjSIYJTB1o1GC02o9PT0KogSkmxjHYaobXFEyhXrVxgwUe4gxeA0RRqJ6iwhTp20izlRy2wXomnC1DLCoA1tJxRCnLiImByDFNIk%2BIcF0YDCRHi2YEYBdDSWGJ5Vm5qRAuLjaL6C2U2ZecUliTg5F1hGT0HeBXBWekZqaA9Qwh6aBS6TrZsQo1SrVAgD%2BnnnV)_
+## Installation
 
-## Building and installation
+### Local Installation
+
+1. Install Rust and Python.
+2. Install tycho-client-py: [Installation guide](https://github.com/propeller-heads/tycho-indexer/tree/main/tycho-client-py)
+3. Install tycho-simulation-py:
+   `pip install -e .`
+
+### Using PyPI
+
+On every release, we automatically push the package to PyPI. You can install it using pip:
+
+```shell
+pip install tycho-simulation-py
+```
+
+## Building
 
 ### Build in `manylinux` docker image
 
@@ -60,9 +65,6 @@ sudo ./tycho_simulation_py/build_tycho_simulation_wheel.sh
 ```
 
 A wheel file will be created in `tycho_simulation_py/target/wheels`.
-
-In the script file, there's a commented out line for pushing the wheel to S3. Execute it if you want to publish the
-wheel for defibot to use it. Be careful - this file will be immediately used by defibot CI!
 
 ### Build locally
 
@@ -108,22 +110,6 @@ wheel in a different target environment.
 - Documentation on using this module to implement a `PoolState` in
   defibot: https://github.com/propeller-heads/defibot/blob/master/defibot/swaps/protosim/Readme.md
 
-### Publish to code artifacts
-
-If you have a Mac Silicon or old Mac please build the wheels and publish them. This will help your colleagues as sooner
-or later everyone will have to upgrade.
-
-Usually you should have a tycho-simulation-build environment where maturin is already installed.
-
-- Make sure the verison was bumped according to semver.
-- If you don't have twine installed yet add it:
-  `pip install twine`
-- Build the wheel in release mode:
-  `maturin build --release`
-- Activate your credentials for aws code-artifact
-  `aws --region eu-central-1 codeartifact login --tool twine --domain propeller --domain-owner 827659017777 --repository protosim`
-- Upload the wheel:
-  `twine upload --repository codeartifact target/wheels/tycho_simulation_py-[VERSION]*.whl`
 
 ### Troubleshooting
 
@@ -143,3 +129,20 @@ Alternatively, you can control log level per module e.g. like this: `RUST_LOG=ty
 3. On macOS, Try building with MACOSX_DEPLOYMENT_TARGET environment variable set.
    See [here](https://www.maturin.rs/environment-variables.html#other-environment-variables)
    and [here](https://www.maturin.rs/migration.html?highlight=MACOSX_DEPLOYMENT_TARGET#macos-deployment-target-version-defaults-what-rustc-supports).
+
+## Usage
+
+First, add `tycho-simulation-py` as a dependency on your project:
+
+```
+# requirements.txt
+
+tycho-simulation-py==0.32.0 (please update the version accordingly)
+```
+
+
+
+### What is this used for?
+
+As part of Tycho Ecosystem, this library is intented for users that want to quickly integrate Tycho simulations in their system. If you want to know more about Tycho, please [read Tycho docs](https://docs.propellerheads.xyz/tycho)
+
