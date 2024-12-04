@@ -13,7 +13,7 @@ class SlotDetectionFailure(Exception):
 
 
 def brute_force_slots(
-        t: EthereumToken, block: EVMBlock, engine: SimulationEngine
+    t: EthereumToken, block: EVMBlock, engine: SimulationEngine
 ) -> tuple[ERC20Slots, ContractCompiler]:
     """Brute-force detection of storage slots for token allowances and balances.
 
@@ -52,7 +52,9 @@ def brute_force_slots(
     compiler = ContractCompiler.Solidity
     for i in range(100):
         for compiler_flag in [ContractCompiler.Solidity, ContractCompiler.Vyper]:
-            overwrite_factory = ERC20OverwriteFactory(t, ERC20Slots(i, 1), compiler=compiler_flag)
+            overwrite_factory = ERC20OverwriteFactory(
+                t, ERC20Slots(i, 1), compiler=compiler_flag
+            )
             overwrite_factory.set_balance(_MARKER_VALUE, EXTERNAL_ACCOUNT)
             res = token_contract.call(
                 "balanceOf",
@@ -76,23 +78,24 @@ def brute_force_slots(
 
     allowance_slot = None
     for i in range(100):
-            overwrite_factory = ERC20OverwriteFactory(t, ERC20Slots(0, i), compiler=compiler)
-            overwrite_factory.set_allowance(_MARKER_VALUE, _SPENDER, EXTERNAL_ACCOUNT)
-            res = token_contract.call(
-                "allowance",
-                [EXTERNAL_ACCOUNT, _SPENDER],
-                block_number=block.id,
-                timestamp=int(block.ts.timestamp()),
-                overrides=overwrite_factory.get_tycho_overwrites(),
-                caller=EXTERNAL_ACCOUNT,
-                value=0,
-            )
-            if res.return_value is None:
-                continue
-            if res.return_value[0] == _MARKER_VALUE:
-                allowance_slot = i
-                break
-
+        overwrite_factory = ERC20OverwriteFactory(
+            t, ERC20Slots(0, i), compiler=compiler
+        )
+        overwrite_factory.set_allowance(_MARKER_VALUE, _SPENDER, EXTERNAL_ACCOUNT)
+        res = token_contract.call(
+            "allowance",
+            [EXTERNAL_ACCOUNT, _SPENDER],
+            block_number=block.id,
+            timestamp=int(block.ts.timestamp()),
+            overrides=overwrite_factory.get_tycho_overwrites(),
+            caller=EXTERNAL_ACCOUNT,
+            value=0,
+        )
+        if res.return_value is None:
+            continue
+        if res.return_value[0] == _MARKER_VALUE:
+            allowance_slot = i
+            break
 
     if allowance_slot is None:
         raise SlotDetectionFailure(f"Failed to infer allowance slot for {t.address}")
