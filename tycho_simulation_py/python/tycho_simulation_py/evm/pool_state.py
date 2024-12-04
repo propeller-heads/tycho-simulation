@@ -82,9 +82,9 @@ class ThirdPartyPool:
         contract). If given, balances will be overwritten here instead of on the pool 
         contract during simulations."""
 
-        self.block_lasting_overwrites: defaultdict[Address, dict[int, int]] = (
-            block_lasting_overwrites or defaultdict(dict)
-        )
+        self.block_lasting_overwrites: defaultdict[
+            Address, dict[int, int]
+        ] = block_lasting_overwrites or defaultdict(dict)
         """Storage overwrites that will be applied to all simulations. They will be cleared
         when ``clear_all_cache`` is called, i.e. usually at each block. Hence the name."""
 
@@ -100,7 +100,7 @@ class ThirdPartyPool:
         """A set of all contract addresses involved in the simulation of this pool."""
 
         self.token_storage_slots: dict[Address, tuple[ERC20Slots, ContractCompiler]] = (
-                token_storage_slots or {}
+            token_storage_slots or {}
         )
         """Allows the specification of custom storage slots for token allowances and
         balances. This is particularly useful for token contracts involved in protocol
@@ -181,12 +181,12 @@ class ThirdPartyPool:
                 t1,
                 [sell_amount],
                 block=self.block,
-                overwrites=self._get_overwrites(t0,t1),
+                overwrites=self._get_overwrites(t0, t1),
             )[0]
             if Capability.ScaledPrices in self.capabilities:
                 self.marginal_prices[(t0, t1)] = frac_to_decimal(frac)
             else:
-                scaled = frac * Fraction(10**t0.decimals, 10**t1.decimals)
+                scaled = frac * Fraction(10 ** t0.decimals, 10 ** t1.decimals)
                 self.marginal_prices[(t0, t1)] = frac_to_decimal(scaled)
 
     def _ensure_capability(self, capability: Capability):
@@ -302,11 +302,11 @@ class ThirdPartyPool:
             max_amount = sell_token.to_onchain_amount(
                 self.get_sell_amount_limit(sell_token, buy_token)
             )
-        slots, compiler = self.token_storage_slots.get(sell_token.address, (ERC20Slots(0, 1), ContractCompiler.Solidity))
+        slots, compiler = self.token_storage_slots.get(
+            sell_token.address, (ERC20Slots(0, 1), ContractCompiler.Solidity)
+        )
         overwrites = ERC20OverwriteFactory(
-            sell_token,
-            token_slots=slots,
-            compiler=compiler
+            sell_token, token_slots=slots, compiler=compiler
         )
         overwrites.set_balance(max_amount, EXTERNAL_ACCOUNT)
         overwrites.set_allowance(

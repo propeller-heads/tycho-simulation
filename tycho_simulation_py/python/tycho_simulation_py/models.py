@@ -49,7 +49,7 @@ class EthereumToken:
             log.warning(f"Expected variable of type Decimal. Got {type(amount)}.")
 
         with localcontext(Context(rounding=ROUND_FLOOR, prec=256)):
-            amount = Decimal(str(amount)) * (10**self.decimals)
+            amount = Decimal(str(amount)) * (10 ** self.decimals)
             try:
                 amount = amount.quantize(Decimal("1.0"))
             except InvalidOperation:
@@ -76,17 +76,17 @@ class EthereumToken:
                 return (
                     Decimal(onchain_amount.numerator)
                     / Decimal(onchain_amount.denominator)
-                    / Decimal(10**self.decimals)
+                    / Decimal(10 ** self.decimals)
                 ).quantize(Decimal(f"{1 / 10 ** self.decimals}"))
             if quantize is True:
                 try:
                     amount = (
-                        Decimal(str(onchain_amount)) / 10**self.decimals
+                        Decimal(str(onchain_amount)) / 10 ** self.decimals
                     ).quantize(Decimal(f"{1 / 10 ** self.decimals}"))
                 except InvalidOperation:
-                    amount = Decimal(str(onchain_amount)) / Decimal(10**self.decimals)
+                    amount = Decimal(str(onchain_amount)) / Decimal(10 ** self.decimals)
             else:
-                amount = Decimal(str(onchain_amount)) / Decimal(10**self.decimals)
+                amount = Decimal(str(onchain_amount)) / Decimal(10 ** self.decimals)
             return amount
 
     def __repr__(self):

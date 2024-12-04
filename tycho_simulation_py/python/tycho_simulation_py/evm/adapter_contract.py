@@ -68,14 +68,14 @@ class TychoSimulationContract:
         return eth_abi.decode(types, bytearray(encoded))
 
     def call(
-            self,
-            fname: str,
-            *args: list[Union[int, str, bool, bytes]],
-            block_number,
-            timestamp: int = None,
-            overrides: TStateOverwrites = None,
-            caller: Address = EXTERNAL_ACCOUNT,
-            value: int = 0,
+        self,
+        fname: str,
+        *args: list[Union[int, str, bool, bytes]],
+        block_number,
+        timestamp: int = None,
+        overrides: TStateOverwrites = None,
+        caller: Address = EXTERNAL_ACCOUNT,
+        value: int = 0,
     ) -> TychoSimulationResponse:
         call_data = self._encode_input(fname, *args)
         params = SimulationParameters(
@@ -131,13 +131,13 @@ class AdapterContract(TychoSimulationContract):
         super().__init__(address, "ISwapAdapter", engine)
 
     def price(
-            self,
-            pair_id: HexStr,
-            sell_token: EthereumToken,
-            buy_token: EthereumToken,
-            amounts: list[int],
-            block: EVMBlock,
-            overwrites: TStateOverwrites = None,
+        self,
+        pair_id: HexStr,
+        sell_token: EthereumToken,
+        buy_token: EthereumToken,
+        amounts: list[int],
+        block: EVMBlock,
+        overwrites: TStateOverwrites = None,
     ) -> list[Fraction]:
         args = [HexBytes(pair_id), sell_token.address, buy_token.address, amounts]
         res = self.call(
@@ -150,14 +150,14 @@ class AdapterContract(TychoSimulationContract):
         return list(map(lambda x: Fraction(*x), res.return_value[0]))
 
     def swap(
-            self,
-            pair_id: HexStr,
-            sell_token: EthereumToken,
-            buy_token: EthereumToken,
-            is_buy: bool,
-            amount: Decimal,
-            block: EVMBlock,
-            overwrites: TStateOverwrites = None,
+        self,
+        pair_id: HexStr,
+        sell_token: EthereumToken,
+        buy_token: EthereumToken,
+        is_buy: bool,
+        amount: Decimal,
+        block: EVMBlock,
+        overwrites: TStateOverwrites = None,
     ) -> tuple[Trade, dict[str, StateUpdate]]:
         args = [
             HexBytes(pair_id),
@@ -177,12 +177,12 @@ class AdapterContract(TychoSimulationContract):
         return Trade(amount, gas, Fraction(*price)), res.simulation_result.state_updates
 
     def get_limits(
-            self,
-            pair_id: HexStr,
-            sell_token: EthereumToken,
-            buy_token: EthereumToken,
-            block: EVMBlock,
-            overwrites: TStateOverwrites = None,
+        self,
+        pair_id: HexStr,
+        sell_token: EthereumToken,
+        buy_token: EthereumToken,
+        block: EVMBlock,
+        overwrites: TStateOverwrites = None,
     ) -> tuple[int, int]:
         args = [HexBytes(pair_id), sell_token.address, buy_token.address]
         res = self.call(
@@ -195,7 +195,7 @@ class AdapterContract(TychoSimulationContract):
         return res.return_value[0]
 
     def get_capabilities(
-            self, pair_id: HexStr, sell_token: EthereumToken, buy_token: EthereumToken
+        self, pair_id: HexStr, sell_token: EthereumToken, buy_token: EthereumToken
     ) -> set[Capability]:
         args = [HexBytes(pair_id), sell_token.address, buy_token.address]
         res = self.call("getCapabilities", args, block_number=1)

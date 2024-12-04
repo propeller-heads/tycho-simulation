@@ -4,9 +4,7 @@ import pytest
 
 from tycho_simulation_py.evm.storage import TychoDBSingleton
 from tycho_simulation_py.evm.token import brute_force_slots
-from tycho_simulation_py.evm.utils import (
-    create_engine,
-)
+from tycho_simulation_py.evm.utils import create_engine
 from test.evm.utils import init_contract_via_rpc
 from tycho_simulation_py.models import EthereumToken, EVMBlock
 

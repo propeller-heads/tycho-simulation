@@ -29,7 +29,7 @@ def decode_tycho_exchange(exchange: str) -> str:
 
 
 def create_engine(
-        mocked_tokens: list[Address], trace: bool = False
+    mocked_tokens: list[Address], trace: bool = False
 ) -> SimulationEngine:
     """Create a simulation engine with a mocked ERC20 contract at given addresses.
 
@@ -62,26 +62,34 @@ def create_engine(
 
     return engine
 
+
 class ContractCompiler(enum.Enum):
     Solidity = enum.auto()
     Vyper = enum.auto()
-    
+
     def compute_map_slot(self, map_base_slot: bytes, key: bytes) -> bytes:
         if self == ContractCompiler.Solidity:
             return eth_utils.keccak(key + map_base_slot)
         elif self == ContractCompiler.Vyper:
             return eth_utils.keccak(map_base_slot + key)
         else:
-            raise NotImplementedError(f"compute_map_slot not implemented for {self.name}")
-    
-    
+            raise NotImplementedError(
+                f"compute_map_slot not implemented for {self.name}"
+            )
+
+
 class ERC20Slots(NamedTuple):
     balance_map: int
     allowance_map: int
 
 
 class ERC20OverwriteFactory:
-    def __init__(self, token: EthereumToken, token_slots: ERC20Slots = ERC20Slots(0, 1), compiler: ContractCompiler = ContractCompiler.Solidity):
+    def __init__(
+        self,
+        token: EthereumToken,
+        token_slots: ERC20Slots = ERC20Slots(0, 1),
+        compiler: ContractCompiler = ContractCompiler.Solidity,
+    ):
         """
         Initialize the ERC20OverwriteFactory.
 
@@ -103,7 +111,9 @@ class ERC20OverwriteFactory:
             balance: The balance value.
             owner: The owner's address.
         """
-        storage_index = get_storage_slot_at_key(HexStr(owner), self._balance_slot, self._contract_compiler)
+        storage_index = get_storage_slot_at_key(
+            HexStr(owner), self._balance_slot, self._contract_compiler
+        )
         self._overwrites[storage_index] = balance
         log.log(
             5,
@@ -122,8 +132,11 @@ class ERC20OverwriteFactory:
         """
         storage_index = get_storage_slot_at_key(
             HexStr(spender),
-            get_storage_slot_at_key(HexStr(owner), self._allowance_slot, self._contract_compiler),
-            self._contract_compiler)
+            get_storage_slot_at_key(
+                HexStr(owner), self._allowance_slot, self._contract_compiler
+            ),
+            self._contract_compiler,
+        )
         self._overwrites[storage_index] = allowance
         log.log(
             5,
@@ -172,7 +185,9 @@ class ERC20OverwriteFactory:
         return {self._token.address: {"stateDiff": formatted_overwrites, "code": code}}
 
 
-def get_storage_slot_at_key(key: Address, mapping_slot: int, compiler = ContractCompiler.Solidity) -> int:
+def get_storage_slot_at_key(
+    key: Address, mapping_slot: int, compiler=ContractCompiler.Solidity
+) -> int:
     """Get storage slot index of a value stored at a certain key in a mapping
 
     Parameters
@@ -183,10 +198,10 @@ def get_storage_slot_at_key(key: Address, mapping_slot: int, compiler = Contract
     mapping_slot
         Storage slot at which the mapping itself is stored. See the examples for more
         explanation.
-        
+
     compiler
-        The compiler with which the target contract was compiled. Solidity and Vyper handle 
-        maps differently. This defaults to Solidity because it's the most used. 
+        The compiler with which the target contract was compiled. Solidity and Vyper handle
+        maps differently. This defaults to Solidity because it's the most used.
 
     Returns
     -------
@@ -306,7 +321,7 @@ def parse_solidity_error_message(data) -> str:
 
 
 def maybe_coerce_error(
-        err: RuntimeError, pool_state: Any, gas_limit: int = None
+    err: RuntimeError, pool_state: Any, gas_limit: int = None
 ) -> Exception:
     details = err.args[0]
     # we got bytes as data, so this was a revert
