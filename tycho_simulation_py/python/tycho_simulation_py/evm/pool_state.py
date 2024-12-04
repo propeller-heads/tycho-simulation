@@ -280,7 +280,7 @@ class ThirdPartyPool:
         level, and token-specific overwrites that depend on passed tokens.
         """
         token_overwrites = self._get_token_overwrites(sell_token, buy_token, **kwargs)
-        return _merge(self.block_lasting_overwrites.copy(), token_overwrites)
+        return _merge(self.block_lasting_overwrites, token_overwrites)
 
     def _get_token_overwrites(
         self, sell_token: EthereumToken, buy_token: EthereumToken, max_amount=None
