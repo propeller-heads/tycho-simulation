@@ -13,7 +13,7 @@ use tycho_ethereum::BytesCodec;
 
 use crate::{
     evm::engine_db::{simulation_db::BlockHeader, tycho_db::PreCachedDB},
-    models::ERC20Token,
+    models::Token,
     protocol::{errors::InvalidSnapshotError, models::TryFromWithBlock},
 };
 
@@ -38,7 +38,7 @@ impl TryFromWithBlock<ComponentWithState> for EVMPoolState<PreCachedDB> {
     async fn try_from_with_block(
         snapshot: ComponentWithState,
         block: Header,
-        all_tokens: HashMap<Address, ERC20Token>,
+        all_tokens: HashMap<Address, Token>,
     ) -> Result<Self, Self::Error> {
         let id = snapshot.component.id.clone();
         let tokens: Vec<Address> = snapshot

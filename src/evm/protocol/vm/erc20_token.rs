@@ -1,11 +1,16 @@
 use alloy_primitives::Address;
-use std::{collections::HashMap, str::FromStr};
+use std::{
+    collections::HashMap,
+    hash::{Hash, Hasher},
+    str::FromStr,
+};
 
 use ethers::{
     abi::{Abi, Token},
     types::{H160, U256},
 };
 use lazy_static::lazy_static;
+use num_bigint::BigUint;
 use revm::DatabaseRef;
 use serde_json::from_str;
 
@@ -233,6 +238,62 @@ where
     }
 
     Ok((ERC20Slots::new(balance_slot.unwrap().into(), allowance_slot.unwrap().into()), compiler))
+}
+
+#[derive(Clone, Debug, Eq)]
+pub struct ERC20Token {
+    /// The address of the ERC20 token
+    pub address: Address,
+    /// The number of decimal places that the token uses
+    pub decimals: usize,
+    #[allow(dead_code)]
+    /// The symbol of the token
+    pub symbol: String,
+    #[allow(dead_code)]
+    /// The amount of gas it takes to transfer the token
+    pub gas: BigUint,
+}
+
+/// TODO write docstring
+pub trait ERC20 {
+    type Error;
+    fn to_erc20(&self) -> ERC20Token;
+}
+
+impl ERC20 for crate::models::Token {
+    type Error = std::num::TryFromIntError;
+
+    fn to_erc20(&self) -> ERC20Token {
+        // TODO I'm looking for an easier way to do this. AFAIK there is no easy way to do this
+        // like with python inheritances
+
+        // TODO verify that this works for > 20 bytes. Maybe add an assert?
+        let erc20_address = Address::from_slice(&self.address);
+        ERC20Token {
+            address: erc20_address,
+            decimals: self.decimals,
+            symbol: self.symbol.clone(),
+            gas: self.gas.clone(),
+        }
+    }
+}
+
+impl PartialOrd for ERC20Token {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.address.partial_cmp(&other.address)
+    }
+}
+
+impl PartialEq for ERC20Token {
+    fn eq(&self, other: &Self) -> bool {
+        self.address == other.address
+    }
+}
+
+impl Hash for ERC20Token {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.address.hash(state);
+    }
 }
 
 #[cfg(test)]

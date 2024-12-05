@@ -28,7 +28,7 @@ use tycho_simulation::{
         },
         tycho_models::{AccountUpdate, ResponseAccount},
     },
-    models::ERC20Token,
+    models::Token,
     protocol::{
         models::{ProtocolComponent, TryFromWithBlock},
         state::ProtocolSim,
@@ -337,7 +337,7 @@ pub async fn process_messages(
                                 .as_any_mut()
                                 .downcast_mut::<EVMPoolState<PreCachedDB>>()
                             {
-                                let tokens: Vec<ERC20Token> = vm_state
+                                let tokens: Vec<Token> = vm_state
                                     .tokens
                                     .iter()
                                     .filter_map(|token_address| all_tokens.get(token_address))
@@ -360,7 +360,7 @@ pub async fn process_messages(
                                     let mut state = stored_state.clone();
                                     if let Some(vm_state) = state.as_any_mut()
                                         .downcast_mut::<EVMPoolState<PreCachedDB>>() {
-                                        let tokens: Vec<ERC20Token> = vm_state.tokens
+                                        let tokens: Vec<Token> = vm_state.tokens
                                             .iter()
                                             .filter_map(|token_address| all_tokens.get(token_address))
                                             .cloned()
@@ -428,10 +428,7 @@ pub async fn process_messages(
     jh.await.unwrap();
 }
 
-pub async fn load_all_tokens(
-    tycho_url: &str,
-    auth_key: Option<&str>,
-) -> HashMap<Address, ERC20Token> {
+pub async fn load_all_tokens(tycho_url: &str, auth_key: Option<&str>) -> HashMap<Address, Token> {
     let rpc_url = format!("https://{tycho_url}");
     let rpc_client = HttpRPCClient::new(rpc_url.as_str(), auth_key).unwrap();
 
@@ -450,7 +447,7 @@ pub async fn load_all_tokens(
                 }),
             )
         })
-        .collect::<HashMap<_, ERC20Token>>()
+        .collect::<HashMap<_, Token>>()
 }
 
 pub fn start(
