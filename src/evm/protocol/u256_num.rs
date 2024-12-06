@@ -2,7 +2,6 @@
 use alloy_primitives::U256;
 use std::{cmp::max, panic};
 
-use ethers::types::U256 as EthersU256;
 use num_bigint::BigUint;
 
 /// Converts a U256 integer into it's closest floating point representation
@@ -103,12 +102,6 @@ pub fn u256_to_biguint(value: U256) -> BigUint {
 pub fn biguint_to_u256(value: &BigUint) -> U256 {
     let bytes = value.to_bytes_be();
     U256::from_be_slice(&bytes)
-}
-
-pub fn convert_ethers_to_alloy(ethers_u256: EthersU256) -> U256 {
-    let mut bytes = [0u8; 32]; // 32-byte buffer
-    ethers_u256.to_big_endian(&mut bytes); // Fill the buffer with big-endian bytes
-    U256::from_be_bytes(bytes) // Convert to Alloy U256
 }
 
 #[cfg(test)]
