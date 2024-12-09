@@ -49,7 +49,7 @@ where
     pub tokens: Vec<Address>,
     /// The current block, will be used to set vm context
     block: BlockHeader,
-    /// The pools token balances
+    /// The pool's token balances
     balances: HashMap<Address, U256>,
     /// The contract address for where protocol balances are stored (i.e. a vault contract).
     /// If given, balances will be overwritten here instead of on the pool contract during
@@ -116,6 +116,15 @@ where
     }
 
     /// Ensures the pool supports the given capability
+    ///
+    /// # Arguments
+    ///
+    /// * `capability` - The capability that we would like to check for.
+    ///
+    /// # Returns
+    ///
+    /// * `Result<(), SimulationError>` - Returns `Ok(())` if the capability is supported,
+    ///   or a `SimulationError` otherwise.
     fn ensure_capability(&self, capability: Capability) -> Result<(), SimulationError> {
         if !self.capabilities.contains(&capability) {
             return Err(SimulationError::FatalError(format!(
@@ -125,6 +134,35 @@ where
         }
         Ok(())
     }
+
+    /// Sets the spot prices for a pool for all possible pairs of the given tokens.
+    ///
+    /// # Arguments
+    ///
+    /// * `tokens` - A vector of `Token` instances representing the tokens to calculate spot prices
+    ///   for.
+    ///
+    /// # Returns
+    ///
+    /// * `Result<(), SimulationError>` - Returns `Ok(())` if the spot prices are successfully set,
+    ///   or a `SimulationError` if an error occurs during the calculation or processing.
+    ///
+    /// # Behavior
+    ///
+    /// This function performs the following steps:
+    /// 1. Ensures the pool has the required capability to perform price calculations.
+    /// 2. Iterates over all permutations of token pairs (sell token and buy token).
+    ///    For each pair:
+    ///    - Retrieves all possible overwrites, considering the maximum balance limit.
+    ///    - Calculates the sell amount limit, considering the overwrites.
+    ///    - Invokes the adapter contract's `price` function to retrieve the calculated price for
+    ///   the token pair, considering the sell amount limit.
+    ///    - Processes the price based on whether the `ScaledPrice` capability is present:
+    ///       - If `ScaledPrice` is present, uses the price directly from the adapter contract.
+    ///       - If `ScaledPrice` is absent, scales the price by adjusting for token decimals.
+    ///    - Stores the calculated price in the `spot_prices` map with the token addresses as the
+    ///   key.
+    /// 3. Returns `Ok(())` upon successful completion or a `SimulationError` upon failure.
 
     pub fn set_spot_prices(&mut self, tokens: Vec<ERC20Token>) -> Result<(), SimulationError> {
         info!("Setting spot prices for pool {}", self.id.clone());
@@ -139,7 +177,7 @@ where
                 *MAX_BALANCE / U256::from(100),
             )?);
             let sell_amount_limit = self.get_sell_amount_limit(
-                vec![(sell_token.address), (buy_token.address)],
+                vec![sell_token.address, buy_token.address],
                 overwrites.clone(),
             )?;
             let price_result = self.adapter_contract.price(
@@ -172,9 +210,19 @@ where
         Ok(())
     }
 
-    /// Retrieves the sell amount limit for a given pair of tokens, where the first token is treated
-    /// as the sell token and the second as the buy token. The order of tokens in the input vector
-    /// is significant and determines the direction of the price query.
+    /// Retrieves the sell amount limit for a given pair of tokens and the given overwrites.
+    ///
+    /// # Arguments
+    ///
+    /// * `tokens` - A vec of tokens, where the first token is the sell token and the second is the
+    ///   buy token. The order of tokens in the input vector is significant and determines the
+    ///   direction of the price query.
+    /// * `overwrites` - A hashmap of overwrites to apply to the simulation.
+    ///
+    /// # Returns
+    ///
+    /// * `Result<(), SimulationError>` - A `Result` containing the sell amount limit on success or
+    ///   a `SimulationError` on failure.
     fn get_sell_amount_limit(
         &self,
         tokens: Vec<Address>,
@@ -350,6 +398,17 @@ where
         todo!()
     }
 
+    /// Returns the pool's spot price
+    ///
+    /// # Arguments
+    ///
+    /// * `base` - Base token
+    /// * `quote` - Quote token
+    ///
+    /// # Returns
+    ///
+    /// * `Result<f64, SimulationError>` - A `Result` containing the spot price of the pool and
+    ///   given tokens, or an error.
     fn spot_price(&self, base: &ERC20Token, quote: &ERC20Token) -> Result<f64, SimulationError> {
         self.spot_prices
             .get(&(base.address, quote.address))
@@ -360,6 +419,18 @@ where
             )))
     }
 
+    /// Returns the amount of output for a given amount of input
+    ///
+    /// # Arguments
+    ///
+    /// * `amount_in` - The amount of input for the trade.
+    /// * `token_in` - The input token ERC20 token.
+    /// * `token_out` - The output token ERC20 token.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a `GetAmountOutResult` struct on success or a
+    ///  `SimulationError` on failure.
     fn get_amount_out(
         &self,
         amount_in: BigUint,

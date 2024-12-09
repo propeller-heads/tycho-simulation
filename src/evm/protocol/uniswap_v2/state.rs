@@ -49,7 +49,7 @@ impl ProtocolSim for UniswapV2State {
         0.003
     }
 
-    /// Returns the pools spot price
+    /// Returns the pool's spot price for the given base and quote tokens.
     ///
     /// # Arguments
     ///
@@ -58,7 +58,8 @@ impl ProtocolSim for UniswapV2State {
     ///
     /// # Returns
     ///
-    /// * `f64` - Spot price of the tokens.
+    /// * `Result<f64, SimulationError>` - A `Result` containing the spot price of the pool and
+    ///   given tokens, or an error.
     fn spot_price(&self, base: &ERC20Token, quote: &ERC20Token) -> Result<f64, SimulationError> {
         if base < quote {
             Ok(spot_price_from_reserves(
@@ -87,8 +88,8 @@ impl ProtocolSim for UniswapV2State {
     ///
     /// # Returns
     ///
-    /// * `Result<GetAmountOutResult, TradeSimulationError>` - A `Result` containing the amount of
-    ///   output and the slippage of the trade, or an error.
+    /// A `Result` containing a `GetAmountOutResult` struct on success or a
+    ///  `SimulationError` on failure.
     fn get_amount_out(
         &self,
         amount_in: BigUint,
