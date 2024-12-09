@@ -3,10 +3,9 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use ethers::{
-    providers::Middleware,
-    types::{BlockId, H160, H256},
-};
+use alloy::providers::Provider;
+
+use alloy_primitives::StorageValue;
 use revm::{
     db::DatabaseRef,
     interpreter::analysis::to_analysed,
@@ -85,17 +84,11 @@ pub struct BlockHeader {
     pub timestamp: u64,
 }
 
-impl From<BlockHeader> for BlockId {
-    fn from(value: BlockHeader) -> Self {
-        Self::from(H256::from_slice(&value.hash.0))
-    }
-}
-
 /// A wrapper over an ethers Middleware with local storage cache and overrides.
 #[derive(Clone, Debug)]
-pub struct SimulationDB<M: Middleware> {
+pub struct SimulationDB<P: Provider> {
     /// Client to connect to the RPC
-    client: Arc<M>,
+    client: Arc<P>,
     /// Cached data
     account_storage: Arc<RwLock<AccountStorage>>,
     /// Current block
@@ -104,9 +97,9 @@ pub struct SimulationDB<M: Middleware> {
     pub runtime: Option<Arc<tokio::runtime::Runtime>>,
 }
 
-impl<M: Middleware> SimulationDB<M> {
+impl<P: Provider + 'static> SimulationDB<P> {
     pub fn new(
-        client: Arc<M>,
+        client: Arc<P>,
         runtime: Option<Arc<tokio::runtime::Runtime>>,
         block: Option<BlockHeader>,
     ) -> Self {
@@ -195,38 +188,23 @@ impl<M: Middleware> SimulationDB<M> {
     fn query_account_info(
         &self,
         address: Address,
-    ) -> Result<AccountInfo, <SimulationDB<M> as DatabaseRef>::Error> {
+    ) -> Result<AccountInfo, <SimulationDB<P> as DatabaseRef>::Error> {
         debug!("Querying account info of {:x?} at block {:?}", address, self.block);
-        let block_id: Option<BlockId> = self.block.map(|v| v.into());
+        // let block_id: Option<BlockId> = self.block.map(|v| v.into());
+
         let fut = async {
             tokio::join!(
+                self.client.get_balance(address),
                 self.client
-                    .get_balance(H160(**address), block_id),
-                self.client
-                    .get_transaction_count(H160(**address), block_id),
-                self.client
-                    .get_code(H160(**address), block_id),
+                    .get_transaction_count(address),
+                self.client.get_code_at(address),
             )
         };
 
         let (balance, nonce, code) = self.block_on(fut);
-        let code = to_analysed(Bytecode::new_raw(revm::primitives::Bytes::copy_from_slice(
-            &code
-                .unwrap_or_else(|e| panic!("ethers get code error: {e:?}"))
-                .0,
-        )));
-        Ok(AccountInfo::new(
-            rU256::from_limbs(
-                balance
-                    .unwrap_or_else(|e| panic!("ethers get balance error: {e:?}"))
-                    .0,
-            ),
-            nonce
-                .unwrap_or_else(|e| panic!("ethers get nonce error: {e:?}"))
-                .as_u64(),
-            code.hash_slow(),
-            code,
-        ))
+        let code = to_analysed(Bytecode::new_raw(revm::primitives::Bytes::copy_from_slice(&code?)));
+
+        Ok(AccountInfo::new(balance?, nonce?, code.hash_slow(), code))
     }
 
     /// Queries a value from storage at the specified index for a given Ethereum account.
@@ -244,16 +222,12 @@ impl<M: Middleware> SimulationDB<M> {
         &self,
         address: Address,
         index: rU256,
-    ) -> Result<rU256, <SimulationDB<M> as DatabaseRef>::Error> {
-        let index_h256 = H256::from(index.to_be_bytes());
+    ) -> Result<StorageValue, <SimulationDB<P> as DatabaseRef>::Error> {
         let fut = async {
-            let address = H160::from(**address);
-            let storage = self
-                .client
-                .get_storage_at(address, index_h256, self.block.map(|v| v.into()))
+            self.client
+                .get_storage_at(address, index)
                 .await
-                .unwrap();
-            rU256::from_be_bytes(storage.to_fixed_bytes())
+                .unwrap()
         };
         let storage = self.block_on(fut);
 
@@ -271,7 +245,10 @@ impl<M: Middleware> SimulationDB<M> {
     }
 }
 
-impl<M: Middleware> EngineDatabaseInterface for SimulationDB<M> {
+impl<P: Provider> EngineDatabaseInterface for SimulationDB<P>
+where
+    P: Provider + Send + Sync + 'static,
+{
     type Error = String;
 
     /// Sets up a single account
@@ -315,8 +292,11 @@ impl<M: Middleware> EngineDatabaseInterface for SimulationDB<M> {
     }
 }
 
-impl<M: Middleware> DatabaseRef for SimulationDB<M> {
-    type Error = M::Error;
+impl<P: Provider> DatabaseRef for SimulationDB<P>
+where
+    P: Provider + Send + Sync + 'static,
+{
+    type Error = Box<dyn std::error::Error + Send + Sync>;
 
     /// Retrieves basic information about an account.
     ///
@@ -428,7 +408,7 @@ impl<M: Middleware> DatabaseRef for SimulationDB<M> {
 
                 account_storage.set_temp_storage(address, index, storage_value);
                 debug!(
-                    "This is non-mocked account for which we didn't have data. Fetched value: {}",
+                    "This is a non-mocked account for which we didn't have data. Fetched value: {}",
                     storage_value
                 );
                 Ok(storage_value)
