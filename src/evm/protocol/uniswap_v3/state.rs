@@ -240,6 +240,17 @@ impl ProtocolSim for UniswapV3State {
         (self.fee as u32) as f64 / 1_000_000.0
     }
 
+    /// Returns the pool's spot price for the given base and quote tokens.
+    ///
+    /// # Arguments
+    ///
+    /// * `base` - Base token
+    /// * `quote` - Quote token
+    ///
+    /// # Returns
+    ///
+    /// * `Result<f64, SimulationError>` - A `Result` containing the spot price of the pool and
+    ///   given tokens, or an error.
     fn spot_price(&self, a: &ERC20Token, b: &ERC20Token) -> Result<f64, SimulationError> {
         if a < b {
             Ok(sqrt_price_q96_to_f64(self.sqrt_price, a.decimals as u32, b.decimals as u32))

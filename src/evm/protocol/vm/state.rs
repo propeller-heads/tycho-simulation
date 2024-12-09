@@ -49,7 +49,7 @@ where
     pub tokens: Vec<Address>,
     /// The current block, will be used to set vm context
     block: BlockHeader,
-    /// The pools token balances
+    /// The pool's token balances
     balances: HashMap<Address, U256>,
     /// The contract address for where protocol balances are stored (i.e. a vault contract).
     /// If given, balances will be overwritten here instead of on the pool contract during
@@ -139,7 +139,7 @@ where
                 *MAX_BALANCE / U256::from(100),
             )?);
             let sell_amount_limit = self.get_sell_amount_limit(
-                vec![(sell_token.address), (buy_token.address)],
+                vec![sell_token.address, buy_token.address],
                 overwrites.clone(),
             )?;
             let price_result = self.adapter_contract.price(
@@ -350,6 +350,17 @@ where
         todo!()
     }
 
+    /// Returns the pool's spot price
+    ///
+    /// # Arguments
+    ///
+    /// * `base` - Base token
+    /// * `quote` - Quote token
+    ///
+    /// # Returns
+    ///
+    /// * `Result<f64, SimulationError>` - A `Result` containing the spot price of the pool and
+    ///   given tokens, or an error.
     fn spot_price(&self, base: &ERC20Token, quote: &ERC20Token) -> Result<f64, SimulationError> {
         self.spot_prices
             .get(&(base.address, quote.address))
