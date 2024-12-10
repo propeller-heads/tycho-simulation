@@ -59,9 +59,6 @@ where
     spot_prices: HashMap<(Address, Address), f64>,
     /// The supported capabilities of this pool
     capabilities: HashSet<Capability>,
-    /// Storage overwrites that will be applied to all simulations. They will be cleared
-    /// when ``clear_all_cache`` is called, i.e. usually at each block. Hence, the name.
-    block_lasting_overwrites: HashMap<Address, Overwrites>,
     /// A set of all contract addresses involved in the simulation of this pool."""
     involved_contracts: HashSet<Address>,
     /// Allows the specification of custom storage slots for token allowances and
@@ -93,7 +90,6 @@ where
         balance_owner: Option<Address>,
         spot_prices: HashMap<(Address, Address), f64>,
         capabilities: HashSet<Capability>,
-        block_lasting_overwrites: HashMap<Address, Overwrites>,
         involved_contracts: HashSet<Address>,
         token_storage_slots: HashMap<Address, (ERC20Slots, ContractCompiler)>,
         manual_updates: bool,
@@ -107,7 +103,6 @@ where
             balance_owner,
             spot_prices,
             capabilities,
-            block_lasting_overwrites,
             involved_contracts,
             token_storage_slots,
             manual_updates,
@@ -243,26 +238,11 @@ where
         self.adapter_contract
             .engine
             .clear_temp_storage();
-        self.block_lasting_overwrites.clear();
         self.set_spot_prices(tokens)?;
         Ok(())
     }
 
     fn get_overwrites(
-        &self,
-        tokens: Vec<Address>,
-        max_amount: U256,
-    ) -> Result<HashMap<Address, Overwrites>, SimulationError> {
-        let token_overwrites = self.get_token_overwrites(tokens, max_amount)?;
-
-        // Merge `block_lasting_overwrites` with `token_overwrites`
-        let merged_overwrites =
-            self.merge(&self.block_lasting_overwrites.clone(), &token_overwrites);
-
-        Ok(merged_overwrites)
-    }
-
-    fn get_token_overwrites(
         &self,
         tokens: Vec<Address>,
         max_amount: U256,
@@ -473,12 +453,9 @@ where
         let mut new_state = self.clone();
 
         // Apply state changes to the new state
-        for (address, state_update) in state_changes {
+        for (_address, state_update) in state_changes {
             if let Some(storage) = state_update.storage {
-                let block_overwrites = new_state
-                    .block_lasting_overwrites
-                    .entry(address)
-                    .or_default();
+                let mut block_overwrites = HashMap::new();
                 for (slot, value) in storage {
                     let slot = U256::from_str(&slot.to_string()).map_err(|_| {
                         SimulationError::FatalError("Failed to decode slot index".to_string())
@@ -760,9 +737,6 @@ mod tests {
         assert_eq!(result.amount, BigUint::from_str("137780051463393923").unwrap());
         assert_eq!(result.gas, BigUint::from_str("102770").unwrap());
         assert_ne!(new_state.spot_prices, pool_state.spot_prices);
-        assert!(pool_state
-            .block_lasting_overwrites
-            .is_empty());
         Ok(())
     }
 
