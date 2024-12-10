@@ -66,7 +66,7 @@ pub trait ProtocolSim: std::fmt::Debug + Send + Sync + 'static {
     /// E.g. if the fee is 1%, the value returned would be 0.01.
     fn fee(&self) -> f64;
 
-    /// Returns the protocols current spot price of two tokens
+    /// Returns the protocol's current spot price of two tokens
     ///
     /// Currency pairs are meant to be compared against one another in
     /// order to understand how much of the quote currency is required
@@ -94,7 +94,7 @@ pub trait ProtocolSim: std::fmt::Debug + Send + Sync + 'static {
     /// # Returns
     ///
     /// A `Result` containing a `GetAmountOutResult` struct on success or a
-    ///  `TradeSimulationError` on failure.
+    ///  `SimulationError` on failure.
     fn get_amount_out(
         &self,
         amount_in: BigUint,
