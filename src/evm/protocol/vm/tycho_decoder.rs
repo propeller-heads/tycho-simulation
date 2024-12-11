@@ -14,6 +14,8 @@ use crate::{
     evm::engine_db::{simulation_db::BlockHeader, tycho_db::PreCachedDB, SHARED_TYCHO_DB},
     models::Token,
     protocol::{errors::InvalidSnapshotError, models::TryFromWithBlock},
+    evm::engine_db::{create_engine, SHARED_TYCHO_DB},
+    evm::tycho_models::{AccountUpdate, ResponseAccount},
 };
 
 use super::{state::EVMPoolState, state_builder::EVMPoolStateBuilder};
@@ -187,13 +189,18 @@ mod tests {
     use super::*;
 
     use chrono::DateTime;
-    use std::{collections::HashSet, str::FromStr};
-
+    use std::{collections::HashSet, fs, str::FromStr};
+    use std::path::Path;
+    use serde_json::Value;
+    use crate::evm::engine_db::engine_db_interface::EngineDatabaseInterface;
     use crate::protocol::models::TryFromWithBlock;
     use tycho_core::{
         dto::{Chain, ChangeType, ProtocolComponent, ResponseProtocolState},
         Bytes,
     };
+    use chrono::offset::Utc;
+    use revm::primitives::{Address, AccountInfo, KECCAK_EMPTY, Bytecode};
+
 
     #[test]
     fn test_to_adapter_file_name() {
@@ -238,6 +245,18 @@ mod tests {
         }
     }
 
+    fn load_balancer_account_data() -> Vec<AccountUpdate> {
+        let project_root = env!("CARGO_MANIFEST_DIR");
+        let asset_path =
+            Path::new(project_root).join("tests/assets/decoder/balancer_snapshot.json");
+        let json_data = fs::read_to_string(asset_path).expect("Failed to read test asset");
+        let data: Value = serde_json::from_str(&json_data).expect("Failed to parse JSON");
+
+        let accounts: Vec<AccountUpdate> = serde_json::from_value(data["accounts"].clone())
+            .expect("Expected accounts to match AccountUpdate structure");
+        accounts
+    }
+
     #[tokio::test]
     async fn test_try_from_with_block() {
         let attributes: HashMap<String, Bytes> = vec![
@@ -249,6 +268,23 @@ mod tests {
         ]
         .into_iter()
         .collect();
+        let tokens = [
+            ERC20Token::new(
+                "0x6b175474e89094c44da98b954eedeac495271d0f",
+                18,
+                "DAI",
+                U256::from(10_000),
+            ),
+            ERC20Token::new(
+                "0xba100000625a3754423978a60c9317c58a424e3d",
+                18,
+                "BAL",
+                U256::from(10_000),
+            ),
+        ]
+        .into_iter()
+        .map(|t| (Bytes::from(t.address.as_bytes()), t))
+        .collect::<HashMap<_, _>>();
         let snapshot = ComponentWithState {
             state: ResponseProtocolState {
                 component_id: "0x4626d81b3a1711beb79f4cecff2413886d461677000200000000000000000011"
@@ -258,11 +294,31 @@ mod tests {
             },
             component: vm_component(),
         };
+        // Initialize engine with balancer storage
+        let block = header();
+        let accounts = load_balancer_account_data();
+        let db = SHARED_TYCHO_DB.clone();
+        let engine = create_engine(db.clone(), false).unwrap();
+        for account in accounts.clone() {
+            engine.state.init_account(
+                account.address,
+                AccountInfo {
+                    balance: account.balance.unwrap_or_default(),
+                    nonce: 0u64,
+                    code_hash: KECCAK_EMPTY,
+                    code: account
+                        .code
+                        .clone()
+                        .map(|arg0: Vec<u8>| Bytecode::new_raw(arg0.into())),
+                },
+                None,
+                false,
+            );
+        }
+        db.update(accounts, Some(block.into()));
 
-        let result = EVMPoolState::try_from_with_block(snapshot, header(), &HashMap::new()).await;
+        let res = EVMPoolState::try_from_with_block(snapshot, header(), &tokens).await.unwrap();
 
-        assert!(result.is_ok());
-        let res = result.unwrap();
         assert_eq!(
             res.get_balance_owner(),
             Some(Address::from_str("0xBA12222222228d8Ba445958a75a0704d566BF2C8").unwrap())
