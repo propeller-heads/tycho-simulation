@@ -6,7 +6,7 @@ use std::{
 };
 
 use alloy_primitives::{Address, B256, U256};
-
+use tracing::info;
 use tycho_client::feed::{synchronizer::ComponentWithState, Header};
 use tycho_core::Bytes;
 
