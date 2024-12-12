@@ -40,12 +40,14 @@ type DecodeFut =
     Pin<Box<dyn Future<Output = Result<Box<dyn ProtocolSim>, InvalidSnapshotError>> + Send + Sync>>;
 type RegistryFn =
     dyn Fn(ComponentWithState, Header, Arc<RwLock<DecoderState>>) -> DecodeFut + Send + Sync;
+type FilterFn = fn(&ComponentWithState) -> bool;
 
 pub(super) struct TychoStreamDecoder {
     state: Arc<RwLock<DecoderState>>,
     skip_state_decode_failures: bool,
     min_token_quality: u32,
     registry: HashMap<String, Box<RegistryFn>>,
+    inclusion_filters: HashMap<String, FilterFn>,
 }
 
 impl TychoStreamDecoder {
@@ -55,6 +57,7 @@ impl TychoStreamDecoder {
             skip_state_decode_failures: false,
             min_token_quality: 51,
             registry: HashMap::new(),
+            inclusion_filters: HashMap::new(),
         }
     }
 
@@ -89,6 +92,11 @@ impl TychoStreamDecoder {
         );
         self.registry
             .insert(exchange.to_string(), decoder);
+    }
+
+    pub fn register_filter(&mut self, exchange: &str, predicate: FilterFn) {
+        self.inclusion_filters
+            .insert(exchange.to_string(), predicate);
     }
 
     pub async fn decode(&self, msg: FeedMessage) -> Result<BlockUpdate, StreamDecodeError> {
@@ -198,6 +206,13 @@ impl TychoStreamDecoder {
                 .get_states()
                 .clone()
             {
+                // Skip any unsupported pools
+                if let Some(predicate) = self.inclusion_filters.get(protocol.as_str()) {
+                    if !predicate(&snapshot) {
+                        continue
+                    }
+                }
+
                 // Construct component from snapshot
                 let mut component_tokens = Vec::new();
                 for token in snapshot.component.tokens.clone() {

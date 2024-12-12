@@ -12,7 +12,15 @@ use tracing_subscriber::{fmt, EnvFilter};
 use tycho_client::feed::component_tracker::ComponentFilter;
 use tycho_core::dto::Chain;
 use tycho_simulation::{
-    evm::protocol::{uniswap_v2::state::UniswapV2State, uniswap_v3::state::UniswapV3State},
+    evm::{
+        engine_db::tycho_db::PreCachedDB,
+        protocol::{
+            filters::{balancer_pool_filter, curve_pool_filter},
+            uniswap_v2::state::UniswapV2State,
+            uniswap_v3::state::UniswapV3State,
+            vm::state::EVMPoolState,
+        },
+    },
     protocol::{models::BlockUpdate, stream::ProtocolStreamBuilder},
 };
 
@@ -25,19 +33,9 @@ struct Cli {
 
 #[tokio::main]
 async fn main() {
-    // Parse command-line arguments into a Cli struct
-    let format = fmt::format()
-        .with_level(true) // Show log levels
-        .with_target(false) // Hide module paths
-        .compact(); // Use a compact format
-
-    fmt()
-        .event_format(format)
-        .with_env_filter(EnvFilter::from_default_env()) // Use RUST_LOG for log levels
-        .init();
-    let cli = Cli::parse();
-
     utils::setup_tracing();
+    // Parse command-line arguments into a Cli struct
+    let cli = Cli::parse();
 
     let tycho_url =
         env::var("TYCHO_URL").unwrap_or_else(|_| "tycho-dev.propellerheads.xyz".to_string());
@@ -49,14 +47,19 @@ async fn main() {
 
     let tycho_message_processor: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
         let all_tokens = load_all_tokens(tycho_url.as_str(), Some(tycho_api_key.as_str())).await;
+        let tvl_filter = ComponentFilter::with_tvl_range(cli.tvl_threshold, cli.tvl_threshold);
         let mut protocol_stream = ProtocolStreamBuilder::new(&tycho_url, Chain::Ethereum)
-            .exchange::<UniswapV2State>(
-                "uniswap_v2",
-                ComponentFilter::with_tvl_range(cli.tvl_threshold, cli.tvl_threshold),
+            // .exchange::<UniswapV2State>("uniswap_v2", tvl_filter.clone(), None)
+            // .exchange::<UniswapV3State>("uniswap_v3", tvl_filter.clone(), None)
+            .exchange::<EVMPoolState<PreCachedDB>>(
+                "vm:balancer_v2",
+                tvl_filter.clone(),
+                Some(balancer_pool_filter),
             )
-            .exchange::<UniswapV3State>(
-                "uniswap_v3",
-                ComponentFilter::with_tvl_range(cli.tvl_threshold, cli.tvl_threshold),
+            .exchange::<EVMPoolState<PreCachedDB>>(
+                "vm:curve",
+                tvl_filter.clone(),
+                Some(curve_pool_filter),
             )
             .auth_key(Some(tycho_api_key.clone()))
             .set_tokens(all_tokens)

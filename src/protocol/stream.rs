@@ -29,7 +29,12 @@ impl ProtocolStreamBuilder {
         }
     }
 
-    pub fn exchange<T>(mut self, name: &str, filter: ComponentFilter) -> Self
+    pub fn exchange<T>(
+        mut self,
+        name: &str,
+        filter: ComponentFilter,
+        filter_fn: Option<fn(&ComponentWithState) -> bool>,
+    ) -> Self
     where
         T: ProtocolSim
             + TryFromWithBlock<ComponentWithState, Error = InvalidSnapshotError>
@@ -40,6 +45,10 @@ impl ProtocolStreamBuilder {
             .stream_builder
             .exchange(name, filter);
         self.decoder.register_decoder::<T>(name);
+        if let Some(predicate) = filter_fn {
+            self.decoder
+                .register_filter(name, predicate);
+        }
         self
     }
 
