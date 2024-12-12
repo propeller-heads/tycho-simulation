@@ -14,8 +14,6 @@ use crate::{
     evm::engine_db::{simulation_db::BlockHeader, tycho_db::PreCachedDB, SHARED_TYCHO_DB},
     models::Token,
     protocol::{errors::InvalidSnapshotError, models::TryFromWithBlock},
-    evm::engine_db::{create_engine, SHARED_TYCHO_DB},
-    evm::tycho_models::{AccountUpdate, ResponseAccount},
 };
 
 use super::{state::EVMPoolState, state_builder::EVMPoolStateBuilder};
@@ -56,7 +54,7 @@ impl TryFromWithBlock<ComponentWithState> for EVMPoolState<PreCachedDB> {
             .component
             .tokens
             .iter()
-            .map(Address::from_slice)
+            .map(|x| Address::from_slice(x.as_ref()))
             .collect();
 
         let block = BlockHeader::from(block);
@@ -188,19 +186,27 @@ fn to_adapter_file_name(protocol_system: &str) -> String {
 mod tests {
     use super::*;
 
+    use crate::{
+        evm::engine_db::engine_db_interface::EngineDatabaseInterface,
+        protocol::models::TryFromWithBlock,
+    };
+    use crate::{
+        evm::{
+            engine_db::{
+                create_engine,
+            },
+            tycho_models::AccountUpdate,
+        }
+    };
     use chrono::DateTime;
-    use std::{collections::HashSet, fs, str::FromStr};
-    use std::path::Path;
+    use num_bigint::ToBigUint;
+    use revm::primitives::{AccountInfo, Address, Bytecode, KECCAK_EMPTY};
     use serde_json::Value;
-    use crate::evm::engine_db::engine_db_interface::EngineDatabaseInterface;
-    use crate::protocol::models::TryFromWithBlock;
+    use std::{collections::HashSet, fs, path::Path, str::FromStr};
     use tycho_core::{
         dto::{Chain, ChangeType, ProtocolComponent, ResponseProtocolState},
         Bytes,
     };
-    use chrono::offset::Utc;
-    use revm::primitives::{Address, AccountInfo, KECCAK_EMPTY, Bytecode};
-
 
     #[test]
     fn test_to_adapter_file_name() {
@@ -273,24 +279,35 @@ mod tests {
                 "0x6b175474e89094c44da98b954eedeac495271d0f",
                 18,
                 "DAI",
-                U256::from(10_000),
+                10_000.to_biguint().unwrap(),
             ),
             ERC20Token::new(
                 "0xba100000625a3754423978a60c9317c58a424e3d",
                 18,
                 "BAL",
-                U256::from(10_000),
+                10_000.to_biguint().unwrap(),
             ),
         ]
         .into_iter()
-        .map(|t| (Bytes::from(t.address.as_bytes()), t))
+        .map(|t| (Bytes::from(t.address.as_slice()), t))
         .collect::<HashMap<_, _>>();
         let snapshot = ComponentWithState {
             state: ResponseProtocolState {
                 component_id: "0x4626d81b3a1711beb79f4cecff2413886d461677000200000000000000000011"
                     .to_owned(),
                 attributes,
-                balances: HashMap::new(),
+                balances: [
+                    (
+                        Bytes::from("0x6b175474e89094c44da98b954eedeac495271d0f"),
+                        Bytes::from("0x01"),
+                    ),
+                    (
+                        Bytes::from("0xba100000625a3754423978a60c9317c58a424e3d"),
+                        Bytes::from("0x01"),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
             },
             component: vm_component(),
         };
@@ -317,7 +334,9 @@ mod tests {
         }
         db.update(accounts, Some(block.into()));
 
-        let res = EVMPoolState::try_from_with_block(snapshot, header(), &tokens).await.unwrap();
+        let res = EVMPoolState::try_from_with_block(snapshot, header(), &tokens)
+            .await
+            .unwrap();
 
         assert_eq!(
             res.get_balance_owner(),

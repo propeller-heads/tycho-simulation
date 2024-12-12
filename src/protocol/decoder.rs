@@ -280,7 +280,7 @@ mod tests {
         models::ERC20Token,
         protocol::decoder::{StreamDecodeError, TychoStreamDecoder},
     };
-    use ethers::types::U256;
+    use num_bigint::ToBigUint;
     use rstest::*;
     use std::{fs, path::Path};
     use tycho_client::feed::FeedMessage;
@@ -297,7 +297,10 @@ mod tests {
             .iter()
             .map(|addr| {
                 let addr_str = format!("{:x}", addr);
-                (addr.clone(), ERC20Token::new(&addr_str, 18, &addr_str, U256::from(100_000)))
+                (
+                    addr.clone(),
+                    ERC20Token::new(&addr_str, 18, &addr_str, 100_000.to_biguint().unwrap()),
+                )
             })
             .collect();
             decoder.set_tokens(tokens);
@@ -339,7 +342,10 @@ mod tests {
             .iter()
             .map(|addr| {
                 let addr_str = format!("{:x}", addr);
-                (addr.clone(), ERC20Token::new(&addr_str, 18, &addr_str, U256::from(100_000)))
+                (
+                    addr.clone(),
+                    ERC20Token::new(&addr_str, 18, &addr_str, 100_000.to_biguint().unwrap()),
+                )
             })
             .collect();
         decoder.set_tokens(tokens);

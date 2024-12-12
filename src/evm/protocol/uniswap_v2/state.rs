@@ -1,6 +1,4 @@
 use alloy_primitives::U256;
-use std::any::Any;
-use std::collections::HashMap;
 use num_bigint::{BigUint, ToBigUint};
 
 use crate::{

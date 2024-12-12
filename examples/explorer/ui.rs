@@ -1,5 +1,3 @@
-use std::{cmp::max, time::Instant};
-
 use futures::StreamExt;
 use itertools::Itertools;
 use num_bigint::BigUint;
@@ -151,7 +149,7 @@ impl App {
                 component: comp.clone(),
                 state: update
                     .states
-                    .get(&comp.address)
+                    .get(id)
                     .unwrap_or_else(|| panic!("Received update for unknown pool {}", comp.address))
                     .clone(),
                 name,

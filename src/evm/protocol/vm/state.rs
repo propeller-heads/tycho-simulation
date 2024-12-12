@@ -230,10 +230,10 @@ where
     fn get_decimals(
         &self,
         tokens: &HashMap<Bytes, ERC20Token>,
-        sell_token_address: &H160,
+        sell_token_address: &Address,
     ) -> Result<usize, SimulationError> {
         tokens
-            .get(&Bytes::from(sell_token_address.as_bytes()))
+            .get(&Bytes::from(sell_token_address.as_slice()))
             .map(|t| t.decimals)
             .ok_or_else(|| {
                 SimulationError::FatalError(format!(
@@ -905,7 +905,7 @@ mod tests {
             .set_spot_prices(
                 &vec![bal(), dai()]
                     .into_iter()
-                    .map(|t| (Bytes::from(t.address.as_bytes()), t))
+                    .map(|t| (Bytes::from(t.address.as_slice()), t))
                     .collect(),
             )
             .unwrap();
