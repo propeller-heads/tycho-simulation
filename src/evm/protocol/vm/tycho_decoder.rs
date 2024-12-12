@@ -187,16 +187,11 @@ mod tests {
     use super::*;
 
     use crate::{
-        evm::engine_db::engine_db_interface::EngineDatabaseInterface,
-        protocol::models::TryFromWithBlock,
-    };
-    use crate::{
         evm::{
-            engine_db::{
-                create_engine,
-            },
+            engine_db::{create_engine, engine_db_interface::EngineDatabaseInterface},
             tycho_models::AccountUpdate,
-        }
+        },
+        protocol::models::TryFromWithBlock,
     };
     use chrono::DateTime;
     use num_bigint::ToBigUint;

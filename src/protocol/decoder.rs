@@ -1,4 +1,8 @@
 use crate::{
+    evm::{
+        engine_db::{update_engine, SHARED_TYCHO_DB},
+        tycho_models::{AccountUpdate, ResponseAccount},
+    },
     models::ERC20Token,
     protocol::{
         errors::InvalidSnapshotError,
@@ -6,6 +10,7 @@ use crate::{
         state::ProtocolSim,
     },
 };
+use alloy_primitives::Address;
 use std::{
     collections::{hash_map::Entry, HashMap},
     future::Future,
@@ -15,7 +20,7 @@ use std::{
 };
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use tycho_client::feed::{synchronizer::ComponentWithState, FeedMessage, Header};
 use tycho_core::Bytes;
 
@@ -167,6 +172,24 @@ impl TychoStreamDecoder {
                     }),
             );
 
+            // UPDATE VM STORAGE
+            let storage_by_address: HashMap<Address, ResponseAccount> = protocol_msg
+                .clone()
+                .snapshots
+                .get_vm_storage()
+                .iter()
+                .map(|(key, value)| (Address::from_slice(&key[..20]), value.clone().into()))
+                .collect();
+            info!("Updating engine with snapshot");
+            update_engine(
+                SHARED_TYCHO_DB.clone(),
+                block.clone().into(),
+                Some(storage_by_address),
+                HashMap::new(),
+            )
+            .await;
+            info!("Engine updated with snapshot");
+
             let mut new_components = HashMap::new();
 
             // PROCESS SNAPSHOTS
@@ -223,6 +246,22 @@ impl TychoStreamDecoder {
 
             // PROCESS DELTAS
             if let Some(deltas) = protocol_msg.deltas.clone() {
+                let account_update_by_address: HashMap<Address, AccountUpdate> = deltas
+                    .account_updates
+                    .clone()
+                    .iter()
+                    .map(|(key, value)| (Address::from_slice(&key[..20]), value.clone().into()))
+                    .collect();
+                info!("Updating engine with deltas");
+                update_engine(
+                    SHARED_TYCHO_DB.clone(),
+                    block.clone().into(),
+                    None,
+                    account_update_by_address,
+                )
+                .await;
+                info!("Engine updated with deltas");
+
                 for (id, update) in deltas.state_updates {
                     match updated_states.entry(id.clone()) {
                         Entry::Occupied(mut entry) => {
