@@ -3,7 +3,7 @@ use crate::{
         engine_db::{update_engine, SHARED_TYCHO_DB},
         tycho_models::{AccountUpdate, ResponseAccount},
     },
-    models::ERC20Token,
+    models::Token,
     protocol::{
         errors::InvalidSnapshotError,
         models::{BlockUpdate, ProtocolComponent, TryFromWithBlock},
@@ -32,7 +32,7 @@ pub enum StreamDecodeError {
 
 #[derive(Default)]
 struct DecoderState {
-    tokens: HashMap<Bytes, ERC20Token>,
+    tokens: HashMap<Bytes, Token>,
     states: HashMap<String, Box<dyn ProtocolSim>>,
 }
 
@@ -61,7 +61,7 @@ impl TychoStreamDecoder {
         }
     }
 
-    pub fn set_tokens(&self, tokens: HashMap<Bytes, ERC20Token>) {
+    pub fn set_tokens(&self, tokens: HashMap<Bytes, Token>) {
         let state = self.state.clone();
         // We prefer this to be sync since it is used mainly in builders.
         tokio::task::spawn_blocking(move || {
@@ -127,8 +127,7 @@ impl TychoStreamDecoder {
                             return None;
                         }
 
-                        let token: Result<ERC20Token, std::num::TryFromIntError> =
-                            t.clone().try_into();
+                        let token: Result<Token, std::num::TryFromIntError> = t.clone().try_into();
                         let result = match token {
                             Ok(t) => Ok((addr.clone(), t)),
                             Err(e) => Err(StreamDecodeError::Fatal(format!(
@@ -137,7 +136,7 @@ impl TychoStreamDecoder {
                         };
                         Some(result)
                     })
-                    .collect::<Result<HashMap<Bytes, ERC20Token>, StreamDecodeError>>()?;
+                    .collect::<Result<HashMap<Bytes, Token>, StreamDecodeError>>()?;
 
                 if !res.is_empty() {
                     debug!(n = res.len(), "NewTokens");
@@ -207,7 +206,10 @@ impl TychoStreamDecoder {
                 .clone()
             {
                 // Skip any unsupported pools
-                if let Some(predicate) = self.inclusion_filters.get(protocol.as_str()) {
+                if let Some(predicate) = self
+                    .inclusion_filters
+                    .get(protocol.as_str())
+                {
                     if !predicate(&snapshot) {
                         continue
                     }
@@ -331,7 +333,7 @@ impl TychoStreamDecoder {
 mod tests {
     use crate::{
         evm::protocol::uniswap_v2::state::UniswapV2State,
-        models::ERC20Token,
+        models::Token,
         protocol::decoder::{StreamDecodeError, TychoStreamDecoder},
     };
     use num_bigint::ToBigUint;
@@ -351,10 +353,7 @@ mod tests {
             .iter()
             .map(|addr| {
                 let addr_str = format!("{:x}", addr);
-                (
-                    addr.clone(),
-                    ERC20Token::new(&addr_str, 18, &addr_str, 100_000.to_biguint().unwrap()),
-                )
+                (addr.clone(), Token::new(&addr_str, 18, &addr_str, 100_000.to_biguint().unwrap()))
             })
             .collect();
             decoder.set_tokens(tokens);
@@ -396,10 +395,7 @@ mod tests {
             .iter()
             .map(|addr| {
                 let addr_str = format!("{:x}", addr);
-                (
-                    addr.clone(),
-                    ERC20Token::new(&addr_str, 18, &addr_str, 100_000.to_biguint().unwrap()),
-                )
+                (addr.clone(), Token::new(&addr_str, 18, &addr_str, 100_000.to_biguint().unwrap()))
             })
             .collect();
         decoder.set_tokens(tokens);

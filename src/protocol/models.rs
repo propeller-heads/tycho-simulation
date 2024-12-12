@@ -24,8 +24,7 @@
 //! It's worth emphasizin that although the term "pair" used in this
 //! module refers to a trading pair, it does not necessarily imply two
 //! tokens only. Some pairs might have more than two tokens.
-use std::collections::HashMap;
-use std::future::Future;
+use std::{collections::HashMap, future::Future};
 
 use num_bigint::BigUint;
 
@@ -62,7 +61,7 @@ pub trait TryFromWithBlock<T> {
     fn try_from_with_block(
         value: T,
         block: Header,
-        all_tokens: HashMap<Bytes, Token>,
+        all_tokens: &HashMap<Bytes, Token>,
     ) -> impl Future<Output = Result<Self, Self::Error>> + Send + Sync
     where
         Self: Sized;

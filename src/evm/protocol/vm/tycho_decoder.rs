@@ -50,12 +50,7 @@ impl TryFromWithBlock<ComponentWithState> for EVMPoolState<PreCachedDB> {
         all_tokens: &HashMap<Bytes, Token>,
     ) -> Result<Self, Self::Error> {
         let id = snapshot.component.id.clone();
-        let tokens: Vec<Bytes> = snapshot
-            .component
-            .tokens
-            .iter()
-            .map(|x| Address::from_slice(x.as_ref()))
-            .collect();
+        let tokens = snapshot.component.tokens.clone();
 
         let block = BlockHeader::from(block);
         let balances = snapshot
@@ -270,13 +265,13 @@ mod tests {
         .into_iter()
         .collect();
         let tokens = [
-            ERC20Token::new(
+            Token::new(
                 "0x6b175474e89094c44da98b954eedeac495271d0f",
                 18,
                 "DAI",
                 10_000.to_biguint().unwrap(),
             ),
-            ERC20Token::new(
+            Token::new(
                 "0xba100000625a3754423978a60c9317c58a424e3d",
                 18,
                 "BAL",
@@ -284,7 +279,7 @@ mod tests {
             ),
         ]
         .into_iter()
-        .map(|t| (Bytes::from(t.address.as_slice()), t))
+        .map(|t| (t.address.clone(), t))
         .collect::<HashMap<_, _>>();
         let snapshot = ComponentWithState {
             state: ResponseProtocolState {

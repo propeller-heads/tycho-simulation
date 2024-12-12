@@ -1,5 +1,5 @@
 use crate::{
-    models::ERC20Token,
+    models::Token,
     protocol::{
         decoder::{StreamDecodeError, TychoStreamDecoder},
         errors::InvalidSnapshotError,
@@ -79,7 +79,7 @@ impl ProtocolStreamBuilder {
         self
     }
 
-    pub fn set_tokens(self, tokens: HashMap<Bytes, ERC20Token>) -> Self {
+    pub fn set_tokens(self, tokens: HashMap<Bytes, Token>) -> Self {
         self.decoder.set_tokens(tokens);
         self
     }

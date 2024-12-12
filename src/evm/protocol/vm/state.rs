@@ -9,7 +9,7 @@ use alloy_primitives::{Address, U256};
 use itertools::Itertools;
 use num_bigint::BigUint;
 use revm::DatabaseRef;
-
+use tracing::info;
 use tycho_core::{dto::ProtocolStateDelta, Bytes};
 
 use crate::{
@@ -181,12 +181,11 @@ where
         for [sell_token_address, buy_token_address] in self
             .tokens
             .iter()
-            .copied()
             .permutations(2)
             .map(|p| [p[0], p[1]])
         {
-            let sell_token_address = bytes_to_erc20_address(&sell_token.address)?;
-            let buy_token_address = bytes_to_erc20_address(&buy_token.address)?;
+            let sell_token_address = bytes_to_erc20_address(sell_token_address)?;
+            let buy_token_address = bytes_to_erc20_address(buy_token_address)?;
             let overwrites = Some(self.get_overwrites(
                 vec![sell_token_address, buy_token_address],
                 *MAX_BALANCE / U256::from(100),
@@ -229,7 +228,7 @@ where
 
     fn get_decimals(
         &self,
-        tokens: &HashMap<Bytes, ERC20Token>,
+        tokens: &HashMap<Bytes, Token>,
         sell_token_address: &Address,
     ) -> Result<usize, SimulationError> {
         tokens
@@ -276,10 +275,7 @@ where
         Ok(limits?.0)
     }
 
-    fn clear_all_cache(
-        &mut self,
-        tokens: &HashMap<Bytes, Token>,
-    ) -> Result<(), SimulationError> {
+    fn clear_all_cache(&mut self, tokens: &HashMap<Bytes, Token>) -> Result<(), SimulationError> {
         self.adapter_contract
             .engine
             .clear_temp_storage();
@@ -905,7 +901,7 @@ mod tests {
             .set_spot_prices(
                 &vec![bal(), dai()]
                     .into_iter()
-                    .map(|t| (Bytes::from(t.address.as_slice()), t))
+                    .map(|t| (t.address.clone(), t))
                     .collect(),
             )
             .unwrap();

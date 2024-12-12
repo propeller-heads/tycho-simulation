@@ -292,7 +292,7 @@ impl ProtocolSim for UniswapV3State {
     fn delta_transition(
         &mut self,
         delta: ProtocolStateDelta,
-        _tokens: Vec<Token>,
+        _tokens: &HashMap<Bytes, Token>,
     ) -> Result<(), TransitionError<String>> {
         // apply attribute changes
         if let Some(liquidity) = delta

@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use tracing_subscriber::{fmt, EnvFilter};
 use tycho_client::{rpc::RPCClient, HttpRPCClient};
 use tycho_core::{dto::Chain, Bytes};
-use tycho_simulation::models::ERC20Token;
+use tycho_simulation::models::Token;
 
 pub async fn load_all_tokens(
     tycho_url: &str,
     auth_key: Option<&str>,
-) -> HashMap<Bytes, ERC20Token> {
+) -> HashMap<Bytes, Token> {
     let rpc_url = format!("https://{tycho_url}");
     let rpc_client = HttpRPCClient::new(rpc_url.as_str(), auth_key).unwrap();
 
@@ -27,7 +27,7 @@ pub async fn load_all_tokens(
                 }),
             )
         })
-        .collect::<HashMap<_, ERC20Token>>()
+        .collect::<HashMap<_, Token>>()
 }
 
 pub fn setup_tracing() {

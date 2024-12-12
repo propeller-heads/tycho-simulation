@@ -118,7 +118,7 @@ pub trait ProtocolSim: std::fmt::Debug + Send + Sync + 'static {
     fn delta_transition(
         &mut self,
         delta: ProtocolStateDelta,
-        tokens: Vec<Token>,
+        tokens: &HashMap<Bytes, Token>,
     ) -> Result<(), TransitionError<String>>;
 
     /// Clones the protocol state as a trait object.

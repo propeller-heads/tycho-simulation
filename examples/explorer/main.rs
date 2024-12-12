@@ -55,11 +55,11 @@ async fn main() {
                 tvl_filter.clone(),
                 Some(balancer_pool_filter),
             )
-            // .exchange::<EVMPoolState<PreCachedDB>>(
-            //     "vm:curve",
-            //     tvl_filter.clone(),
-            //     Some(curve_pool_filter),
-            // )
+            .exchange::<EVMPoolState<PreCachedDB>>(
+                "vm:curve",
+                tvl_filter.clone(),
+                Some(curve_pool_filter),
+            )
             .auth_key(Some(tycho_api_key.clone()))
             .set_tokens(all_tokens)
             .build()
