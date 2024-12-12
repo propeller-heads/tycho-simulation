@@ -8,7 +8,6 @@ use clap::Parser;
 use futures::{future::select_all, StreamExt};
 use std::env;
 use tokio::{sync::mpsc, task::JoinHandle};
-use tracing_subscriber::{fmt, EnvFilter};
 use tycho_client::feed::component_tracker::ComponentFilter;
 use tycho_core::dto::Chain;
 use tycho_simulation::{
@@ -49,18 +48,18 @@ async fn main() {
         let all_tokens = load_all_tokens(tycho_url.as_str(), Some(tycho_api_key.as_str())).await;
         let tvl_filter = ComponentFilter::with_tvl_range(cli.tvl_threshold, cli.tvl_threshold);
         let mut protocol_stream = ProtocolStreamBuilder::new(&tycho_url, Chain::Ethereum)
-            // .exchange::<UniswapV2State>("uniswap_v2", tvl_filter.clone(), None)
-            // .exchange::<UniswapV3State>("uniswap_v3", tvl_filter.clone(), None)
+            .exchange::<UniswapV2State>("uniswap_v2", tvl_filter.clone(), None)
+            .exchange::<UniswapV3State>("uniswap_v3", tvl_filter.clone(), None)
             .exchange::<EVMPoolState<PreCachedDB>>(
                 "vm:balancer_v2",
                 tvl_filter.clone(),
                 Some(balancer_pool_filter),
             )
-            .exchange::<EVMPoolState<PreCachedDB>>(
-                "vm:curve",
-                tvl_filter.clone(),
-                Some(curve_pool_filter),
-            )
+            // .exchange::<EVMPoolState<PreCachedDB>>(
+            //     "vm:curve",
+            //     tvl_filter.clone(),
+            //     Some(curve_pool_filter),
+            // )
             .auth_key(Some(tycho_api_key.clone()))
             .set_tokens(all_tokens)
             .build()
