@@ -79,8 +79,8 @@ impl ProtocolStreamBuilder {
         self
     }
 
-    pub fn set_tokens(self, tokens: HashMap<Bytes, Token>) -> Self {
-        self.decoder.set_tokens(tokens);
+    pub async fn set_tokens(self, tokens: HashMap<Bytes, Token>) -> Self {
+        self.decoder.set_tokens(tokens).await;
         self
     }
 

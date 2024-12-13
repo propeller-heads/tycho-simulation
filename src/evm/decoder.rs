@@ -61,13 +61,9 @@ impl TychoStreamDecoder {
         }
     }
 
-    pub fn set_tokens(&self, tokens: HashMap<Bytes, Token>) {
-        let state = self.state.clone();
-        // We prefer this to be sync since it is used mainly in builders.
-        tokio::task::spawn_blocking(move || {
-            let mut guard = state.blocking_write();
-            guard.tokens = tokens;
-        });
+    pub async fn set_tokens(&self, tokens: HashMap<Bytes, Token>) {
+        let mut guard = self.state.write().await;
+        guard.tokens = tokens;
     }
 
     // Method to register a decoder
@@ -344,7 +340,7 @@ mod tests {
     use tycho_client::feed::FeedMessage;
     use tycho_core::Bytes;
 
-    fn setup_decoder(set_tokens: bool) -> TychoStreamDecoder {
+    async fn setup_decoder(set_tokens: bool) -> TychoStreamDecoder {
         let mut decoder = TychoStreamDecoder::new();
         decoder.register_decoder::<UniswapV2State>("uniswap_v2");
         if set_tokens {
@@ -358,7 +354,7 @@ mod tests {
                 (addr.clone(), Token::new(&addr_str, 18, &addr_str, 100_000.to_biguint().unwrap()))
             })
             .collect();
-            decoder.set_tokens(tokens);
+            decoder.set_tokens(tokens).await;
         }
         decoder
     }
@@ -373,7 +369,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decode() {
-        let decoder = setup_decoder(true);
+        let decoder = setup_decoder(true).await;
 
         let msg = load_test_msg("uniswap_v2_snapshot");
         let res1 = decoder
@@ -392,7 +388,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_decode_component_missing_token() {
-        let decoder = setup_decoder(false);
+        let decoder = setup_decoder(false).await;
         let tokens = [Bytes::from("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").lpad(20, 0)]
             .iter()
             .map(|addr| {
@@ -400,7 +396,7 @@ mod tests {
                 (addr.clone(), Token::new(&addr_str, 18, &addr_str, 100_000.to_biguint().unwrap()))
             })
             .collect();
-        decoder.set_tokens(tokens);
+        decoder.set_tokens(tokens).await;
 
         let msg = load_test_msg("uniswap_v2_snapshot");
         let res1 = decoder
@@ -416,7 +412,7 @@ mod tests {
     #[case(false)]
     #[tokio::test]
     async fn test_decode_component_bad_id(#[case] skip_failures: bool) {
-        let mut decoder = setup_decoder(true);
+        let mut decoder = setup_decoder(true).await;
         decoder.skip_state_decode_failures = skip_failures;
 
         let msg = load_test_msg("uniswap_v2_snapshot_broken_id");
@@ -446,7 +442,7 @@ mod tests {
     #[case(false)]
     #[tokio::test]
     async fn test_decode_component_bad_state(#[case] skip_failures: bool) {
-        let mut decoder = setup_decoder(true);
+        let mut decoder = setup_decoder(true).await;
         decoder.skip_state_decode_failures = skip_failures;
 
         let msg = load_test_msg("uniswap_v2_snapshot_broken_state");

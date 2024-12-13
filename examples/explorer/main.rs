@@ -63,6 +63,7 @@ async fn main() {
             )
             .auth_key(Some(tycho_api_key.clone()))
             .set_tokens(all_tokens)
+            .await
             .build()
             .await
             .expect("Failed building protocol stream");
