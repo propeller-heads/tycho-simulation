@@ -490,7 +490,7 @@ mod tests {
     use std::{fs::remove_file, io::Write};
     use tempfile::NamedTempFile;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[cfg_attr(not(feature = "network_tests"), ignore)]
     async fn test_get_code_for_address() {
         let rpc_url = env::var("ETH_RPC_URL").unwrap_or_else(|_| {

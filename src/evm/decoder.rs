@@ -332,9 +332,11 @@ impl TychoStreamDecoder {
 #[cfg(test)]
 mod tests {
     use crate::{
-        evm::protocol::uniswap_v2::state::UniswapV2State,
+        evm::{
+            decoder::{StreamDecodeError, TychoStreamDecoder},
+            protocol::uniswap_v2::state::UniswapV2State,
+        },
         models::Token,
-        protocol::decoder::{StreamDecodeError, TychoStreamDecoder},
     };
     use num_bigint::ToBigUint;
     use rstest::*;

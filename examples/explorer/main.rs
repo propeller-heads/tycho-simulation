@@ -19,8 +19,9 @@ use tycho_simulation::{
             uniswap_v3::state::UniswapV3State,
             vm::state::EVMPoolState,
         },
+        stream::ProtocolStreamBuilder,
     },
-    protocol::{models::BlockUpdate, stream::ProtocolStreamBuilder},
+    protocol::models::BlockUpdate,
 };
 
 #[derive(Parser)]

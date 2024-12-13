@@ -5,10 +5,7 @@ use tycho_client::{rpc::RPCClient, HttpRPCClient};
 use tycho_core::{dto::Chain, Bytes};
 use tycho_simulation::models::Token;
 
-pub async fn load_all_tokens(
-    tycho_url: &str,
-    auth_key: Option<&str>,
-) -> HashMap<Bytes, Token> {
+pub async fn load_all_tokens(tycho_url: &str, auth_key: Option<&str>) -> HashMap<Bytes, Token> {
     let rpc_url = format!("https://{tycho_url}");
     let rpc_client = HttpRPCClient::new(rpc_url.as_str(), auth_key).unwrap();
 

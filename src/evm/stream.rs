@@ -1,7 +1,7 @@
 use crate::{
+    evm::decoder::{StreamDecodeError, TychoStreamDecoder},
     models::Token,
     protocol::{
-        decoder::{StreamDecodeError, TychoStreamDecoder},
         errors::InvalidSnapshotError,
         models::{BlockUpdate, TryFromWithBlock},
         state::ProtocolSim,
