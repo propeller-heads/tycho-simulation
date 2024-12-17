@@ -22,6 +22,7 @@ use crate::{
 pub struct UniswapV2State {
     pub reserve0: U256,
     pub reserve1: U256,
+    pub token_addresses: Vec<Bytes>,
 }
 
 impl UniswapV2State {
@@ -31,8 +32,8 @@ impl UniswapV2State {
     ///
     /// * `reserve0` - Reserve of token 0.
     /// * `reserve1` - Reserve of token 1.
-    pub fn new(reserve0: U256, reserve1: U256) -> Self {
-        UniswapV2State { reserve0, reserve1 }
+    pub fn new(reserve0: U256, reserve1: U256, token_addresses: Vec<Bytes>) -> Self {
+        UniswapV2State { reserve0, reserve1, token_addresses }
     }
 }
 
@@ -42,6 +43,7 @@ impl ProtocolSim for UniswapV2State {
     }
 
     fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
+        self.validate_tokens(vec![&base.address, &quote.address])?;
         if base < quote {
             Ok(spot_price_from_reserves(
                 self.reserve0,
@@ -65,6 +67,8 @@ impl ProtocolSim for UniswapV2State {
         token_in: &Token,
         token_out: &Token,
     ) -> Result<GetAmountOutResult, SimulationError> {
+        self.validate_tokens(vec![&token_in.address, &token_out.address])?;
+
         let amount_in = biguint_to_u256(&amount_in);
         if amount_in == U256::from(0u64) {
             return Err(SimulationError::InvalidInput("Amount in cannot be zero".to_string(), None));
@@ -122,6 +126,10 @@ impl ProtocolSim for UniswapV2State {
         Ok(())
     }
 
+    fn token_addresses(&self) -> &Vec<Bytes> {
+        &self.token_addresses
+    }
+
     fn clone_box(&self) -> Box<dyn ProtocolSim> {
         Box::new(self.clone())
     }
@@ -158,6 +166,7 @@ mod tests {
     use tycho_core::hex_bytes::Bytes;
 
     use super::*;
+    use crate::utils::hexstring_to_vec;
 
     #[rstest]
     #[case::same_dec(
@@ -196,7 +205,7 @@ mod tests {
             "T0",
             10_000.to_biguint().unwrap(),
         );
-        let state = UniswapV2State::new(r0, r1);
+        let state = UniswapV2State::new(r0, r1, vec![t0.address.clone(), t1.address.clone()]);
 
         let res = state
             .get_amount_out(amount_in.clone(), &t0, &t1)
@@ -234,7 +243,7 @@ mod tests {
             "T0",
             10_000.to_biguint().unwrap(),
         );
-        let state = UniswapV2State::new(r0, r1);
+        let state = UniswapV2State::new(r0, r1, vec![t0.address.clone(), t1.address.clone()]);
 
         let res = state.get_amount_out(amount_in, &t0, &t1);
         assert!(res.is_err());
@@ -246,10 +255,6 @@ mod tests {
     #[case(true, 0.0008209719947624441f64)]
     #[case(false, 1218.0683462769755f64)]
     fn test_spot_price(#[case] zero_to_one: bool, #[case] exp: f64) {
-        let state = UniswapV2State::new(
-            U256::from_str("36925554990922").unwrap(),
-            U256::from_str("30314846538607556521556").unwrap(),
-        );
         let usdc = Token::new(
             "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
             6,
@@ -262,7 +267,11 @@ mod tests {
             "WETH",
             10_000.to_biguint().unwrap(),
         );
-
+        let state = UniswapV2State::new(
+            U256::from_str("36925554990922").unwrap(),
+            U256::from_str("30314846538607556521556").unwrap(),
+            vec![usdc.address.clone(), weth.address.clone()],
+        );
         let res = if zero_to_one {
             state.spot_price(&usdc, &weth).unwrap()
         } else {
@@ -277,6 +286,7 @@ mod tests {
         let state = UniswapV2State::new(
             U256::from_str("36925554990922").unwrap(),
             U256::from_str("30314846538607556521556").unwrap(),
+            vec![],
         );
 
         let res = state.fee();
@@ -286,8 +296,11 @@ mod tests {
 
     #[test]
     fn test_delta_transition() {
-        let mut state =
-            UniswapV2State::new(U256::from_str("1000").unwrap(), U256::from_str("1000").unwrap());
+        let mut state = UniswapV2State::new(
+            U256::from_str("1000").unwrap(),
+            U256::from_str("1000").unwrap(),
+            vec![],
+        );
         let attributes: HashMap<String, Bytes> = vec![
             ("reserve0".to_string(), Bytes::from(1500_u64.to_be_bytes().to_vec())),
             ("reserve1".to_string(), Bytes::from(2000_u64.to_be_bytes().to_vec())),
@@ -309,8 +322,11 @@ mod tests {
 
     #[test]
     fn test_delta_transition_missing_attribute() {
-        let mut state =
-            UniswapV2State::new(U256::from_str("1000").unwrap(), U256::from_str("1000").unwrap());
+        let mut state = UniswapV2State::new(
+            U256::from_str("1000").unwrap(),
+            U256::from_str("1000").unwrap(),
+            vec![],
+        );
         let attributes: HashMap<String, Bytes> =
             vec![("reserve0".to_string(), Bytes::from(1500_u64.to_be_bytes().to_vec()))]
                 .into_iter()
@@ -331,5 +347,44 @@ mod tests {
             }
             _ => panic!("Test failed: was expecting an Err value"),
         };
+    }
+    #[test]
+    fn test_get_amount_out_invalid_tokens() {
+        let r0 = U256::from_str("6770398782322527849696614").unwrap();
+        let r1 = U256::from_str("5124813135806900540214").unwrap();
+        let t0 = Token::new(
+            "0x0000000000000000000000000000000000000000",
+            18,
+            "T0",
+            10_000.to_biguint().unwrap(),
+        );
+        let t1 = Token::new(
+            "0x0000000000000000000000000000000000000001",
+            18,
+            "T0",
+            10_000.to_biguint().unwrap(),
+        );
+        let state = UniswapV2State::new(
+            r0,
+            r1,
+            vec![
+                t0.address.clone(),
+                Bytes::from(
+                    hexstring_to_vec("0x0000000000000000000000000000000000000003").unwrap(),
+                ),
+            ],
+        );
+
+        let res =
+            state.get_amount_out(BigUint::from_str("10000000000000000000").unwrap(), &t0, &t1);
+
+        assert!(res.is_err(), "Expected get_amount_out to fail due to invalid token_out");
+        if let Err(SimulationError::InvalidInput(msg, _)) = res {
+            assert!(
+                msg.contains("One or both token addresses are not the tokens of this pool"),
+                "Unexpected error message: {}",
+                msg
+            );
+        }
     }
 }

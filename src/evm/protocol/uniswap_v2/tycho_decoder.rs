@@ -35,8 +35,9 @@ impl TryFromWithBlock<ComponentWithState> for UniswapV2State {
                 .get("reserve1")
                 .ok_or(InvalidSnapshotError::MissingAttribute("reserve1".to_string()))?,
         );
+        let tokens = snapshot.component.tokens.clone();
 
-        Ok(UniswapV2State::new(reserve0, reserve1))
+        Ok(UniswapV2State::new(reserve0, reserve1, tokens))
     }
 }
 

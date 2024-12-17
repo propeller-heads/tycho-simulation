@@ -25,12 +25,6 @@
 //! use tycho_simulation::models::Token;
 //! use tycho_simulation::evm::protocol::u256_num::u256_to_biguint;
 //!
-//! // Initialize the UniswapV2 state with token reserves
-//! let state: Box<dyn ProtocolSim> = Box::new(UniswapV2State::new(
-//!     U256::from_str("36925554990922").unwrap(),
-//!     U256::from_str("30314846538607556521556").unwrap(),
-//! ));
-//!
 //! // Define two ERC20 tokens: USDC and WETH
 //! let usdc = Token::new(
 //!     "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", 6, "USDC", 10_000.to_biguint().unwrap()
@@ -38,6 +32,13 @@
 //! let weth = Token::new(
 //!     "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", 18, "WETH", 10_000.to_biguint().unwrap()
 //! );
+//!
+//! // Initialize the UniswapV2 state with token reserves
+//! let state: Box<dyn ProtocolSim> = Box::new(UniswapV2State::new(
+//!     U256::from_str("36925554990922").unwrap(),
+//!     U256::from_str("30314846538607556521556").unwrap(),
+//!     vec![usdc.address.clone(), weth.address.clone()],
+//! ));
 //!
 //! // Get the amount out for swapping WETH to USDC
 //! let out = state.get_amount_out(u256_to_biguint(weth.one()), &weth, &usdc).unwrap().amount;
@@ -120,6 +121,23 @@ pub trait ProtocolSim: std::fmt::Debug + Send + Sync + 'static {
         delta: ProtocolStateDelta,
         tokens: &HashMap<Bytes, Token>,
     ) -> Result<(), TransitionError<String>>;
+
+    /// The addresses of the tokens in the pool
+    fn token_addresses(&self) -> &Vec<Bytes>;
+
+    /// Validate that the tokens belong to this pool
+    fn validate_tokens(&self, tokens: Vec<&Bytes>) -> Result<(), SimulationError> {
+        if !tokens
+            .iter()
+            .all(|address| self.token_addresses().contains(address))
+        {
+            return Err(SimulationError::InvalidInput(
+                "One or both token addresses are not the tokens of this pool".to_string(),
+                None,
+            ));
+        }
+        Ok(())
+    }
 
     /// Clones the protocol state as a trait object.
     /// This allows the state to be cloned when it is being used as a `Box<dyn ProtocolSim>`.

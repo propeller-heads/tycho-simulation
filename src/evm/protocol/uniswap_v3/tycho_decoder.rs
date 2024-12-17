@@ -119,7 +119,9 @@ impl TryFromWithBlock<ComponentWithState> for UniswapV3State {
 
         ticks.sort_by_key(|tick| tick.index);
 
-        Ok(UniswapV3State::new(liquidity, sqrt_price, fee, tick, ticks))
+        let tokens = snapshot.component.tokens.clone();
+
+        Ok(UniswapV3State::new(liquidity, sqrt_price, fee, tick, ticks, tokens))
     }
 }
 
@@ -224,6 +226,7 @@ mod tests {
             FeeAmount::Medium,
             300,
             vec![TickInfo::new(60, 400)],
+            vec![],
         );
         assert_eq!(result.unwrap(), expected);
     }

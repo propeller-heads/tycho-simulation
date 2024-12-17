@@ -34,6 +34,7 @@ pub struct UniswapV3State {
     fee: FeeAmount,
     tick: i32,
     ticks: TickList,
+    token_addresses: Vec<Bytes>,
 }
 
 #[derive(Debug)]
@@ -80,10 +81,11 @@ impl UniswapV3State {
         fee: FeeAmount,
         tick: i32,
         ticks: Vec<TickInfo>,
+        token_addresses: Vec<Bytes>,
     ) -> Self {
         let spacing = UniswapV3State::get_spacing(fee);
         let tick_list = TickList::from(spacing, ticks);
-        UniswapV3State { liquidity, sqrt_price, fee, tick, ticks: tick_list }
+        UniswapV3State { liquidity, sqrt_price, fee, tick, ticks: tick_list, token_addresses }
     }
 
     fn get_spacing(fee: FeeAmount) -> u16 {
@@ -246,12 +248,17 @@ impl ProtocolSim for UniswapV3State {
         (self.fee as u32) as f64 / 1_000_000.0
     }
 
-    fn spot_price(&self, a: &Token, b: &Token) -> Result<f64, SimulationError> {
-        if a < b {
-            Ok(sqrt_price_q96_to_f64(self.sqrt_price, a.decimals as u32, b.decimals as u32))
+    fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
+        self.validate_tokens(vec![&base.address, &quote.address])?;
+        if base < quote {
+            Ok(sqrt_price_q96_to_f64(self.sqrt_price, base.decimals as u32, quote.decimals as u32))
         } else {
             Ok(1.0f64 /
-                sqrt_price_q96_to_f64(self.sqrt_price, b.decimals as u32, a.decimals as u32))
+                sqrt_price_q96_to_f64(
+                    self.sqrt_price,
+                    quote.decimals as u32,
+                    base.decimals as u32,
+                ))
         }
     }
 
@@ -261,6 +268,7 @@ impl ProtocolSim for UniswapV3State {
         token_a: &Token,
         token_b: &Token,
     ) -> Result<GetAmountOutResult, SimulationError> {
+        self.validate_tokens(vec![&token_a.address, &token_b.address])?;
         let zero_for_one = token_a < token_b;
         let amount_specified = I256::checked_from_sign_and_abs(
             Sign::Positive,
@@ -372,6 +380,10 @@ impl ProtocolSim for UniswapV3State {
         Ok(())
     }
 
+    fn token_addresses(&self) -> &Vec<Bytes> {
+        &self.token_addresses
+    }
+
     fn clone_box(&self) -> Box<dyn ProtocolSim> {
         Box::new(self.clone())
     }
@@ -411,6 +423,7 @@ mod tests {
     use tycho_core::hex_bytes::Bytes;
 
     use super::*;
+    use crate::utils::hexstring_to_vec;
 
     #[test]
     fn test_get_amount_out_full_range_liquidity() {
@@ -433,6 +446,7 @@ mod tests {
             FeeAmount::Medium,
             17342,
             vec![TickInfo::new(0, 0), TickInfo::new(46080, 0)],
+            vec![token_x.address.clone(), token_y.address.clone()],
         );
         let sell_amount = BigUint::from_str("11_000_000000000000000000").unwrap();
         let expected = BigUint::from_str("61927070842678722935941").unwrap();
@@ -482,6 +496,7 @@ mod tests {
                 TickInfo::new(255890, 1878744276123248i128),
                 TickInfo::new(255900, 77340284046725227i128),
             ],
+            vec![wbtc.address.clone(), weth.address.clone()],
         );
         let cases = vec![
             SwapTestCase {
@@ -587,6 +602,7 @@ mod tests {
                 TickInfo::new(-259200, -1487613939516867i128),
                 TickInfo::new(-258400, -400137022888262i128),
             ],
+            vec![dai.address.clone(), usdc.address.clone()],
         );
         let amount_in = BigUint::from_str("50000000000").unwrap();
         let exp = BigUint::from_str("6820591625999718100883").unwrap();
@@ -623,6 +639,7 @@ mod tests {
             FeeAmount::Low,
             100,
             vec![TickInfo::new(255760, 10000), TickInfo::new(255900, -10000)],
+            vec![],
         );
         let attributes: HashMap<String, Bytes> = [
             ("liquidity".to_string(), Bytes::from(2000_u64.to_be_bytes().to_vec())),
@@ -665,5 +682,47 @@ mod tests {
                 .net_liquidity,
             9800
         );
+    }
+
+    #[test]
+    fn test_get_amount_out_invalid_tokens() {
+        let token_x = Token::new(
+            "0x6b175474e89094c44da98b954eedeac495271d0f",
+            18,
+            "X",
+            10_000.to_biguint().unwrap(),
+        );
+        let token_y = Token::new(
+            "0xf1ca9cb74685755965c7458528a36934df52a3ef",
+            18,
+            "Y",
+            10_000.to_biguint().unwrap(),
+        );
+
+        let pool = UniswapV3State::new(
+            8330443394424070888454257,
+            U256::from_str("188562464004052255423565206602").unwrap(),
+            FeeAmount::Medium,
+            17342,
+            vec![TickInfo::new(0, 0), TickInfo::new(46080, 0)],
+            vec![
+                token_x.address.clone(),
+                Bytes::from(
+                    hexstring_to_vec("0x0000000000000000000000000000000000000003").unwrap(),
+                ),
+            ],
+        );
+        let sell_amount = BigUint::from_str("11_000_000000000000000000").unwrap();
+
+        let res = pool.get_amount_out(sell_amount, &token_x, &token_y);
+
+        assert!(res.is_err(), "Expected get_amount_out to fail due to invalid token_out");
+        if let Err(SimulationError::InvalidInput(msg, _)) = res {
+            assert!(
+                msg.contains("One or both token addresses are not the tokens of this pool"),
+                "Unexpected error message: {}",
+                msg
+            );
+        }
     }
 }

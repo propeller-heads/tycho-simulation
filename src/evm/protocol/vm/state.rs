@@ -432,6 +432,7 @@ where
     }
 
     fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
+        self.validate_tokens(vec![&base.address, &quote.address])?;
         let base_address = bytes_to_address(&base.address)?;
         let quote_address = bytes_to_address(&quote.address)?;
         self.spot_prices
@@ -449,6 +450,7 @@ where
         token_in: &Token,
         token_out: &Token,
     ) -> Result<GetAmountOutResult, SimulationError> {
+        self.validate_tokens(vec![&token_in.address, &token_out.address])?;
         let sell_token_address = bytes_to_address(&token_in.address)?;
         let buy_token_address = bytes_to_address(&token_out.address)?;
         let sell_amount = U256::from_be_slice(&amount_in.to_bytes_be());
@@ -558,6 +560,9 @@ where
         Ok(())
     }
 
+    fn token_addresses(&self) -> &Vec<Bytes> {
+        &self.tokens
+    }
     fn clone_box(&self) -> Box<dyn ProtocolSim> {
         Box::new(self.clone())
     }
@@ -922,5 +927,31 @@ mod tests {
             .unwrap();
         assert_eq!(dai_bal_spot_price, &0.137_778_914_319_047_9);
         assert_eq!(bal_dai_spot_price, &7.071_503_245_428_246);
+    }
+
+    #[tokio::test]
+    async fn test_get_amount_out_invalid_tokens() {
+        let pool_state = setup_pool_state().await;
+        let fake_token = Token::new(
+            "0x0000000000000000000000000000000000000003",
+            18,
+            "FAKE",
+            10_000.to_biguint().unwrap(),
+        );
+
+        let result = pool_state.get_amount_out(
+            BigUint::from_str("1000000000000000000").unwrap(),
+            &dai(),
+            &fake_token,
+        );
+
+        assert!(result.is_err(), "Expected get_amount_out to fail due to invalid token_out");
+        if let Err(SimulationError::InvalidInput(msg, _)) = result {
+            assert!(
+                msg.contains("One or both token addresses are not the tokens of this pool"),
+                "Unexpected error message: {}",
+                msg
+            );
+        }
     }
 }
