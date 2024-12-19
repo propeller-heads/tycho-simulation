@@ -309,7 +309,7 @@ pub(crate) fn get_contract_bytecode(path: &PathBuf) -> Result<Bytecode, FileErro
 pub(crate) fn load_erc20_bytecode() -> Result<Bytecode, FileError> {
     let erc20_bin_path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/evm/protocol/vm/assets/ERC20.bin");
-
+    println!("HEREEEEEEE, path :{:?}", erc20_bin_path);
     let mut erc_20_file = File::open(&erc20_bin_path).map_err(FileError::Io)?;
     let mut erc_20_contents = Vec::new();
     erc_20_file
