@@ -154,7 +154,7 @@ impl TryFromWithBlock<ComponentWithState> for EVMPoolState<PreCachedDB> {
             .map_err(InvalidSnapshotError::VMError)?;
 
         pool_state.set_spot_prices(all_tokens)?;
-        info!("Finished creating balancer pool with id {}", &id);
+        info!("Finished creating vm pool with id {}", &id);
 
         Ok(pool_state)
     }
