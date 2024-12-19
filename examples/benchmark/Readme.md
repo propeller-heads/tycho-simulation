@@ -5,6 +5,7 @@ This example benchmarks swap simulation times for given protocols
 ## How to run
 
 ```bash
+export RPC_URL=<your-eth-rpc-url>
 cargo run --release --example benchmark -- --exchange uniswap_v2 --exchange uniswap_v3
 ```
 
