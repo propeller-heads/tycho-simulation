@@ -27,7 +27,7 @@ use tycho_simulation::{
 #[derive(Parser, Debug, Clone, PartialEq)]
 struct Cli {
     /// The exchanges to benchmark
-    #[clap(long, number_of_values = 1)]
+    #[clap(long, number_of_values = 1, value_parser = validate_exchange)]
     exchange: Vec<String>,
 
     /// The number of swaps to benchmark
@@ -37,6 +37,18 @@ struct Cli {
     /// The tvl threshold to filter the pools by
     #[clap(long, default_value = "1000.0")]
     tvl_threshold: f64,
+}
+
+fn validate_exchange(exchange: &str) -> Result<String, String> {
+    const SUPPORTED_EXCHANGES: &[&str] = &["uniswap_v2", "uniswap_v3", "balancer_v2", "curve"];
+    if SUPPORTED_EXCHANGES.contains(&exchange) {
+        Ok(exchange.to_string())
+    } else {
+        Err(format!(
+            "Unsupported exchange '{}'. Supported exchanges are: {:?}",
+            exchange, SUPPORTED_EXCHANGES
+        ))
+    }
 }
 
 #[tokio::main]
@@ -67,6 +79,7 @@ async fn main() {
                     .auth_key(Some(tycho_api_key.clone()))
                     .set_tokens(all_tokens.clone())
                     .await
+                    .skip_state_decode_failures(true)
                     .build()
                     .await
                     .expect("Failed building Uniswap V2 protocol stream")
@@ -76,6 +89,7 @@ async fn main() {
                     .auth_key(Some(tycho_api_key.clone()))
                     .set_tokens(all_tokens.clone())
                     .await
+                    .skip_state_decode_failures(true)
                     .build()
                     .await
                     .expect("Failed building Uniswap V3 protocol stream")
@@ -89,6 +103,7 @@ async fn main() {
                     .auth_key(Some(tycho_api_key.clone()))
                     .set_tokens(all_tokens.clone())
                     .await
+                    .skip_state_decode_failures(true)
                     .build()
                     .await
                     .expect("Failed building Balancer V2 protocol stream")
@@ -102,6 +117,7 @@ async fn main() {
                     .auth_key(Some(tycho_api_key.clone()))
                     .set_tokens(all_tokens.clone())
                     .await
+                    .skip_state_decode_failures(true)
                     .build()
                     .await
                     .expect("Failed building Curve protocol stream")
@@ -173,6 +189,27 @@ fn calculate_std_dev(times: &[u128], avg: f64) -> f64 {
     variance.sqrt()
 }
 
+fn analyze_results(results: &HashMap<String, Vec<u128>>, n_swaps: usize) {
+    println!("\n========== Benchmark Results on {} swaps ==========", n_swaps);
+
+    for (protocol, times) in results {
+        let avg = times.iter().sum::<u128>() as f64 / times.len() as f64;
+        let max = times.iter().max().unwrap_or(&0);
+        let min = times.iter().min().unwrap_or(&0);
+        let std_dev = calculate_std_dev(times, avg);
+        let trimmed_mean = calculate_trimmed_mean(times).unwrap_or(f64::NAN);
+
+        println!(
+            "\n{} - Mean Time: {:.2} ns, Trimmed Mean Time: {:.2} ns, Max Time: {} ns, Min Time: {} ns, Std Dev: {:.2} ns",
+            protocol, avg, trimmed_mean, max, min, std_dev
+        );
+
+        generate_histogram(times, 10);
+
+        println!("\n---------------------------------------");
+    }
+}
+
 /// Calculate the trimmed mean of a dataset.
 ///
 /// The trimmed mean is calculated by removing outliers from the dataset. Outliers are defined as
@@ -184,7 +221,6 @@ fn calculate_trimmed_mean(times: &[u128]) -> Option<f64> {
         return None;
     }
 
-    // Sort the data
     let mut sorted_times = times.to_vec();
     sorted_times.sort_unstable();
 
@@ -196,7 +232,6 @@ fn calculate_trimmed_mean(times: &[u128]) -> Option<f64> {
     let q3 = sorted_times[q3_index];
     let iqr = q3 - q1;
 
-    // Convert to floating point for multiplication
     let lower_bound = (q1 as f64 - 1.5 * iqr as f64).max(0.0) as u128;
     let upper_bound = (q3 as f64 + 1.5 * iqr as f64) as u128;
 
@@ -220,27 +255,6 @@ fn calculate_trimmed_mean(times: &[u128]) -> Option<f64> {
     }
 }
 
-fn analyze_results(results: &HashMap<String, Vec<u128>>, n_swaps: usize) {
-    println!("\n========== Benchmark Results on {} swaps ==========", n_swaps);
-
-    for (protocol, times) in results {
-        let avg = times.iter().sum::<u128>() as f64 / times.len() as f64;
-        let max = times.iter().max().unwrap_or(&0);
-        let min = times.iter().min().unwrap_or(&0);
-        let std_dev = calculate_std_dev(times, avg);
-        let trimmed_mean = calculate_trimmed_mean(times).unwrap_or(f64::NAN);
-
-        println!(
-            "\n{} - Mean Time: {:.2} ns, Trimmed Mean Time: {:.2} ns, Max Time: {} ns, Min Time: {} ns, Std Dev: {:.2} ns",
-            protocol, avg, trimmed_mean, max, min, std_dev
-        );
-
-        generate_histogram(times, 10);
-
-        println!("\n---------------------------------------");
-    }
-}
-
 fn generate_histogram(data: &[u128], num_bins: usize) {
     if data.is_empty() {
         println!("No data to display in histogram.");
@@ -252,10 +266,8 @@ fn generate_histogram(data: &[u128], num_bins: usize) {
     let range = max - min;
     let bin_width = (range as f64 / num_bins as f64).ceil() as u128;
 
-    // Initialize bins
     let mut bins = vec![0; num_bins];
 
-    // Count data into bins
     for &value in data {
         let bin_index = ((value - min) / bin_width).min(num_bins as u128 - 1) as usize;
         bins[bin_index] += 1;
