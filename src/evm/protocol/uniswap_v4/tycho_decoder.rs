@@ -60,8 +60,8 @@ impl TryFromWithBlock<ComponentWithState> for UniswapV4State {
 
         let lp_fee = u32::from(
             snapshot
-                .component
-                .static_attributes
+                .state
+                .attributes
                 .get("fee")
                 .ok_or_else(|| InvalidSnapshotError::MissingAttribute("fee".to_string()))?
                 .clone(),
@@ -163,6 +163,7 @@ mod tests {
     use std::{collections::HashMap, str::FromStr};
 
     use chrono::DateTime;
+    use rstest::rstest;
     use tycho_core::{
         dto::{Chain, ChangeType, ProtocolComponent, ResponseProtocolState},
         hex_bytes::Bytes,
@@ -239,8 +240,59 @@ mod tests {
         assert!(result.is_ok());
 
         let fees = UniswapV4Fees::new(0, 0, 500);
-        let expected =
-            UniswapV4State::new(100, U256::from(200), fees, 300, 60, vec![TickInfo::new(60, 400)]);
+        let expected = UniswapV4State::new(
+            100,
+            U256::from(79228162514264337593543950336_u128),
+            fees,
+            300,
+            60,
+            vec![TickInfo::new(60, 400)],
+        );
         assert_eq!(result.unwrap(), expected);
+    }
+
+    #[tokio::test]
+    #[rstest]
+    #[case::missing_liquidity("liquidity")]
+    #[case::missing_sqrt_price("sqrt_price")]
+    #[case::missing_tick("tick")]
+    #[case::missing_tick_liquidity("tick_liquidities")]
+    #[case::missing_fee("fee")]
+    async fn test_usv4_try_from_invalid(#[case] missing_attribute: String) {
+        // remove missing attribute
+        let mut attributes = usv4_attributes();
+        attributes.remove(&missing_attribute);
+
+        if missing_attribute == "tick_liquidities" {
+            attributes.remove("ticks/60/net_liquidity");
+        }
+
+        if missing_attribute == "sqrt_price" {
+            attributes.remove("sqrt_price_x96");
+        }
+
+        let mut component = usv4_component();
+        if missing_attribute == "fee" {
+            component
+                .static_attributes
+                .remove("fee");
+        }
+
+        let snapshot = ComponentWithState {
+            state: ResponseProtocolState {
+                component_id: "State1".to_owned(),
+                attributes,
+                balances: HashMap::new(),
+            },
+            component,
+        };
+
+        let result = UniswapV4State::try_from_with_block(snapshot, header(), &HashMap::new()).await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err().unwrap(),
+            InvalidSnapshotError::MissingAttribute(attr) if attr == missing_attribute
+        ));
     }
 }
