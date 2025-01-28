@@ -53,6 +53,18 @@ impl UniswapV4Fees {
         Self { zero_for_one, one_for_zero, lp_fee }
     }
 
+    pub fn get_zero_for_one(&self) -> u32 {
+        self.zero_for_one
+    }
+
+    pub fn one_for_zero(&self) -> u32 {
+        self.one_for_zero
+    }
+
+    pub fn lp_fee(&self) -> u32 {
+        self.lp_fee
+    }
+
     fn calculate_swap_fees_pips(&self, zero_for_one: bool) -> u32 {
         let protocol_fees = if zero_for_one { self.zero_for_one } else { self.one_for_zero };
         protocol_fees + self.lp_fee
@@ -107,7 +119,7 @@ impl UniswapV4State {
         sqrt_price_limit: Option<U256>,
     ) -> Result<SwapResults, SimulationError> {
         if self.liquidity == 0 {
-            return Err(SimulationError::RecoverableError("No liquidity".to_string()));
+            return Err(SimulationError::RecoverableError("No liquidity".to_string()))
         }
         let price_limit = if let Some(limit) = sqrt_price_limit {
             limit
@@ -136,8 +148,8 @@ impl UniswapV4State {
         };
         let mut gas_used = U256::from(130_000);
 
-        while state.amount_remaining != I256::from_raw(U256::from(0u64))
-            && state.sqrt_price != price_limit
+        while state.amount_remaining != I256::from_raw(U256::from(0u64)) &&
+            state.sqrt_price != price_limit
         {
             let (mut next_tick, initialized) = match self
                 .ticks
@@ -157,7 +169,7 @@ impl UniswapV4State {
                                 u256_to_biguint(gas_used),
                                 Box::new(new_state),
                             )),
-                        ));
+                        ))
                     }
                     _ => return Err(SimulationError::FatalError("Unknown error".to_string())),
                 },
@@ -258,8 +270,8 @@ impl ProtocolSim for UniswapV4State {
         if base < quote {
             Ok(sqrt_price_q96_to_f64(self.sqrt_price, base.decimals as u32, quote.decimals as u32))
         } else {
-            Ok(1.0f64
-                / sqrt_price_q96_to_f64(
+            Ok(1.0f64 /
+                sqrt_price_q96_to_f64(
                     self.sqrt_price,
                     quote.decimals as u32,
                     base.decimals as u32,
@@ -384,11 +396,11 @@ impl ProtocolSim for UniswapV4State {
             .as_any()
             .downcast_ref::<UniswapV4State>()
         {
-            self.liquidity == other_state.liquidity
-                && self.sqrt_price == other_state.sqrt_price
-                && self.fees == other_state.fees
-                && self.tick == other_state.tick
-                && self.ticks == other_state.ticks
+            self.liquidity == other_state.liquidity &&
+                self.sqrt_price == other_state.sqrt_price &&
+                self.fees == other_state.fees &&
+                self.tick == other_state.tick &&
+                self.ticks == other_state.ticks
         } else {
             false
         }
