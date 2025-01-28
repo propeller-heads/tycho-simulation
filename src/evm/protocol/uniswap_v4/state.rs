@@ -57,11 +57,11 @@ impl UniswapV4Fees {
         self.zero_for_one
     }
 
-    pub fn one_for_zero(&self) -> u32 {
+    pub fn get_one_for_zero(&self) -> u32 {
         self.one_for_zero
     }
 
-    pub fn lp_fee(&self) -> u32 {
+    pub fn get_lp_fee(&self) -> u32 {
         self.lp_fee
     }
 
