@@ -1,0 +1,21 @@
+[package]
+name = "tycho-simulation-ts"
+version = "0.1.0"
+edition = "2021"
+description = "TypeScript bindings for Tycho simulation"
+license = "MIT"
+repository = "https://github.com/dewiz-xyz/tycho-simulation-ts"
+exclude = ["index.node"]
+
+[lib]
+crate-type = ["cdylib"]
+name = "tycho_simulation_ts"
+
+[dependencies]
+neon = { version = "1.0.0", default-features = false, features = ["napi-6"] }
+tycho-simulation = { path = "../" }
+anyhow = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+futures = "0.3"
+num-traits = "0.2"
+num-bigint = "0.4" 

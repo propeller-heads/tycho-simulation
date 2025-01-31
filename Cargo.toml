@@ -4,7 +4,7 @@ version = "0.71.0"
 edition = "2021"
 
 [workspace]
-members = ["tycho_simulation_py"]
+members = ["tycho_simulation_py", "tycho-simulation-ts"]
 
 [dependencies]
 # Serialization/Deserialization

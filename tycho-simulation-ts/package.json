@@ -1,0 +1,35 @@
+{
+  "name": "tycho-simulation-ts",
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=16.0.0 <19.0.0"
+  },
+  "description": "TypeScript bindings for Tycho simulation",
+  "main": "index.node",
+  "scripts": {
+    "build": "cargo build --release && npm run copy-lib",
+    "copy-lib": "node scripts/copy-lib.js",
+    "build-all": "npm run clean && npm run build",
+    "clean": "rm -rf target index.node 2>/dev/null || true",
+    "example": "npm run build && ts-node examples/spot_price.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "tycho",
+    "simulation",
+    "defi",
+    "blockchain"
+  ],
+  "author": "Dewiz",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/dewiz-xyz/tycho-simulation-ts/issues"
+  },
+  "homepage": "https://github.com/dewiz-xyz/tycho-simulation-ts#readme",
+  "devDependencies": {
+    "@types/node": "^16.0.0",
+    "typescript": "^4.5.0",
+    "ts-node": "^10.4.0",
+    "dotenv": "^16.0.0"
+  }
+} 
