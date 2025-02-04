@@ -228,51 +228,6 @@ fn analyze_results(results: &HashMap<String, Vec<u128>>, n_swaps: usize) {
     }
 }
 
-/// Calculate the trimmed mean of a dataset.
-///
-/// The trimmed mean is calculated by removing outliers from the dataset. Outliers are defined as
-/// values that are below the first quartile minus 1.5 times the interquartile range, or above the
-/// third quartile plus 1.5 times the interquartile range. This gives us a more robust estimate of
-/// the central tendency of the data.
-fn calculate_trimmed_mean(times: &[u128]) -> Option<f64> {
-    if times.is_empty() {
-        return None;
-    }
-
-    let mut sorted_times = times.to_vec();
-    sorted_times.sort_unstable();
-
-    // Calculate quartiles
-    let q1_index = sorted_times.len() / 4;
-    let q3_index = 3 * sorted_times.len() / 4;
-
-    let q1 = sorted_times[q1_index];
-    let q3 = sorted_times[q3_index];
-    let iqr = q3 - q1;
-
-    let lower_bound = (q1 as f64 - 1.5 * iqr as f64).max(0.0) as u128;
-    let upper_bound = (q3 as f64 + 1.5 * iqr as f64) as u128;
-
-    // Filter out outliers
-    let filtered_times: Vec<&u128> = sorted_times
-        .iter()
-        .filter(|&&t| t >= lower_bound && t <= upper_bound)
-        .collect();
-
-    if filtered_times.is_empty() {
-        None
-    } else {
-        // Calculate the trimmed mean
-        Some(
-            filtered_times
-                .iter()
-                .map(|&&t| t as f64)
-                .sum::<f64>() /
-                filtered_times.len() as f64,
-        )
-    }
-}
-
 fn calculate_median(times: &[u128]) -> Option<f64> {
     if times.is_empty() {
         return None;
