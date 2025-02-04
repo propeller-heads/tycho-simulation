@@ -10,9 +10,10 @@ use tycho_simulation::{
         decoder::StreamDecodeError,
         engine_db::tycho_db::PreCachedDB,
         protocol::{
-            filters::{balancer_pool_filter, curve_pool_filter},
+            filters::{balancer_pool_filter, curve_pool_filter, uniswap_v4_pool_with_hook_filter},
             uniswap_v2::state::UniswapV2State,
             uniswap_v3::state::UniswapV3State,
+            uniswap_v4::state::UniswapV4State,
             vm::state::EVMPoolState,
         },
         stream::ProtocolStreamBuilder,
@@ -40,7 +41,8 @@ struct Cli {
 }
 
 fn validate_exchange(exchange: &str) -> Result<String, String> {
-    const SUPPORTED_EXCHANGES: &[&str] = &["uniswap_v2", "uniswap_v3", "balancer_v2", "curve"];
+    const SUPPORTED_EXCHANGES: &[&str] =
+        &["uniswap_v2", "uniswap_v3", "balancer_v2", "curve", "uniswap_v4"];
     if SUPPORTED_EXCHANGES.contains(&exchange) {
         Ok(exchange.to_string())
     } else {
@@ -86,6 +88,20 @@ async fn main() {
                     .boxed(),
                 "uniswap_v3" => ProtocolStreamBuilder::new(&tycho_url, Chain::Ethereum)
                     .exchange::<UniswapV3State>("uniswap_v3", tvl_filter.clone(), None)
+                    .auth_key(Some(tycho_api_key.clone()))
+                    .set_tokens(all_tokens.clone())
+                    .await
+                    .skip_state_decode_failures(true)
+                    .build()
+                    .await
+                    .expect("Failed building Uniswap V3 protocol stream")
+                    .boxed(),
+                "uniswap_v4" => ProtocolStreamBuilder::new(&tycho_url, Chain::Ethereum)
+                    .exchange::<UniswapV4State>(
+                        "uniswap_v4",
+                        tvl_filter.clone(),
+                        Some(uniswap_v4_pool_with_hook_filter),
+                    )
                     .auth_key(Some(tycho_api_key.clone()))
                     .set_tokens(all_tokens.clone())
                     .await
@@ -152,6 +168,8 @@ async fn benchmark_swaps(
                 .entry(id.clone())
                 .or_insert_with(|| comp.tokens.clone());
         }
+
+        info!("Got {} pairs", pairs.len());
 
         if message.states.is_empty() {
             return times;
