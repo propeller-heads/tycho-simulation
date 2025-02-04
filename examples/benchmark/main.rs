@@ -215,11 +215,11 @@ fn analyze_results(results: &HashMap<String, Vec<u128>>, n_swaps: usize) {
         let max = times.iter().max().unwrap_or(&0);
         let min = times.iter().min().unwrap_or(&0);
         let std_dev = calculate_std_dev(times, avg);
-        let trimmed_mean = calculate_trimmed_mean(times).unwrap_or(f64::NAN);
+        let median = calculate_median(times).unwrap_or(f64::NAN);
 
         println!(
-            "\n{} - Mean Time: {:.2} ns, Trimmed Mean Time: {:.2} ns, Max Time: {} ns, Min Time: {} ns, Std Dev: {:.2} ns",
-            protocol, avg, trimmed_mean, max, min, std_dev
+            "\n{} - Mean Time: {:.2} ns, Median Time: {:.2} ns, Max Time: {} ns, Min Time: {} ns, Std Dev: {:.2} ns",
+            protocol, avg, median, max, min, std_dev
         );
 
         generate_histogram(times, 10);
@@ -235,6 +235,45 @@ fn analyze_results(results: &HashMap<String, Vec<u128>>, n_swaps: usize) {
 /// third quartile plus 1.5 times the interquartile range. This gives us a more robust estimate of
 /// the central tendency of the data.
 fn calculate_trimmed_mean(times: &[u128]) -> Option<f64> {
+    if times.is_empty() {
+        return None;
+    }
+
+    let mut sorted_times = times.to_vec();
+    sorted_times.sort_unstable();
+
+    // Calculate quartiles
+    let q1_index = sorted_times.len() / 4;
+    let q3_index = 3 * sorted_times.len() / 4;
+
+    let q1 = sorted_times[q1_index];
+    let q3 = sorted_times[q3_index];
+    let iqr = q3 - q1;
+
+    let lower_bound = (q1 as f64 - 1.5 * iqr as f64).max(0.0) as u128;
+    let upper_bound = (q3 as f64 + 1.5 * iqr as f64) as u128;
+
+    // Filter out outliers
+    let filtered_times: Vec<&u128> = sorted_times
+        .iter()
+        .filter(|&&t| t >= lower_bound && t <= upper_bound)
+        .collect();
+
+    if filtered_times.is_empty() {
+        None
+    } else {
+        // Calculate the trimmed mean
+        Some(
+            filtered_times
+                .iter()
+                .map(|&&t| t as f64)
+                .sum::<f64>() /
+                filtered_times.len() as f64,
+        )
+    }
+}
+
+fn calculate_median(times: &[u128]) -> Option<f64> {
     if times.is_empty() {
         return None;
     }
