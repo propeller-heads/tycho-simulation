@@ -73,6 +73,7 @@ pub async fn start_app() {
             tvl_filter.clone(),
             Some(uniswap_v4_pool_with_hook_filter),
         )
+        .skip_state_decode_failures(true)
         .auth_key(Some(tycho_api_key.clone()))
         .set_tokens(all_tokens.clone())
         .await
