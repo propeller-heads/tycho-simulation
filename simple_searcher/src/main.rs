@@ -1,15 +1,10 @@
 mod graph;
 
-use std::{
-    env,
-    process,
-    sync::mpsc,
-    thread,
-};
-use std::time::Instant;
 use clap::Parser;
 use futures::StreamExt;
 use num_bigint::BigUint;
+use std::env;
+use std::time::Instant;
 use tracing::{debug, error, info};
 use tracing_subscriber::{fmt, EnvFilter};
 use tycho_client::feed::component_tracker::ComponentFilter;
@@ -26,7 +21,6 @@ use tycho_simulation::{
         },
         stream::ProtocolStreamBuilder,
     },
-    models::Token,
     utils::load_all_tokens,
 };
 
@@ -151,7 +145,7 @@ pub async fn start_app() {
                         sell_token = buy_token;
                         
                     }
-                    Err(e) => {
+                    Err(_) => {
                         error = true;
                         break;
                     }

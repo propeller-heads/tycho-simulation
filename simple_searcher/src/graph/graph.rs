@@ -18,6 +18,7 @@ pub struct PoolGraph {
     edge_indices: HashMap<String, EdgeIndex>, // Edge indices based on pool identifier
 }
 
+#[allow(dead_code)]
 impl PoolGraph {
     /// Initialize a new PoolGraph
     pub fn new() -> Self {
