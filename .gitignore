@@ -32,3 +32,6 @@ flamegraph.svg
 # Built Visual Studio Code Extensions
 *.vsix
 .env
+
+# Log files
+*.log
