@@ -5,6 +5,7 @@ edition = "2021"
 
 [workspace]
 members = ["tycho_simulation_py"]
+exclude = ["simple_searcher"]
 
 [dependencies]
 # Serialization/Deserialization

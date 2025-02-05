@@ -1,0 +1,26 @@
+[package]
+name = "simple_searcher"
+version = "0.1.0"
+edition = "2021"
+
+
+[[bin]]
+name = "simple_searcher"
+path = "src/main.rs"
+
+
+[dependencies]
+petgraph = "0.7.1"
+tokio = { version = "1.38.0", features = ["full"] }
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.17", default-features = false, features = [
+    "env-filter",
+    "fmt",
+] }
+clap = { version = "4.5.3", features = ["derive"] }
+tycho-core = { git = "https://github.com/propeller-heads/tycho-indexer.git", package = "tycho-core", tag = "0.46.0" }
+tycho-client = { git = "https://github.com/propeller-heads/tycho-indexer.git", package = "tycho-client", tag = "0.46.0" }
+tycho-simulation = {path = "../"}
+anyhow = "1.0.94"
+futures = "0.3.31"
+num-bigint = "0.4.6"
