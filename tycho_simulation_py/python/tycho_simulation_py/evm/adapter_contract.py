@@ -138,6 +138,7 @@ class AdapterContract(TychoSimulationContract):
             amounts: list[int],
             block: EVMBlock,
             overwrites: TStateOverwrites = None,
+            **kwargs,
     ) -> list[Fraction]:
         args = [HexBytes(pair_id), sell_token.address, buy_token.address, amounts]
         res = self.call(
@@ -158,6 +159,7 @@ class AdapterContract(TychoSimulationContract):
             amount: Decimal,
             block: EVMBlock,
             overwrites: TStateOverwrites = None,
+            **kwargs,
     ) -> tuple[Trade, dict[str, StateUpdate]]:
         args = [
             HexBytes(pair_id),
@@ -183,8 +185,98 @@ class AdapterContract(TychoSimulationContract):
             buy_token: EthereumToken,
             block: EVMBlock,
             overwrites: TStateOverwrites = None,
+            **kwargs,
     ) -> tuple[int, int]:
         args = [HexBytes(pair_id), sell_token.address, buy_token.address]
+        res = self.call(
+            "getLimits",
+            args,
+            block_number=block.id,
+            timestamp=int(block.ts.timestamp()),
+            overrides=overwrites,
+        )
+        return res.return_value[0]
+
+    def get_capabilities(
+            self, pair_id: HexStr, sell_token: EthereumToken, buy_token: EthereumToken, **kwargs,
+    ) -> set[Capability]:
+        args = [HexBytes(pair_id), sell_token.address, buy_token.address]
+        res = self.call("getCapabilities", args, block_number=1)
+        return set(map(Capability, res.return_value[0]))
+
+    def min_gas_usage(self) -> int:
+        res = self.call("minGasUsage", [], block_number=1)
+        return res.return_value[0]
+
+
+class AdapterContractV2(TychoSimulationContract):
+    """
+    The AdapterContract provides an interface to interact with the protocols implemented
+    by third parties using the `propeller-protocol-lib`.
+    """
+
+    def __init__(self, address: Address, engine: SimulationEngine):
+        super().__init__(address, "ISwapAdapterV2", engine)
+
+    def price(
+            self,
+            pair_id: HexStr,
+            sell_token: EthereumToken,
+            buy_token: EthereumToken,
+            amounts: list[int],
+            data: HexStr,
+            block: EVMBlock,
+            overwrites: TStateOverwrites = None,
+    ) -> list[Fraction]:
+        args = [HexBytes(pair_id), sell_token.address, buy_token.address, amounts, HexBytes(data)]
+        res = self.call(
+            "price",
+            args,
+            block_number=block.id,
+            timestamp=int(block.ts.timestamp()),
+            overrides=overwrites,
+        )
+        return list(map(lambda x: Fraction(*x), res.return_value[0]))
+
+    def swap(
+            self,
+            pair_id: HexStr,
+            sell_token: EthereumToken,
+            buy_token: EthereumToken,
+            is_buy: bool,
+            amount: Decimal,
+            data: HexStr,
+            block: EVMBlock,
+            overwrites: TStateOverwrites = None,
+    ) -> tuple[Trade, dict[str, StateUpdate]]:
+        args = [
+            HexBytes(pair_id),
+            sell_token.address,
+            buy_token.address,
+            int(is_buy),
+            amount,
+            HexBytes(data),
+        ]
+        res = self.call(
+            "swap",
+            args,
+            block_number=block.id,
+            timestamp=int(block.ts.timestamp()),
+            overrides=overwrites,
+        )
+        amount, gas, price = res.return_value[0]
+        return Trade(amount, gas, Fraction(*price)), res.simulation_result.state_updates
+
+    def get_limits(
+            self,
+            pair_id: HexStr,
+            sell_token: EthereumToken,
+            buy_token: EthereumToken,
+            data: HexStr,
+            block: EVMBlock,
+            overwrites: TStateOverwrites = None,
+    ) -> tuple[int, int]:
+        args = [HexBytes(pair_id), sell_token.address, buy_token.address, HexBytes(data)]
         res = self.call(
             "getLimits",
             args,

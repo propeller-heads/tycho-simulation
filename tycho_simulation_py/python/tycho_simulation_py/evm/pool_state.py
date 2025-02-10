@@ -14,7 +14,7 @@ from eth_utils import keccak
 
 from . import SimulationEngine, AccountInfo, SimulationParameters
 from . import token
-from .adapter_contract import AdapterContract
+from .adapter_contract import AdapterContract, AdapterContractV2
 from .constants import MAX_BALANCE, EXTERNAL_ACCOUNT
 from .utils import (
     ContractCompiler,
@@ -52,6 +52,8 @@ class ThirdPartyPool:
         trace: bool = False,
         involved_contracts=None,
         token_storage_slots=None,
+        swap_adapter_version=1,
+        additional_swap_data: HexStr = "",
     ):
         self.id_ = id_
         """The pools identifier."""
@@ -113,9 +115,14 @@ class ThirdPartyPool:
         This is later used to compute storage slot for maps.
         """
 
+        self.additional_swap_data: HexStr = additional_swap_data
+
         self._engine: Optional[SimulationEngine] = None
         self._set_engine()
-        self._adapter_contract = AdapterContract(ADAPTER_ADDRESS, self._engine)
+        if swap_adapter_version == 1:
+            self._adapter_contract = AdapterContract(ADAPTER_ADDRESS, self._engine)
+        elif swap_adapter_version == 2:
+            self._adapter_contract = AdapterContractV2(ADAPTER_ADDRESS, self._engine)
         self._set_capabilities()
         self._init_token_storage_slots()
         if len(self.marginal_prices) == 0:
@@ -181,6 +188,7 @@ class ThirdPartyPool:
                     t0,
                     t1,
                     [sell_amount],
+                    self.additional_swap_data,
                     block=self.block,
                     overwrites=self._get_overwrites(t0, t1),
                 )[0]
@@ -203,6 +211,7 @@ class ThirdPartyPool:
                     buy_token,
                     False,
                     sell_token.to_onchain_amount(sell_amount),
+                    data=self.additional_swap_data,
                     block=self.block,
                     overwrites=overwrites,
                 )
@@ -281,6 +290,7 @@ class ThirdPartyPool:
             buy_token,
             False,
             sell_token.to_onchain_amount(sell_amount),
+            data=self.additional_swap_data,
             block=self.block,
             overwrites=overwrites,
         )
@@ -429,6 +439,7 @@ class ThirdPartyPool:
             cast(HexStr, self.id_),
             sell_token,
             buy_token,
+            data=self.additional_swap_data,
             block=self.block,
             overwrites=self._get_overwrites(
                 sell_token, buy_token, max_amount=MAX_BALANCE // 100
