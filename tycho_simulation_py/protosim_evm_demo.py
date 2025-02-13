@@ -30,9 +30,7 @@ def test_simulation_db():
     if eth_rpc_url is None:
         raise Exception("ETH_RPC_URL environment variable not set")
 
-    db = SimulationDB(
-        rpc_url=eth_rpc_url, block=None
-    )
+    db = SimulationDB(rpc_url=eth_rpc_url, block=None)
     engine = SimulationEngine.new_with_simulation_db(db=db, trace=False)
 
     params = SimulationParameters(
