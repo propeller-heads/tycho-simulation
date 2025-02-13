@@ -84,3 +84,7 @@ evm = [
 
 [profile.bench]
 debug = true
+
+[[example]]
+name = "simple_solver"
+path = "examples/simple_solver/main.rs"
