@@ -42,29 +42,49 @@ impl From<Header> for BlockHeader {
 impl TryFromWithBlock<ComponentWithState> for EVMPoolState<PreCachedDB> {
     type Error = InvalidSnapshotError;
 
-    /// Decodes a `ComponentWithState` into an `EVMPoolState`.
+    /// Decodes a `ComponentWithState`, block `Header` and HashMap of all available tokens into an
+    /// `EVMPoolState`.
     ///
     /// Errors with a `InvalidSnapshotError`.
     async fn try_from_with_block(
         snapshot: ComponentWithState,
         block: Header,
+        account_balances: &HashMap<Bytes, HashMap<Bytes, Bytes>>,
         all_tokens: &HashMap<Bytes, Token>,
     ) -> Result<Self, Self::Error> {
         let id = snapshot.component.id.clone();
         let tokens = snapshot.component.tokens.clone();
-
         let block = BlockHeader::from(block);
-        let balances = snapshot
-            .state
-            .balances
-            .iter()
-            .map(|(k, v)| (Address::from_slice(k), U256::from_be_slice(v)))
-            .collect();
+
         let balance_owner = snapshot
             .state
             .attributes
             .get("balance_owner")
-            .map(|bytes: &Bytes| Address::from_slice(bytes.as_ref()));
+            .map(|owner| Address::from_slice(owner.as_ref()));
+
+        // Decode balances: if balance_owner is present, use the balances from the balance_owner's
+        // account balance (if exists), otherwise use the balances from the component.
+        let balances = balance_owner
+            .and_then(|owner| {
+                account_balances
+                    .get(owner.as_ref() as &[u8])
+                    .map(|balances| {
+                        balances
+                            .iter()
+                            .map(|(k, v)| {
+                                (Address::from_slice(k.as_ref()), U256::from_be_slice(v.as_ref()))
+                            })
+                            .collect::<HashMap<Address, U256>>()
+                    })
+            })
+            .unwrap_or_else(|| {
+                snapshot
+                    .state
+                    .balances
+                    .iter()
+                    .map(|(k, v)| (Address::from_slice(k), U256::from_be_slice(v)))
+                    .collect()
+            });
 
         let manual_updates = snapshot
             .component
@@ -129,20 +149,19 @@ impl TryFromWithBlock<ComponentWithState> for EVMPoolState<PreCachedDB> {
             });
         let adapter_bytecode = Bytecode::new_raw(get_adapter_file(protocol_name)?.into());
         let adapter_contract_address =
-            Address::from_str(&format!("{:0>40}", hex::encode(protocol_name)))
-                .expect("Can't convert protocol name to address");
+            Address::from_str(&format!("{:0>40}", hex::encode(protocol_name))).map_err(|_| {
+                InvalidSnapshotError::ValueError(
+                    "Error converting protocol name to address".to_string(),
+                )
+            })?;
 
-        let mut pool_state_builder = EVMPoolStateBuilder::new(
-            id.clone(),
-            tokens.clone(),
-            balances,
-            block,
-            adapter_contract_address,
-        )
-        .adapter_contract_bytecode(adapter_bytecode)
-        .involved_contracts(involved_contracts)
-        .stateless_contracts(stateless_contracts)
-        .manual_updates(manual_updates);
+        let mut pool_state_builder =
+            EVMPoolStateBuilder::new(id.clone(), tokens.clone(), block, adapter_contract_address)
+                .balances(balances)
+                .adapter_contract_bytecode(adapter_bytecode)
+                .involved_contracts(involved_contracts)
+                .stateless_contracts(stateless_contracts)
+                .manual_updates(manual_updates);
 
         if let Some(balance_owner) = balance_owner {
             pool_state_builder = pool_state_builder.balance_owner(balance_owner)
@@ -161,25 +180,19 @@ impl TryFromWithBlock<ComponentWithState> for EVMPoolState<PreCachedDB> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, fs, path::Path, str::FromStr};
+    use std::{collections::HashSet, fs, path::Path};
 
     use chrono::DateTime;
     use num_bigint::ToBigUint;
-    use revm::primitives::{AccountInfo, Address, Bytecode, KECCAK_EMPTY};
+    use revm::primitives::{AccountInfo, Address, KECCAK_EMPTY};
     use serde_json::Value;
-    use tycho_core::{
-        dto::{Chain, ChangeType, ProtocolComponent, ResponseProtocolState},
-        Bytes,
-    };
+    use tycho_core::dto::{Chain, ChangeType, ProtocolComponent, ResponseProtocolState};
 
     use super::*;
-    use crate::{
-        evm::{
-            engine_db::{create_engine, engine_db_interface::EngineDatabaseInterface},
-            protocol::vm::constants::{get_adapter_file, BALANCER_V2, CURVE},
-            tycho_models::AccountUpdate,
-        },
-        protocol::models::TryFromWithBlock,
+    use crate::evm::{
+        engine_db::{create_engine, engine_db_interface::EngineDatabaseInterface},
+        protocol::vm::constants::{BALANCER_V2, CURVE},
+        tycho_models::AccountUpdate,
     };
 
     #[test]
@@ -237,6 +250,7 @@ mod tests {
         accounts
     }
 
+    #[allow(deprecated)]
     #[tokio::test]
     async fn test_try_from_with_block() {
         let attributes: HashMap<String, Bytes> = vec![
@@ -270,18 +284,7 @@ mod tests {
                 component_id: "0x4626d81b3a1711beb79f4cecff2413886d461677000200000000000000000011"
                     .to_owned(),
                 attributes,
-                balances: [
-                    (
-                        Bytes::from("0x6b175474e89094c44da98b954eedeac495271d0f"),
-                        Bytes::from("0x01"),
-                    ),
-                    (
-                        Bytes::from("0xba100000625a3754423978a60c9317c58a424e3d"),
-                        Bytes::from("0x01"),
-                    ),
-                ]
-                .into_iter()
-                .collect(),
+                balances: HashMap::new(),
             },
             component: vm_component(),
         };
@@ -307,8 +310,21 @@ mod tests {
             );
         }
         db.update(accounts, Some(block.into()));
+        let account_balances = HashMap::from([(
+            Bytes::from("0xBA12222222228d8Ba445958a75a0704d566BF2C8"),
+            HashMap::from([
+                (
+                    Bytes::from("0x6b175474e89094c44da98b954eedeac495271d0f"),
+                    Bytes::from(100_u64.to_le_bytes().to_vec()),
+                ),
+                (
+                    Bytes::from("0xba100000625a3754423978a60c9317c58a424e3d"),
+                    Bytes::from(100_u64.to_le_bytes().to_vec()),
+                ),
+            ]),
+        )]);
 
-        let res = EVMPoolState::try_from_with_block(snapshot, header(), &tokens)
+        let res = EVMPoolState::try_from_with_block(snapshot, header(), &account_balances, &tokens)
             .await
             .unwrap();
 
