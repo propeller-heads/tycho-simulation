@@ -29,7 +29,7 @@ use tycho_simulation::{
     models::Token,
     protocol::models::{BlockUpdate, ProtocolComponent},
     tycho_client::feed::component_tracker::ComponentFilter,
-    tycho_core::dto::Chain,
+    tycho_core::{dto::Chain, models::Chain as TychoChain},
     utils::load_all_tokens,
 };
 
@@ -121,7 +121,7 @@ async fn main() {
 
     // Initialize the encoder
     let encoder = EVMEncoderBuilder::new()
-        .chain(Chain::Ethereum)
+        .chain(TychoChain::Ethereum)
         .tycho_router_with_permit2(None, swapper_pk)
         .expect("Failed to create encoder builder")
         .build()
