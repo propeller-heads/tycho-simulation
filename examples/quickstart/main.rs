@@ -41,7 +41,7 @@ use tycho_simulation::{
     evm::{
         protocol::{
             filters::uniswap_v4_pool_with_hook_filter, u256_num::biguint_to_u256,
-            uniswap_v2::state::UniswapV2State, uniswap_v3::state::UniswapV3State,
+            uniswap_v2::state::UniswapV2State, uniswap_v3::state::UniswapV3State, balancer_v2_pool_filter
             uniswap_v4::state::UniswapV4State,
         },
         stream::ProtocolStreamBuilder,
@@ -135,6 +135,11 @@ async fn main() {
     let mut protocol_stream = ProtocolStreamBuilder::new(&tycho_url, chain)
         .exchange::<UniswapV2State>("uniswap_v2", tvl_filter.clone(), None)
         .exchange::<UniswapV3State>("uniswap_v3", tvl_filter.clone(), None)
+        .exchange::<EVMPoolState<PreCachedDB>>(
+            "vm:balancer_v2",
+            tvl_filter.clone(),
+            Some(balancer_v2_pool_filter),
+        )
         .exchange::<UniswapV4State>(
             "uniswap_v4",
             tvl_filter.clone(),
@@ -159,7 +164,7 @@ async fn main() {
     let wallet = PrivateKeySigner::from_bytes(
         &B256::from_str(&cli.swapper_pk).expect("Failed to convert swapper pk to B256"),
     )
-    .expect("Failed to private key signer");
+        .expect("Failed to private key signer");
     let tx_signer = EthereumWallet::from(wallet.clone());
     let named_chain =
         NamedChain::from_str(&cli.chain.replace("ethereum", "mainnet")).expect("Invalid chain");
@@ -210,7 +215,7 @@ async fn main() {
 
             if cli.swapper_pk == FAKE_PK {
                 println!("Signer private key was not provided. Skipping simulation/execution...");
-                continue
+                continue;
             }
             println!("Would you like to simulate or execute this swap?");
             println!("Please be aware that the market might move while you make your decision, which might lead to a revert if you've set a min amount out or slippage.");
@@ -241,7 +246,7 @@ async fn main() {
                         tx.clone(),
                         named_chain as u64,
                     )
-                    .await;
+                        .await;
 
                     let payload = SimulatePayload {
                         block_state_calls: vec![SimBlock {
@@ -289,7 +294,7 @@ async fn main() {
                                     tx.clone(),
                                     named_chain as u64,
                                 )
-                                .await
+                                    .await
                                 {
                                     Ok(_) => return,
                                     Err(e) => {
@@ -315,7 +320,7 @@ async fn main() {
                         tx,
                         named_chain as u64,
                     )
-                    .await
+                        .await
                     {
                         Ok(_) => return,
                         Err(e) => {
@@ -574,7 +579,7 @@ async fn execute_swap_transaction(
         tx.clone(),
         chain_id,
     )
-    .await;
+        .await;
 
     let approval_receipt = provider
         .send_transaction(approval_request)
