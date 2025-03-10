@@ -6,9 +6,9 @@ use super::tick_math;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct TickInfo {
-    pub(crate) index: i32,
-    pub(crate) net_liquidity: i128,
-    pub(crate) sqrt_price: U256,
+    pub index: i32,
+    pub net_liquidity: i128,
+    pub sqrt_price: U256,
 }
 
 impl TickInfo {
@@ -40,9 +40,9 @@ pub(crate) enum TickListErrorKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TickList {
-    tick_spacing: u16,
-    ticks: Vec<TickInfo>,
+pub struct TickList {
+    pub tick_spacing: u16,
+    pub ticks: Vec<TickInfo>,
 }
 
 impl TickList {
