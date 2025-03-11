@@ -161,7 +161,6 @@ class ThirdPartyPoolTychoDecoder(TychoDecoder):
             "manual_updates", HexBytes("0x00")
         ) > HexBytes("0x00")
         swap_adapter_version = static_attributes.get("swap_adapter_version",  [1])[0]
-        additional_swap_data = static_attributes.get("additional_swap_data",  "")
         if not manual_updates:
             # trigger pool updates on contract changes
             for address in component.contract_ids:
@@ -179,7 +178,6 @@ class ThirdPartyPoolTychoDecoder(TychoDecoder):
             manual_updates=manual_updates,
             involved_contracts=set(to_checksum_address(b.hex()) for b in component.contract_ids),
             swap_adapter_version=swap_adapter_version,
-            additional_swap_data=additional_swap_data,
             **optional_attributes,
         )
 
@@ -207,10 +205,13 @@ class ThirdPartyPoolTychoDecoder(TychoDecoder):
             )
             stateless_contracts[decoded] = code
             index += 1
+
         return {
             "balance_owner": balance_owner,
             "stateless_contracts": stateless_contracts,
+            "additional_swap_data": attributes.get("additional_swap_data", ""),
         }
+
 
     @staticmethod
     def decode_balances(
