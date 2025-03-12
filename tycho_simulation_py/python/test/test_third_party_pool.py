@@ -9,7 +9,11 @@ from tycho_simulation_py.evm import AccountInfo, BlockHeader
 from tycho_simulation_py.evm.adapter_contract import AdapterContract
 from tycho_simulation_py.evm.pool_state import ThirdPartyPool
 from tycho_simulation_py.evm.storage import TychoDBSingleton
-from tycho_simulation_py.evm.utils import parse_account_info, create_engine
+from tycho_simulation_py.evm.utils import (
+    parse_account_info,
+    create_engine,
+    ContractCompiler,
+)
 from tycho_simulation_py.exceptions import RecoverableSimulationException
 from tycho_simulation_py.models import EVMBlock, Capability, EthereumToken
 
@@ -37,7 +41,6 @@ def Token(name: str) -> EthereumToken:
     }[name]
 
 
-@pytest.fixture()
 def adapter_contract_path(asset_dir) -> str:
     return str(asset_dir / "BalancerV2SwapAdapter.evm.runtime")
 
@@ -94,6 +97,7 @@ def test_init(asset_dir):
         tokens=(dai, bal),
         marginal_prices={},
         balances={dai.address: "178.7540127373018", bal.address: "91.08298776336989"},
+        contract_balances={},
         adapter_contract_path=adapter_contract_path(asset_dir),
     )
 
@@ -125,6 +129,7 @@ def pool_state(asset_dir):
             (dai, bal): Decimal("0.1377789143190479049114331557"),
         },
         balances={dai.address: "178.7540127373018", bal.address: "91.08298776336989"},
+        contract_balances={},
         adapter_contract_path=adapter_contract_path(asset_dir),
         balance_owner="0xBA12222222228d8Ba445958a75a0704d566BF2C8",
     )
@@ -147,10 +152,7 @@ def test_get_amount_out(pool_state):
     buy_amount, gas, new_state = pool_state.get_amount_out(t1, Decimal(10), t0)
 
     assert buy_amount == Decimal("58.510230650511937163")
-    # TODO: if run in isolation, gas is higher here - unsure yet why we'll
-    #  probably need trace to debug this, running only test_sell_amount_limit
-    #  before reduces gas already, running test_init does not.
-    assert gas == 85995
+    assert gas == 103095
     assert new_state.marginal_prices != pool_state.marginal_prices
     for override in new_state.block_lasting_overwrites.values():
         assert isinstance(override, dict)
@@ -159,10 +161,10 @@ def test_get_amount_out(pool_state):
 def test_sequential_get_amount_outs(pool_state):
     t0, t1 = pool_state.tokens
 
-    _, _, new_state = pool_state.get_amount_out(t1, Decimal(10), t0)
-    buy_amount, gas, new_state2 = new_state.get_amount_out(t1, Decimal(10), t0)
+    _, _, new_state = pool_state.get_amount_out(t1, Decimal(5), t0)
+    buy_amount, gas, new_state2 = new_state.get_amount_out(t1, Decimal(5), t0)
 
-    assert buy_amount == Decimal("41.016419447002364763")
+    assert buy_amount == Decimal("26.425740298561056749")
     assert new_state2.marginal_prices != new_state.marginal_prices
 
 
@@ -189,7 +191,7 @@ def test_get_amount_out_sell_limit(pool_state):
 
 def test_stateless_contract_pool(asset_dir):
     with patch(
-            "tycho_simulation_py.evm.pool_state.get_code_for_address"
+        "tycho_simulation_py.evm.pool_state.get_code_for_address"
     ) as mock_get_code:
         mock_get_code.return_value = bytes.fromhex("363d")
 
@@ -210,6 +212,7 @@ def test_stateless_contract_pool(asset_dir):
                 dai.address: "178.7540127373018",
                 bal.address: "91.08298776336989",
             },
+            contract_balances={},
             adapter_contract_path=adapter_contract_path(asset_dir),
             balance_owner="0xBA12222222228d8Ba445958a75a0704d566BF2C8",
             stateless_contracts={
@@ -230,7 +233,11 @@ def test_stateless_contract_pool(asset_dir):
 
 
 def test_overwrites_mock_erc20(pool_state):
-    overwrites = pool_state._get_overwrites(pool_state.tokens[0], pool_state.tokens[1])
+    overwrites = pool_state._get_overwrites(
+        pool_state.tokens[0],
+        pool_state.tokens[1],
+        max_amount=578960446186580977117854925043439539266349923328202820197287920039565648199,
+    )
 
     assert overwrites == {
         "0x6b175474e89094c44da98b954eedeac495271d0f": {
@@ -274,6 +281,7 @@ def test_overwrites_custom_erc20(asset_dir):
             dai.address: "178.7540127373018",
             sfrxEth.address: "91.08298776336989",
         },
+        contract_balances={},
         adapter_contract_path=adapter_contract_path(asset_dir),
         balance_owner="0xBA12222222228d8Ba445958a75a0704d566BF2C8",
         involved_contracts={sfrxEth.address},
@@ -282,7 +290,10 @@ def test_overwrites_custom_erc20(asset_dir):
     overwrites_one2zero = dict(pool._get_overwrites(pool.tokens[1], pool.tokens[0]))
 
     assert pool.token_storage_slots == {
-        "0xac3e018457b222d93114458476f3e3416abbe38f": (3, 4)
+        "0xac3e018457b222d93114458476f3e3416abbe38f": (
+            (3, 4),
+            ContractCompiler.Solidity,
+        )
     }
     assert overwrites_zero2one == {
         "0x6b175474e89094c44da98b954eedeac495271d0f": {

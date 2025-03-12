@@ -188,7 +188,7 @@ class ThirdPartyPool:
                     t0,
                     t1,
                     [sell_amount],
-                    self.additional_swap_data,
+                    data=self.additional_swap_data,
                     block=self.block,
                     overwrites=self._get_overwrites(t0, t1),
                 )[0]
