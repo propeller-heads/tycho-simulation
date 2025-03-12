@@ -42,13 +42,13 @@ where
     <D as EngineDatabaseInterface>::Error: Debug,
 {
     /// The pool's identifier
-    id: String,
+    pub id: String,
     /// The pool's token's addresses
     pub tokens: Vec<Bytes>,
     /// The current block, will be used to set vm context
-    block: BlockHeader,
-    /// The pool's component balances.
-    balances: HashMap<Address, U256>,
+    pub block: BlockHeader,
+    /// The pool's token balances
+    pub balances: HashMap<Address, U256>,
     /// The contract address for where protocol balances are stored (i.e. a vault contract).
     /// If given, balances will be overwritten here instead of on the pool contract during
     /// simulations. This has been deprecated in favor of `contract_balances`.
@@ -57,7 +57,7 @@ where
     /// Spot prices of the pool by token pair
     spot_prices: HashMap<(Address, Address), f64>,
     /// The supported capabilities of this pool
-    capabilities: HashSet<Capability>,
+    pub capabilities: HashSet<Capability>,
     /// Storage overwrites that will be applied to all simulations. They will be cleared
     /// when ``update_pool_state`` is called, i.e. usually at each block. Hence, the name.
     block_lasting_overwrites: HashMap<Address, Overwrites>,

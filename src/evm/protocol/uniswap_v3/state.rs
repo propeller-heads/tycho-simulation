@@ -32,11 +32,11 @@ use crate::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UniswapV3State {
-    liquidity: u128,
-    sqrt_price: U256,
-    fee: FeeAmount,
-    tick: i32,
-    ticks: TickList,
+    pub liquidity: u128,
+    pub sqrt_price: U256,
+    pub fee: FeeAmount,
+    pub tick: i32,
+    pub ticks: TickList,
 }
 
 impl UniswapV3State {
