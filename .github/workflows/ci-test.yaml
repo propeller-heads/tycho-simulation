@@ -1,9 +1,7 @@
 name: Continuous Integration
 
 on:
-  push:
-    branches:
-      - "ts-lint-test"
+  pull_request_target:
 
 permissions:
   id-token: write
