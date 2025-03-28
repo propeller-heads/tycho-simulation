@@ -12,11 +12,12 @@ use std::{
 
 use alloy_primitives::U256;
 use num_bigint::BigUint;
+use serde::Serialize;
 use tycho_core::{dto::ResponseToken, Bytes};
 
 use crate::utils::hexstring_to_vec;
 
-#[derive(Clone, Debug, Eq)]
+#[derive(Clone, Debug, Eq, Serialize)]
 pub struct Token {
     /// The address of the token on the blockchain network
     pub address: Bytes,
