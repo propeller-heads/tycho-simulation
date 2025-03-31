@@ -127,12 +127,6 @@ Usually you should have a tycho-simulation-build environment where maturin is al
 
 ### Troubleshooting
 
-> How to see debug logs?
-
-Set environment variable `RUST_LOG` to `debug`.
-
-Alternatively, you can control log level per module e.g. like this: `RUST_LOG=tycho_simulation::evm=debug`.
-
 > When I `pip install` the wheel, I get `ERROR: <wheel_name>.whl is not a supported wheel on this platform`.
 
 1. Make sure you used the same Python version in your build environment as the one in the environment you're installing
