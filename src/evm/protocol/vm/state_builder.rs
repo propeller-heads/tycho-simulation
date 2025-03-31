@@ -233,11 +233,14 @@ where
             self.get_default_capabilities()?
         };
 
-        let adapter_contract = self.adapter_contract.ok_or_else(|| {
-            SimulationError::FatalError(
-                "Failed to get build engine: Adapter contract not initialized".to_string(),
-            )
-        })?;
+        let adapter_contract = self
+            .adapter_contract
+            .clone()
+            .ok_or_else(|| {
+                SimulationError::FatalError(
+                    "Failed to get build engine: Adapter contract not initialized".to_string(),
+                )
+            })?;
 
         if let Some(stateless_contracts) = &self.stateless_contracts {
             for (address, bytecode) in stateless_contracts.iter() {
