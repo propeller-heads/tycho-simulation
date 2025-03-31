@@ -39,10 +39,14 @@ use tycho_execution::encoding::{
 };
 use tycho_simulation::{
     evm::{
+        engine_db::tycho_db::PreCachedDB,
         protocol::{
-            filters::uniswap_v4_pool_with_hook_filter, u256_num::biguint_to_u256,
-            uniswap_v2::state::UniswapV2State, uniswap_v3::state::UniswapV3State, balancer_v2_pool_filter
+            filters::{balancer_v2_pool_filter, uniswap_v4_pool_with_hook_filter},
+            u256_num::biguint_to_u256,
+            uniswap_v2::state::UniswapV2State,
+            uniswap_v3::state::UniswapV3State,
             uniswap_v4::state::UniswapV4State,
+            vm::state::EVMPoolState,
         },
         stream::ProtocolStreamBuilder,
     },
@@ -164,7 +168,7 @@ async fn main() {
     let wallet = PrivateKeySigner::from_bytes(
         &B256::from_str(&cli.swapper_pk).expect("Failed to convert swapper pk to B256"),
     )
-        .expect("Failed to private key signer");
+    .expect("Failed to private key signer");
     let tx_signer = EthereumWallet::from(wallet.clone());
     let named_chain =
         NamedChain::from_str(&cli.chain.replace("ethereum", "mainnet")).expect("Invalid chain");
@@ -246,7 +250,7 @@ async fn main() {
                         tx.clone(),
                         named_chain as u64,
                     )
-                        .await;
+                    .await;
 
                     let payload = SimulatePayload {
                         block_state_calls: vec![SimBlock {
@@ -294,7 +298,7 @@ async fn main() {
                                     tx.clone(),
                                     named_chain as u64,
                                 )
-                                    .await
+                                .await
                                 {
                                     Ok(_) => return,
                                     Err(e) => {
@@ -320,7 +324,7 @@ async fn main() {
                         tx,
                         named_chain as u64,
                     )
-                        .await
+                    .await
                     {
                         Ok(_) => return,
                         Err(e) => {
@@ -579,7 +583,7 @@ async fn execute_swap_transaction(
         tx.clone(),
         chain_id,
     )
-        .await;
+    .await;
 
     let approval_receipt = provider
         .send_transaction(approval_request)
