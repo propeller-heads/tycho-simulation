@@ -243,6 +243,7 @@ where
             })?;
 
         if let Some(stateless_contracts) = &self.stateless_contracts {
+            info!("loading stateless contracts: {}", stateless_contracts.keys().join(","));
             for (address, bytecode) in stateless_contracts.iter() {
                 let mut addr_str = address.clone();
                 let (code, code_hash) = if bytecode.is_none() {
