@@ -239,6 +239,41 @@ where
             )
         })?;
 
+        if let Some(stateless_contracts) = &self.stateless_contracts {
+            for (address, bytecode) in stateless_contracts.iter() {
+                let mut addr_str = address.clone();
+                let (code, code_hash) = if bytecode.is_none() {
+                    if addr_str.starts_with("call") {
+                        addr_str = self
+                            .get_address_from_call(&engine, &addr_str)?
+                            .to_string();
+                    }
+                    let code = get_code_for_contract(&addr_str, None).await?;
+                    (Some(code.clone()), code.hash_slow())
+                } else {
+                    let code =
+                        Bytecode::new_raw(Bytes::from(bytecode.clone().ok_or_else(|| {
+                            SimulationError::FatalError(
+                                "Failed to get default engine: Byte code from stateless contracts is None".into(),
+                            )
+                        })?));
+                    (Some(code.clone()), code.hash_slow())
+                };
+                let account_address: Address = addr_str.parse().map_err(|_| {
+                    SimulationError::FatalError(format!(
+                        "Failed to get default engine: Couldn't parse address string {}",
+                        address
+                    ))
+                })?;
+                engine.state.init_account(
+                    alloy_primitives::Address(*account_address),
+                    AccountInfo { balance: Default::default(), nonce: 0, code_hash, code },
+                    None,
+                    false,
+                );
+            }
+        }
+
         Ok(EVMPoolState::new(
             self.id,
             self.tokens,
@@ -279,40 +314,6 @@ where
             false,
         );
 
-        if let Some(stateless_contracts) = &self.stateless_contracts {
-            for (address, bytecode) in stateless_contracts.iter() {
-                let mut addr_str = address.clone();
-                let (code, code_hash) = if bytecode.is_none() {
-                    if addr_str.starts_with("call") {
-                        addr_str = self
-                            .get_address_from_call(&engine, &addr_str)?
-                            .to_string();
-                    }
-                    let code = get_code_for_contract(&addr_str, None).await?;
-                    (Some(code.clone()), code.hash_slow())
-                } else {
-                    let code =
-                        Bytecode::new_raw(Bytes::from(bytecode.clone().ok_or_else(|| {
-                            SimulationError::FatalError(
-                                "Failed to get default engine: Byte code from stateless contracts is None".into(),
-                            )
-                        })?));
-                    (Some(code.clone()), code.hash_slow())
-                };
-                let account_address: Address = addr_str.parse().map_err(|_| {
-                    SimulationError::FatalError(format!(
-                        "Failed to get default engine: Couldn't parse address string {}",
-                        address
-                    ))
-                })?;
-                engine.state.init_account(
-                    alloy_primitives::Address(*account_address),
-                    AccountInfo { balance: Default::default(), nonce: 0, code_hash, code },
-                    None,
-                    false,
-                );
-            }
-        }
         Ok(engine)
     }
 
