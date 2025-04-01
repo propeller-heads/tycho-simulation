@@ -12,7 +12,7 @@ use revm::{
     primitives::{alloy_primitives::Keccak256, AccountInfo, Bytecode, KECCAK_EMPTY},
     DatabaseRef,
 };
-use tracing::warn;
+use tracing::{info, warn};
 use tycho_common::Bytes as TychoBytes;
 
 use super::{
