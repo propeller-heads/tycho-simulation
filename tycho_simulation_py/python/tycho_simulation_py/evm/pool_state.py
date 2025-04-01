@@ -104,7 +104,7 @@ class ThirdPartyPool:
         """A set of all contract addresses involved in the simulation of this pool."""
 
         self.token_storage_slots: dict[Address, tuple[ERC20Slots, ContractCompiler]] = (
-                token_storage_slots or {}
+            token_storage_slots or {}
         )
         """Allows the specification of custom storage slots for token allowances and
         balances. This is particularly useful for token contracts involved in protocol
@@ -129,6 +129,7 @@ class ThirdPartyPool:
         The engine will have the specified adapter contract mocked, as well as the
         tokens used by the pool.
         """
+        log.info(f"Creating engine for {self.id_}")
         if self._engine is not None:
             return
         else:
@@ -156,10 +157,12 @@ class ThirdPartyPool:
                 permanent_storage=None,
             )
             for addr, bytecode in self.stateless_contracts.items():
+                log.info(f"Adding stateless contract {addr}")
                 if bytecode is None:
                     if addr.startswith("call"):
                         addr = self._get_address_from_call(engine, addr)
                     bytecode = get_code_for_address(addr)
+                    log.info(f"Got bytecode for {addr}: {bytecode}")
                 engine.init_account(
                     address=addr,
                     account=AccountInfo(balance=0, nonce=0, code=bytecode),
@@ -171,6 +174,7 @@ class ThirdPartyPool:
 
     def _set_marginal_prices(self):
         """Set the spot prices for this pool."""
+        log.info(f"Setting marginal prices for {self.id_}")
         if Capability.PriceFunction in self.capabilities:
             for t0, t1 in itertools.permutations(self.tokens, 2):
                 sell_amount = t0.to_onchain_amount(
@@ -225,6 +229,7 @@ class ThirdPartyPool:
 
     def _set_capabilities(self):
         """Sets capabilities of the pool."""
+        log.info(f"Getting capabilities for {self.id_}")
         capabilities = []
         for t0, t1 in itertools.permutations(self.tokens, 2):
             capabilities.append(
@@ -331,11 +336,11 @@ class ThirdPartyPool:
             max_amount = sell_token.to_onchain_amount(
                 self.get_sell_amount_limit(sell_token, buy_token)
             )
-        slots, compiler = self.token_storage_slots.get(sell_token.address, (ERC20Slots(0, 1), ContractCompiler.Solidity))
+        slots, compiler = self.token_storage_slots.get(
+            sell_token.address, (ERC20Slots(0, 1), ContractCompiler.Solidity)
+        )
         overwrites = ERC20OverwriteFactory(
-            sell_token,
-            token_slots=slots,
-            compiler=compiler
+            sell_token, token_slots=slots, compiler=compiler
         )
         overwrites.set_balance(max_amount, EXTERNAL_ACCOUNT)
         overwrites.set_allowance(
@@ -363,7 +368,9 @@ class ThirdPartyPool:
                             token = t
                             break
                     if token is None:
-                        log.warning("Found balance for token not in pool. Overwrite skipped")
+                        log.warning(
+                            "Found balance for token not in pool. Overwrite skipped"
+                        )
                         continue
                     amount = token.to_onchain_amount(amount)
                     if token in balances_by_token:
@@ -373,9 +380,7 @@ class ThirdPartyPool:
             for token, bals in balances_by_token.items():
                 overwrites = ERC20OverwriteFactory(token, slots, compiler)
                 for contract, amount in bals:
-                    overwrites.set_balance(
-                        amount, contract
-                    )
+                    overwrites.set_balance(amount, contract)
                 balance_overwrites.update(overwrites.get_tycho_overwrites())
         else:
             # use component balances for overrides
@@ -385,9 +390,7 @@ class ThirdPartyPool:
                     slots, compiler = self.token_storage_slots.get(t.address)
                 overwrites = ERC20OverwriteFactory(t, slots, compiler)
                 amount = t.to_onchain_amount(self.balances[t.address])
-                overwrites.set_balance(
-                    amount, address
-                )
+                overwrites.set_balance(amount, address)
                 balance_overwrites.update(overwrites.get_tycho_overwrites())
         return balance_overwrites
 
