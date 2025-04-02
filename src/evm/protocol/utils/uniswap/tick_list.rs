@@ -40,7 +40,7 @@ pub(crate) enum TickListErrorKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct TickList {
+pub struct TickList {
     pub tick_spacing: u16,
     pub ticks: Vec<TickInfo>,
 }
