@@ -10,6 +10,7 @@ use tycho_simulation::{
         decoder::StreamDecodeError,
         engine_db::tycho_db::PreCachedDB,
         protocol::{
+            ekubo::state::EkuboState,
             filters::{balancer_pool_filter, curve_pool_filter, uniswap_v4_pool_with_hook_filter},
             uniswap_v2::state::UniswapV2State,
             uniswap_v3::state::UniswapV3State,
@@ -21,7 +22,7 @@ use tycho_simulation::{
     models::Token,
     protocol::models::BlockUpdate,
     tycho_client::feed::component_tracker::ComponentFilter,
-    tycho_core::dto::Chain,
+    tycho_common::models::Chain,
     utils::load_all_tokens,
 };
 
@@ -42,7 +43,7 @@ struct Cli {
 
 fn validate_exchange(exchange: &str) -> Result<String, String> {
     const SUPPORTED_EXCHANGES: &[&str] =
-        &["uniswap_v2", "uniswap_v3", "balancer_v2", "curve", "uniswap_v4"];
+        &["uniswap_v2", "uniswap_v3", "balancer_v2", "curve", "uniswap_v4", "ekubo_v2"];
     if SUPPORTED_EXCHANGES.contains(&exchange) {
         Ok(exchange.to_string())
     } else {
@@ -69,7 +70,15 @@ async fn main() {
 
     let tvl_filter = ComponentFilter::with_tvl_range(cli.tvl_threshold, cli.tvl_threshold);
 
-    let all_tokens = load_all_tokens(tycho_url.as_str(), false, Some(tycho_api_key.as_str())).await;
+    let all_tokens = load_all_tokens(
+        tycho_url.as_str(),
+        false,
+        Some(tycho_api_key.as_str()),
+        Chain::Ethereum,
+        None,
+        None,
+    )
+    .await;
 
     let mut results = HashMap::new();
 
@@ -138,6 +147,17 @@ async fn main() {
                     .await
                     .expect("Failed building Curve protocol stream")
                     .boxed(),
+                "ekubo_v2" => ProtocolStreamBuilder::new(&tycho_url, Chain::Ethereum)
+                    .exchange::<EkuboState>("ekubo_v2", tvl_filter.clone(), None)
+                    .auth_key(Some(tycho_api_key.clone()))
+                    .set_tokens(all_tokens.clone())
+                    .await
+                    .skip_state_decode_failures(true)
+                    .build()
+                    .await
+                    .expect("Failed building Ekubo protocol stream")
+                    .boxed(),
+
                 _ => {
                     eprintln!("Unknown protocol: {}", protocol);
                     continue;
