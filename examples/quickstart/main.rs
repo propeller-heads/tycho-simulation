@@ -38,10 +38,14 @@ use tycho_execution::encoding::{
 };
 use tycho_simulation::{
     evm::{
+        engine_db::tycho_db::PreCachedDB,
         protocol::{
-            filters::uniswap_v4_pool_with_hook_filter, u256_num::biguint_to_u256,
-            uniswap_v2::state::UniswapV2State, uniswap_v3::state::UniswapV3State,
+            filters::{balancer_v2_pool_filter, uniswap_v4_pool_with_hook_filter},
+            u256_num::biguint_to_u256,
+            uniswap_v2::state::UniswapV2State,
+            uniswap_v3::state::UniswapV3State,
             uniswap_v4::state::UniswapV4State,
+            vm::state::EVMPoolState,
         },
         stream::ProtocolStreamBuilder,
     },
@@ -117,6 +121,11 @@ async fn main() {
     let mut protocol_stream = ProtocolStreamBuilder::new(&tycho_url, chain)
         .exchange::<UniswapV2State>("uniswap_v2", tvl_filter.clone(), None)
         .exchange::<UniswapV3State>("uniswap_v3", tvl_filter.clone(), None)
+        .exchange::<EVMPoolState<PreCachedDB>>(
+            "vm:balancer_v2",
+            tvl_filter.clone(),
+            Some(balancer_v2_pool_filter),
+        )
         .exchange::<UniswapV4State>(
             "uniswap_v4",
             tvl_filter.clone(),
@@ -191,7 +200,7 @@ async fn main() {
 
             if cli.swapper_pk == FAKE_PK {
                 println!("Signer private key was not provided. Skipping simulation/execution...");
-                continue
+                continue;
             }
             println!("Would you like to simulate or execute this swap?");
             println!("Please be aware that the market might move while you make your decision, which might lead to a revert if you've set a min amount out or slippage.");
