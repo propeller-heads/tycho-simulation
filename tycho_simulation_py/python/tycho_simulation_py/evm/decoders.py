@@ -37,11 +37,11 @@ class TychoDecoder(ABC):
 
 
 def handle_vm_updates(
-        block: EVMBlock,
-        account_updates: Union[
-            dict[dto.HexBytes, dto.AccountUpdate], dict[dto.HexBytes, dto.ResponseAccount]
-        ],
-        token_proxy_tokens: dict[HexBytes, HexBytes],
+    block: EVMBlock,
+    account_updates: Union[
+        dict[dto.HexBytes, dto.AccountUpdate], dict[dto.HexBytes, dto.ResponseAccount]
+    ],
+    token_proxy_tokens: dict[HexBytes, HexBytes],
 ) -> list[AccountUpdate]:
     vm_updates = []
     for address, account_update in account_updates.items():
@@ -79,11 +79,11 @@ class ThirdPartyPoolTychoDecoder(TychoDecoder):
     """Mapping of component ids to their internal pool id"""
 
     def __init__(
-            self,
-            token_factory_func: Callable[[list[str]], list[EthereumToken]],
-            adapter_contract: str,
-            minimum_gas: int,
-            trace: bool = False,
+        self,
+        token_factory_func: Callable[[list[str]], list[EthereumToken]],
+        adapter_contract: str,
+        minimum_gas: int,
+        trace: bool = False,
     ):
         super().__init__()
         self.contract_pools = defaultdict(list)
@@ -109,7 +109,7 @@ class ThirdPartyPoolTychoDecoder(TychoDecoder):
         return HexBytes(f"0x{padded_zeroes}{padded_idx}badbabe")
 
     def decode_snapshot(
-            self, snapshot: dto.Snapshot, block: EVMBlock
+        self, snapshot: dto.Snapshot, block: EVMBlock
     ) -> dict[str, ThirdPartyPool]:
         decoded_pools = {}
         failed_pools = set()
@@ -144,7 +144,11 @@ class ThirdPartyPoolTychoDecoder(TychoDecoder):
         for snap in snapshot.states.values():
             try:
                 pool = self.decode_pool_state(
-                    snap, block, account_balances, token_initial_state, self._token_proxy_tokens
+                    snap,
+                    block,
+                    account_balances,
+                    token_initial_state,
+                    self._token_proxy_tokens,
                 )
                 decoded_pools[pool.id_] = pool
             except TychoDecodeError as e:
@@ -173,12 +177,12 @@ class ThirdPartyPoolTychoDecoder(TychoDecoder):
         return decoded_pools
 
     def decode_pool_state(
-            self,
-            snapshot: ComponentWithState,
-            block: EVMBlock,
-            account_balances: dict[HexBytes, dict[HexBytes, HexBytes]] = {},
-            token_initial_states: dict[HexBytes, dict[int, int]] = dict(),
-            token_proxy_tokens: dict[HexBytes, HexBytes] = dict()
+        self,
+        snapshot: ComponentWithState,
+        block: EVMBlock,
+        account_balances: dict[HexBytes, dict[HexBytes, HexBytes]] = {},
+        token_initial_states: dict[HexBytes, dict[int, int]] = dict(),
+        token_proxy_tokens: dict[HexBytes, HexBytes] = dict(),
     ) -> ThirdPartyPool:
         component = snapshot.component
         state_attributes = snapshot.state.attributes
@@ -259,7 +263,7 @@ class ThirdPartyPoolTychoDecoder(TychoDecoder):
             code = (
                 value.hex()
                 if (value := attributes.get(f"stateless_contract_code_{index}"))
-                   is not None
+                is not None
                 else None
             )
             stateless_contracts[decoded] = code
@@ -271,7 +275,7 @@ class ThirdPartyPoolTychoDecoder(TychoDecoder):
 
     @staticmethod
     def decode_balances(
-            balances_msg: dict[HexBytes, HexBytes], tokens: list[EthereumToken]
+        balances_msg: dict[HexBytes, HexBytes], tokens: list[EthereumToken]
     ):
         balances = {}
         for addr, balance in balances_msg.items():
@@ -283,7 +287,7 @@ class ThirdPartyPoolTychoDecoder(TychoDecoder):
         return balances
 
     def apply_deltas(
-            self, pools: dict[str, ThirdPartyPool], delta_msg: BlockChanges, block: EVMBlock
+        self, pools: dict[str, ThirdPartyPool], delta_msg: BlockChanges, block: EVMBlock
     ) -> dict[str, ThirdPartyPool]:
         updated_pools = {}
 
