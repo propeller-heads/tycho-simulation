@@ -46,18 +46,18 @@ where
     /// The pool's token's addresses
     pub tokens: Vec<Bytes>,
     /// The current block, will be used to set vm context
-    block: BlockHeader,
+    pub block: BlockHeader,
     /// The pool's component balances.
-    balances: HashMap<Address, U256>,
+    pub balances: HashMap<Address, U256>,
     /// The contract address for where protocol balances are stored (i.e. a vault contract).
     /// If given, balances will be overwritten here instead of on the pool contract during
     /// simulations. This has been deprecated in favor of `contract_balances`.
     #[deprecated(note = "Use contract_balances instead")]
     balance_owner: Option<Address>,
     /// Spot prices of the pool by token pair
-    spot_prices: HashMap<(Address, Address), f64>,
+    pub spot_prices: HashMap<(Address, Address), f64>,
     /// The supported capabilities of this pool
-    capabilities: HashSet<Capability>,
+    pub capabilities: HashSet<Capability>,
     /// Storage overwrites that will be applied to all simulations. They will be cleared
     /// when ``update_pool_state`` is called, i.e. usually at each block. Hence, the name.
     block_lasting_overwrites: HashMap<Address, Overwrites>,
@@ -219,8 +219,8 @@ where
                 })?;
                 let sell_token_decimals = self.get_decimals(tokens, &sell_token_address)?;
                 let buy_token_decimals = self.get_decimals(tokens, &buy_token_address)?;
-                *unscaled_price * 10f64.powi(sell_token_decimals as i32) /
-                    10f64.powi(buy_token_decimals as i32)
+                *unscaled_price * 10f64.powi(sell_token_decimals as i32)
+                    / 10f64.powi(buy_token_decimals as i32)
             };
 
             self.spot_prices
@@ -541,8 +541,8 @@ where
         )?;
         let (sell_amount_respecting_limit, sell_amount_exceeds_limit) = if self
             .capabilities
-            .contains(&Capability::HardLimits) &&
-            sell_amount_limit < sell_amount
+            .contains(&Capability::HardLimits)
+            && sell_amount_limit < sell_amount
         {
             (sell_amount_limit, true)
         } else {
