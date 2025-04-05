@@ -1,6 +1,6 @@
 [package]
 name = "tycho-simulation"
-version = "0.91.1"
+version = "0.92.0"
 edition = "2021"
 description = "Provides tools for interacting with protocol states, calculating spot prices, and quoting token swaps."
 repository = "https://github.com/propeller-heads/tycho-execution"
@@ -92,7 +92,7 @@ ratatui = "0.29.0"
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 unicode-width = "0.1.13"
 tracing-appender = "0.2.3"
-tycho-execution = "0.73.0"
+tycho-execution = "0.76.0"
 
 [features]
 default = ["evm"]
