@@ -14,7 +14,7 @@ use tycho_common::{dto::ProtocolStateDelta, Bytes};
 
 use super::{
     constants::{EXTERNAL_ACCOUNT, MAX_BALANCE},
-    erc20_token::{ERC20OverwriteFactory, ERC20Slots, Overwrites},
+    erc20_token::{Overwrites, TokenProxyOverwriteFactory},
     models::Capability,
     tycho_simulation_contract::TychoSimulationContract,
 };
@@ -25,7 +25,6 @@ use crate::{
             tycho_db::PreCachedDB,
         },
         protocol::{u256_num::u256_to_biguint, utils::bytes_to_address},
-        ContractCompiler, SlotId,
     },
     models::{Balances, Token},
     protocol::{
@@ -65,12 +64,6 @@ where
     involved_contracts: HashSet<Address>,
     /// A map of contracts to their token balances.
     contract_balances: HashMap<Address, HashMap<Address, U256>>,
-    /// Allows the specification of custom storage slots for token allowances and
-    /// balances. This is particularly useful for token contracts involved in protocol
-    /// logic that extends beyond simple transfer functionality.
-    /// Each entry also specify the compiler with which the target contract was compiled. This is
-    /// later used to compute storage slot for maps.
-    token_storage_slots: HashMap<Address, (ERC20Slots, ContractCompiler)>,
     /// Indicates if the protocol uses custom update rules and requires update
     /// triggers to recalculate spot prices ect. Default is to update on all changes on
     /// the pool.
@@ -101,7 +94,6 @@ where
         capabilities: HashSet<Capability>,
         block_lasting_overwrites: HashMap<Address, Overwrites>,
         involved_contracts: HashSet<Address>,
-        token_storage_slots: HashMap<Address, (ERC20Slots, ContractCompiler)>,
         manual_updates: bool,
         adapter_contract: TychoSimulationContract<D>,
     ) -> Self {
@@ -116,7 +108,6 @@ where
             block_lasting_overwrites,
             involved_contracts,
             contract_balances,
-            token_storage_slots,
             manual_updates,
             adapter_contract,
         }
@@ -371,16 +362,7 @@ where
             res.push(self.get_balance_overwrites()?);
         }
 
-        let (slots, compiler) = self
-            .token_storage_slots
-            .get(sell_token)
-            .cloned()
-            .unwrap_or((
-                ERC20Slots::new(SlotId::from(0), SlotId::from(1)),
-                ContractCompiler::Solidity,
-            ));
-
-        let mut overwrites = ERC20OverwriteFactory::new(*sell_token, slots.clone(), compiler);
+        let mut overwrites = TokenProxyOverwriteFactory::new(*sell_token, None);
 
         overwrites.set_balance(max_amount, Address::from_slice(&*EXTERNAL_ACCOUNT.0));
 
@@ -420,21 +402,7 @@ where
         };
         if let Some(address) = address {
             for (token, bal) in &self.balances {
-                let (slots, compiler) = if self.involved_contracts.contains(token) {
-                    self.token_storage_slots
-                        .get(token)
-                        .cloned()
-                        .ok_or_else(|| {
-                            SimulationError::FatalError(
-                                "Failed to get balance overwrites: Token storage slots not found"
-                                    .into(),
-                            )
-                        })?
-                } else {
-                    (ERC20Slots::new(SlotId::from(0), SlotId::from(1)), ContractCompiler::Solidity)
-                };
-
-                let mut overwrites = ERC20OverwriteFactory::new(*token, slots, compiler);
+                let mut overwrites = TokenProxyOverwriteFactory::new(*token, None);
                 overwrites.set_balance(*bal, address);
                 balance_overwrites.extend(overwrites.get_overwrites());
             }
@@ -444,16 +412,7 @@ where
         // for a contract we explicitly track balances for)
         for (contract, balances) in &self.contract_balances {
             for (token, balance) in balances {
-                let (slots, compiler) = self
-                    .token_storage_slots
-                    .get(token)
-                    .cloned()
-                    .unwrap_or((
-                        ERC20Slots::new(SlotId::from(0), SlotId::from(1)),
-                        ContractCompiler::Solidity,
-                    ));
-
-                let mut overwrites = ERC20OverwriteFactory::new(*token, slots, compiler);
+                let mut overwrites = TokenProxyOverwriteFactory::new(*token, None);
                 overwrites.set_balance(*balance, *contract);
                 balance_overwrites.extend(overwrites.get_overwrites());
             }
