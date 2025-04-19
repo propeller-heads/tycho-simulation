@@ -3,14 +3,16 @@ use std::{any::Any, collections::HashMap, fmt::Debug};
 use alloy_primitives::Address;
 use evm_ekubo_sdk::{
     math::uint::U256,
-    quoting::types::{NodeKey, Tick, TokenAmount},
+    quoting::types::{NodeKey, TokenAmount},
 };
 use num_bigint::BigUint;
 use tycho_common::{dto::ProtocolStateDelta, Bytes};
 
 use super::{
-    pool::{base::BasePool, full_range::FullRangePool, oracle::OraclePool, EkuboPool},
-    tick::ticks_from_attributes,
+    attributes::{sale_rate_deltas_from_attributes, ticks_from_attributes},
+    pool::{
+        base::BasePool, full_range::FullRangePool, oracle::OraclePool, twamm::TwammPool, EkuboPool,
+    },
 };
 use crate::{
     evm::protocol::u256_num::u256_to_f64,
@@ -28,6 +30,7 @@ pub enum EkuboState {
     Base(BasePool),
     FullRange(FullRangePool),
     Oracle(OraclePool),
+    Twamm(TwammPool),
 }
 
 fn sqrt_price_q128_to_f64(x: U256, (token0_decimals, token1_decimals): (usize, usize)) -> f64 {
@@ -53,7 +56,6 @@ impl ProtocolSim for EkuboState {
         })
     }
 
-    // TODO Need a timestamp here for the Oracle pool (and TWAMM in the future)
     fn get_amount_out(
         &self,
         amount_in: BigUint,
@@ -67,11 +69,7 @@ impl ProtocolSim for EkuboState {
             })?,
         };
 
-        let quote = match self {
-            Self::Base(p) => p.quote(token_amount),
-            Self::FullRange(p) => p.quote(token_amount),
-            Self::Oracle(p) => p.quote(token_amount),
-        }?;
+        let quote = self.quote(token_amount)?;
 
         let res = GetAmountOutResult {
             amount: BigUint::try_from(quote.calculated_amount).map_err(|_| {
@@ -103,6 +101,7 @@ impl ProtocolSim for EkuboState {
         {
             self.set_liquidity(liquidity.clone().into());
         }
+
         if let Some(sqrt_price) = delta
             .updated_attributes
             .get("sqrt_ratio")
@@ -112,33 +111,73 @@ impl ProtocolSim for EkuboState {
 
         match self {
             Self::Base(p) => {
+                // The exact tick is only required for CL pools
                 if let Some(tick) = delta.updated_attributes.get("tick") {
                     p.set_active_tick(tick.clone().into());
                 }
-            }
-            Self::Oracle(_) | Self::FullRange(_) => {} /* The exact tick is not required for full
-                                                        * range pools */
-        }
 
-        let changed_ticks = ticks_from_attributes(
-            delta
-                .updated_attributes
-                .into_iter()
-                .chain(
+                ticks_from_attributes(
                     delta
-                        .deleted_attributes
+                        .updated_attributes
                         .into_iter()
-                        .map(|key| (key, Bytes::new())),
-                ),
-        )
-        .map_err(TransitionError::DecodeError)?;
+                        .chain(
+                            delta
+                                .deleted_attributes
+                                .into_iter()
+                                .map(|key| (key, Bytes::new())),
+                        ),
+                )
+                .map_err(TransitionError::DecodeError)?
+                .into_iter()
+                .for_each(|changed_tick| {
+                    p.set_tick(changed_tick);
+                });
+            }
+            Self::FullRange(_) | Self::Oracle(_) => {}
+            Self::Twamm(p) => {
+                if let Some(token0_sale_rate) = delta
+                    .updated_attributes
+                    .get("token0_sale_rate")
+                {
+                    p.set_token0_sale_rate(token0_sale_rate.clone().into());
+                }
 
-        for changed_tick in changed_ticks {
-            self.set_tick(changed_tick)
-                .map_err(TransitionError::DecodeError)?;
+                if let Some(token1_sale_rate) = delta
+                    .updated_attributes
+                    .get("token1_sale_rate")
+                {
+                    p.set_token1_sale_rate(token1_sale_rate.clone().into());
+                }
+
+                if let Some(last_execution_time) = delta
+                    .updated_attributes
+                    .get("last_execution_time")
+                {
+                    p.set_last_execution_time(last_execution_time.clone().into());
+                }
+
+                let last_execution_time = p.last_execution_time();
+
+                sale_rate_deltas_from_attributes(
+                    delta
+                        .updated_attributes
+                        .into_iter()
+                        .chain(
+                            delta
+                                .deleted_attributes
+                                .into_iter()
+                                .map(|key| (key, Bytes::new())),
+                        ),
+                    last_execution_time,
+                )
+                .map_err(TransitionError::DecodeError)?
+                .for_each(|changed_delta| {
+                    p.set_sale_rate_delta(changed_delta);
+                });
+            }
         }
 
-        self.reinstantiate()
+        self.finish_transition()
     }
 
     fn clone_box(&self) -> Box<dyn ProtocolSim> {
@@ -176,79 +215,74 @@ impl ProtocolSim for EkuboState {
 
 #[cfg(test)]
 mod tests {
-    use evm_ekubo_sdk::{
-        math::tick::{MIN_SQRT_RATIO, MIN_TICK},
-        quoting::base_pool::BasePoolState,
-    };
-    use num_traits::Zero;
+    use rstest::*;
+    use rstest_reuse::apply;
 
     use super::*;
-    use crate::evm::protocol::ekubo::test_pool::*;
+    use crate::evm::protocol::ekubo::test_cases::*;
 
-    #[test]
-    fn test_delta_transition() {
-        let mut pool = EkuboState::Base(
-            BasePool::new(
-                POOL_KEY,
-                BasePoolState { sqrt_ratio: MIN_SQRT_RATIO, liquidity: 0, active_tick_index: None },
-                vec![].into(),
-                MIN_TICK,
+    #[apply(all_cases)]
+    fn test_delta_transition(case: TestCase) {
+        let mut state = case.state_before_transition;
+
+        state
+            .delta_transition(
+                ProtocolStateDelta {
+                    updated_attributes: case.transition_attributes,
+                    ..Default::default()
+                },
+                &HashMap::default(),
+                &Balances::default(),
             )
-            .unwrap(),
-        );
+            .expect("executing transition");
 
-        let delta = ProtocolStateDelta { updated_attributes: attributes(), ..Default::default() };
-
-        pool.delta_transition(delta, &HashMap::default(), &Balances::default())
-            .unwrap();
-
-        assert_eq!(state(), pool);
+        assert_eq!(state, case.state);
     }
 
-    #[test]
-    // Compare against the reference implementation
-    fn test_get_amount_out() {
-        let state = state();
+    #[apply(all_cases)]
+    fn test_get_amount_out(case: TestCase) {
+        let (token0, token1) = (case.token0(), case.token1());
+        let (amount_in, expected_out) = case.swap_token0;
 
-        let amount = 100_u8;
+        let res = case
+            .state
+            .get_amount_out(amount_in, &token0, &token1)
+            .expect("computing quote");
 
-        let tycho_quote = state
-            .get_amount_out(BigUint::from(amount), &token0(), &token1())
-            .unwrap();
-
-        let EkuboState::Base(pool) = state else {
-            panic!();
-        };
-
-        let reference_quote = pool
-            .quote(TokenAmount { token: POOL_KEY.token0, amount: amount.into() })
-            .unwrap();
-
-        let tycho_out: u64 = tycho_quote.amount.try_into().unwrap();
-        let reference_out: u64 = reference_quote
-            .calculated_amount
-            .try_into()
-            .unwrap();
-
-        assert_eq!(tycho_out, reference_out);
+        assert_eq!(res.amount, expected_out);
     }
 
-    #[test]
-    fn test_get_limits() {
-        let state = state();
+    #[apply(all_cases)]
+    fn test_get_limits(case: TestCase) {
+        use std::ops::Deref;
+
+        let (token0, token1) = (case.token0(), case.token1());
+        let state = case.state;
 
         let max_amount_in = state
             .get_limits(
-                Address::from_word(POOL_KEY.token0.to_big_endian().into()),
-                Address::from_word(POOL_KEY.token1.to_big_endian().into()),
+                Address::from_word(
+                    token0
+                        .address
+                        .deref()
+                        .try_into()
+                        .unwrap(),
+                ),
+                Address::from_word(
+                    token1
+                        .address
+                        .deref()
+                        .try_into()
+                        .unwrap(),
+                ),
             )
-            .unwrap()
+            .expect("computing limits for token0")
             .0;
 
-        assert!(!max_amount_in.is_zero());
+        assert_eq!(max_amount_in, case.expected_limit_token0);
 
         state
-            .get_amount_out(max_amount_in, &token0(), &token1())
-            .unwrap();
+            .get_amount_out(max_amount_in, &token0, &token1)
+            .expect("quoting with limit");
     }
 }
