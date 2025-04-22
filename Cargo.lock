@@ -3035,9 +3035,8 @@ dependencies = [
 
 [[package]]
 name = "evm_ekubo_sdk"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "184f4223ac2098f31a96d659845bea6f67bb7116f328850ca6e108525ea35cdc"
+version = "0.4.2"
+source = "git+https://github.com/EkuboProtocol/evm-rust-sdk?rev=26324e0#26324e0762daa4d9327ec274050b91c4c6475530"
 dependencies = [
  "insta",
  "num-traits",
@@ -6502,6 +6501,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rstest_reuse"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3a8fb4672e840a587a66fc577a5491375df51ddb88f2a2c2a792598c326fe14"
+dependencies = [
+ "quote",
+ "rand 0.8.5",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "rtoolbox"
 version = "0.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8196,6 +8206,7 @@ dependencies = [
  "revm",
  "revm-inspectors",
  "rstest",
+ "rstest_reuse",
  "serde",
  "serde_json",
  "strum 0.25.0",
