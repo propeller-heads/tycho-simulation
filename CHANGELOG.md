@@ -1,3 +1,73 @@
+## [0.98.2](https://github.com/propeller-heads/tycho-simulation/compare/0.98.1...0.98.2) (2025-04-21)
+
+## [0.98.1](https://github.com/propeller-heads/tycho-simulation/compare/0.98.0...0.98.1) (2025-04-18)
+
+
+### Bug Fixes
+
+* Quickstart - only give success msg if tx succeeded ([7d627ce](https://github.com/propeller-heads/tycho-simulation/commit/7d627ce2dead888e5933551530e8c0ba7a68a521))
+
+## [0.98.0](https://github.com/propeller-heads/tycho-simulation/compare/0.97.0...0.98.0) (2025-04-18)
+
+
+### Features
+
+* check balance, swap direction ([8176d3f](https://github.com/propeller-heads/tycho-simulation/commit/8176d3f4d46d456c4d858bb2eb853063b39719fb))
+
+## [0.97.0](https://github.com/propeller-heads/tycho-simulation/compare/0.96.0...0.97.0) (2025-04-18)
+
+
+### Features
+
+* update tycho client to 0.66.4 ([25178ea](https://github.com/propeller-heads/tycho-simulation/commit/25178ea4a6e294a42483a2113a6a287cdb758604))
+
+## [0.96.0](https://github.com/propeller-heads/tycho-simulation/compare/0.95.0...0.96.0) (2025-04-18)
+
+
+### Features
+
+* default tokens per chain in quickstart ([8e9bdaf](https://github.com/propeller-heads/tycho-simulation/commit/8e9bdaf9466cd434f13fc66906f140beca77b0bc))
+
+## [0.95.0](https://github.com/propeller-heads/tycho-simulation/compare/0.94.0...0.95.0) (2025-04-15)
+
+
+### Features
+
+* Update tycho-execution tag (balancer v2 redeployment) ([a0409f1](https://github.com/propeller-heads/tycho-simulation/commit/a0409f184b861e40a3c854e864da9d37a07ca0dc))
+
+
+### Bug Fixes
+
+* Extend curve filter ([fb95870](https://github.com/propeller-heads/tycho-simulation/commit/fb958705203129b5a551f889233f739494c0a415))
+* Improve warning message ([2ff5b54](https://github.com/propeller-heads/tycho-simulation/commit/2ff5b5411c7ecc5286583e7437d5b3759d0777a7))
+
+## [0.94.0](https://github.com/propeller-heads/tycho-simulation/compare/0.93.0...0.94.0) (2025-04-14)
+
+
+### Features
+
+* Add curve in the quickstart ([9052911](https://github.com/propeller-heads/tycho-simulation/commit/905291171b950ae3271dc4e2d9ef389533027c94))
+
+
+### Bug Fixes
+
+* Update tycho-execution version to 0.79.0 ([ecfe109](https://github.com/propeller-heads/tycho-simulation/commit/ecfe109138379157f16cce3854223b036b9c1045))
+
+## [0.93.0](https://github.com/propeller-heads/tycho-simulation/compare/0.92.1...0.93.0) (2025-04-09)
+
+
+### Features
+
+* add EkuboState exchange support in `price_printer` ([47b1c0f](https://github.com/propeller-heads/tycho-simulation/commit/47b1c0fba659c7c6fecf250605033e05bf70aaa1))
+
+
+### Bug Fixes
+
+* correctly insert balances updates ([517e442](https://github.com/propeller-heads/tycho-simulation/commit/517e442911a009ffab6dcf6506d19692cb185c12))
+* filter out empty account balances in TychoStreamDecoder ([c41efe7](https://github.com/propeller-heads/tycho-simulation/commit/c41efe74fe79a71441d45d05be3ee6bc5a279f34))
+
+## [0.92.1](https://github.com/propeller-heads/tycho-simulation/compare/0.92.0...0.92.1) (2025-04-08)
+
 ## [0.92.0](https://github.com/propeller-heads/tycho-simulation/compare/0.91.1...0.92.0) (2025-04-03)
 
 
