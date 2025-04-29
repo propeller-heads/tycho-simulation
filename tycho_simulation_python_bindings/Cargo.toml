@@ -1,0 +1,16 @@
+[package]
+name = "tycho-simulation-python-bindings"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "tycho_simulation_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.24.2", features = ["extension-module"] }
+tycho-simulation = { path = "../" }
+futures = "0.1.31"
+hex = "0.4.3"
+num-bigint = "0.4.6"
+chrono = "0.4.40"
