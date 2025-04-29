@@ -41,9 +41,8 @@ use tycho_simulation::{
     evm::{
         engine_db::tycho_db::PreCachedDB,
         protocol::{
-            ekubo::state::EkuboState,
-            filters::{balancer_pool_filter, curve_pool_filter, uniswap_v4_pool_with_hook_filter},
-            pancakeswap_v2::state::PancakeswapV2State,
+            filters::uniswap_v4_pool_with_hook_filter
+            ,
             u256_num::biguint_to_u256,
             uniswap_v2::state::UniswapV2State,
             uniswap_v3::state::UniswapV3State,
@@ -129,7 +128,7 @@ async fn main() {
 
     println!("Loading tokens from Tycho... {url}", url = tycho_url.as_str());
     let all_tokens =
-        load_all_tokens(tycho_url.as_str(), false, Some(tycho_api_key.as_str()), chain, None, None)
+        load_all_tokens(tycho_url.as_str(), true, None, chain, None, None)
             .await;
     println!("Tokens loaded: {num}", num = all_tokens.len());
 
@@ -168,26 +167,10 @@ async fn main() {
     match chain {
         Chain::Ethereum => {
             protocol_stream = protocol_stream
-                .exchange::<UniswapV2State>("uniswap_v2", tvl_filter.clone(), None)
-                .exchange::<UniswapV2State>("sushiswap_v2", tvl_filter.clone(), None)
-                .exchange::<PancakeswapV2State>("pancakeswap_v2", tvl_filter.clone(), None)
-                .exchange::<UniswapV3State>("uniswap_v3", tvl_filter.clone(), None)
-                .exchange::<UniswapV3State>("pancakeswap_v3", tvl_filter.clone(), None)
                 .exchange::<EVMPoolState<PreCachedDB>>(
-                    "vm:balancer_v2",
+                    "vm:maverick-v2",
                     tvl_filter.clone(),
-                    Some(balancer_pool_filter),
-                )
-                .exchange::<UniswapV4State>(
-                    "uniswap_v4",
-                    tvl_filter.clone(),
-                    Some(uniswap_v4_pool_with_hook_filter),
-                )
-                .exchange::<EkuboState>("ekubo_v2", tvl_filter.clone(), None)
-                .exchange::<EVMPoolState<PreCachedDB>>(
-                    "vm:curve",
-                    tvl_filter.clone(),
-                    Some(curve_pool_filter),
+                    None
                 );
         }
         Chain::Base => {
@@ -214,7 +197,7 @@ async fn main() {
     }
 
     let mut protocol_stream = protocol_stream
-        .auth_key(Some(tycho_api_key.clone()))
+        // .auth_key(Some(tycho_api_key.clone()))
         .skip_state_decode_failures(true)
         .set_tokens(all_tokens.clone())
         .await
