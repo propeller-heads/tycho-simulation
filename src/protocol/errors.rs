@@ -55,6 +55,8 @@ pub enum SimulationError {
     InvalidInput(String, Option<GetAmountOutResult>),
     #[error("Recoverable error: {0}")]
     RecoverableError(String),
+    #[error("Not implemented error")]
+    NotImplemented,
 }
 
 impl<T> From<SimulationError> for TransitionError<T> {
@@ -95,5 +97,11 @@ impl From<io::Error> for FileError {
 impl From<SerdeError> for FileError {
     fn from(err: SerdeError) -> Self {
         FileError::Parse(err)
+    }
+}
+
+impl From<reqwest::Error> for SimulationError {
+    fn from(err: reqwest::Error) -> Self {
+        SimulationError::FatalError(err.to_string())
     }
 }
