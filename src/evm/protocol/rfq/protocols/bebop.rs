@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct BebopIndicativePrice {
+pub struct BebopPriceEstimator {
     pub maker: String,
     pub base_token: String,
     pub quote_token: String,
@@ -18,7 +18,7 @@ pub struct BebopIndicativePrice {
 }
 
 #[async_trait]
-impl PriceEstimator for BebopIndicativePrice {
+impl PriceEstimator for BebopPriceEstimator {
     fn id(&self) -> String {
         format!("bebop-{}-{} {}", self.maker, self.base_token, self.quote_token)
     }
