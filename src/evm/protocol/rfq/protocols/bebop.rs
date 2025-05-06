@@ -2,9 +2,7 @@ use async_trait::async_trait;
 
 use crate::{
     evm::protocol::rfq::{
-        client::{IndicativePriceSource, RFQClientSource, WebSocketPriceStream},
-        indicative_price::IndicativePrice,
-        state::BindingQuote,
+        client::RFQClientSource, indicative_price::IndicativePrice, state::BindingQuote,
     },
     models::{GetAmountOutParams, Token},
     protocol::{errors::SimulationError, models::GetAmountOutResult},
@@ -36,21 +34,23 @@ impl IndicativePrice for BebopIndicativePrice {
         todo!()
     }
 
+    fn spot_price(&self) -> f64 {
+        todo!()
+    }
+
     fn clone_box(&self) -> Box<dyn IndicativePrice> {
         Box::new(self.clone())
     }
 }
-
+#[derive(Clone)]
 pub struct BebopClient {
-    // Fields for HTTP client, API keys, etc.
-    price_source: WebSocketPriceStream<BebopIndicativePrice>,
+    url: String,
 }
 
 impl BebopClient {
-    pub fn new(price_source: WebSocketPriceStream<BebopIndicativePrice>) -> Self {
-        // TODO: figure out how to make a stream from the websocket
-        // let price_source = WebSocketPriceStream::new("wss://api.bebop.com/v1/price");
-        Self { price_source }
+    pub fn new() -> Self {
+        let url = "wss://api.bebop.com/v1/price".to_string();
+        Self { url }
     }
 }
 
@@ -59,22 +59,19 @@ impl RFQClientSource for BebopClient {
     async fn next_price_update(
         &mut self,
     ) -> Result<Vec<Box<dyn IndicativePrice>>, SimulationError> {
-        self.price_source
-            .next_price_update()
-            .await
+        // get price data from Bebop
+        todo!()
     }
 
     async fn request_binding_quote(
         &self,
         params: &GetAmountOutParams,
     ) -> Result<BindingQuote, SimulationError> {
-        // gte binding quote from Bebop
+        // get binding quote from Bebop
         todo!()
     }
 
     fn clone_box(&self) -> Box<dyn RFQClientSource> {
-        todo!()
-        //Box::new(self.clone())
-        // this is problematic because the BebopClient is not cloneable at the moment
+        Box::new(self.clone())
     }
 }

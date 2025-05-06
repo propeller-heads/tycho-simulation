@@ -11,5 +11,7 @@ pub trait IndicativePrice: Send + Sync {
         params: GetAmountOutParams,
     ) -> Result<GetAmountOutResult, SimulationError>;
 
+    fn spot_price(&self) -> f64;
+
     fn clone_box(&self) -> Box<dyn IndicativePrice>;
 }
