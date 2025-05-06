@@ -2,10 +2,11 @@ use async_trait::async_trait;
 
 use crate::{
     evm::protocol::rfq::{
-        client::RFQClientSource, indicative_price::IndicativePrice, state::BindingQuote,
+        client::RFQClientSource, errors::RFQError, indicative_price::IndicativePrice,
+        state::BindingQuote,
     },
     models::{GetAmountOutParams, Token},
-    protocol::{errors::SimulationError, models::GetAmountOutResult},
+    protocol::models::GetAmountOutResult,
 };
 
 #[derive(Clone, Debug)]
@@ -26,10 +27,7 @@ impl IndicativePrice for BebopIndicativePrice {
         &self.quote_token
     }
 
-    fn get_amount_out(
-        &self,
-        params: GetAmountOutParams,
-    ) -> Result<GetAmountOutResult, SimulationError> {
+    fn get_amount_out(&self, params: GetAmountOutParams) -> Result<GetAmountOutResult, RFQError> {
         // use bids and asks to calculate the amount out
         todo!()
     }
@@ -56,9 +54,7 @@ impl BebopClient {
 
 #[async_trait]
 impl RFQClientSource for BebopClient {
-    async fn next_price_update(
-        &mut self,
-    ) -> Result<Vec<Box<dyn IndicativePrice>>, SimulationError> {
+    async fn next_price_update(&mut self) -> Result<Vec<Box<dyn IndicativePrice>>, RFQError> {
         // get price data from Bebop
         todo!()
     }
@@ -66,7 +62,7 @@ impl RFQClientSource for BebopClient {
     async fn request_binding_quote(
         &self,
         params: &GetAmountOutParams,
-    ) -> Result<BindingQuote, SimulationError> {
+    ) -> Result<BindingQuote, RFQError> {
         // get binding quote from Bebop
         todo!()
     }

@@ -99,9 +99,3 @@ impl From<SerdeError> for FileError {
         FileError::Parse(err)
     }
 }
-
-impl From<reqwest::Error> for SimulationError {
-    fn from(err: reqwest::Error) -> Self {
-        SimulationError::FatalError(err.to_string())
-    }
-}

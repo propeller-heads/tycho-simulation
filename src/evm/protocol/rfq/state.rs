@@ -49,12 +49,13 @@ impl ProtocolSim for RFQState {
         token_in: &Token,
         token_out: &Token,
     ) -> Result<GetAmountOutResult, SimulationError> {
-        self.price_data
+        Ok(self
+            .price_data
             .get_amount_out(GetAmountOutParams {
                 amount_in,
                 token_in: token_in.clone(),
                 token_out: token_out.clone(),
-            })
+            })?)
     }
 
     fn fee(&self) -> f64 {

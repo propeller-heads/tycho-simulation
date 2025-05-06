@@ -1,15 +1,16 @@
 use crate::{
+    evm::protocol::rfq::errors::RFQError,
     models::{GetAmountOutParams, Token},
-    protocol::{errors::SimulationError, models::GetAmountOutResult},
+    protocol::models::GetAmountOutResult,
 };
 
+/// This trait defines the interface for an indicative price provider.
+/// It might hold price levels, order books, or any other data needed by the RFQ to compute the
+/// current price.
 pub trait IndicativePrice: Send + Sync {
     fn base_token(&self) -> &Token;
     fn quote_token(&self) -> &Token;
-    fn get_amount_out(
-        &self,
-        params: GetAmountOutParams,
-    ) -> Result<GetAmountOutResult, SimulationError>;
+    fn get_amount_out(&self, params: GetAmountOutParams) -> Result<GetAmountOutResult, RFQError>;
 
     fn spot_price(&self) -> f64;
 
