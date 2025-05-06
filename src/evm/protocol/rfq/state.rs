@@ -19,20 +19,13 @@ use crate::{
 };
 
 pub struct RFQState {
-    pub base_token: Token,
-    pub quote_token: Token,
     pub price_data: Box<dyn PriceEstimator>,
     pub quote_provider: Box<dyn RFQClient>, // needed to get binding quote
 }
 
 impl RFQState {
-    pub fn new(
-        base_token: Token,
-        quote_token: Token,
-        price_data: Box<dyn PriceEstimator>,
-        quote_provider: Box<dyn RFQClient>,
-    ) -> Self {
-        RFQState { base_token, quote_token, price_data, quote_provider }
+    pub fn new(price_data: Box<dyn PriceEstimator>, quote_provider: Box<dyn RFQClient>) -> Self {
+        RFQState { price_data, quote_provider }
     }
 }
 

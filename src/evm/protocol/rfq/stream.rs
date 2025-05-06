@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::{collections::HashMap, sync::Mutex};
 
 use crate::evm::protocol::rfq::{client::RFQClient, state::RFQState};
 
@@ -16,35 +16,26 @@ impl RFQStreamBuilder {
         self.providers.push((provider, source));
     }
 
-    pub async fn build(self, tx: tokio::sync::mpsc::Sender<Vec<RFQState>>) {
-        let sources: Vec<Mutex<Box<dyn RFQClient>>> = self
-            .providers
-            .into_iter()
-            .map(|(_, source)| source)
-            .collect();
-        stream_rfq_states(sources, tx).await;
+    pub async fn build(self, tx: tokio::sync::mpsc::Sender<HashMap<String, RFQState>>) {
+        stream_rfq_states(self.providers, tx).await;
     }
 }
 
 pub async fn stream_rfq_states(
-    sources: Vec<Mutex<Box<dyn RFQClient>>>,
-    tx: tokio::sync::mpsc::Sender<Vec<RFQState>>,
+    sources: Vec<(String, Mutex<Box<dyn RFQClient>>)>,
+    tx: tokio::sync::mpsc::Sender<HashMap<String, RFQState>>,
 ) {
     loop {
-        let mut states = Vec::new();
+        let mut states = HashMap::new();
 
-        for source in &sources {
+        for (rfq, source) in &sources {
             let mut locked_source = source.lock().unwrap();
             match locked_source.next_price_update().await {
                 Ok(prices_data) => {
                     for data in prices_data.iter() {
-                        let state = RFQState::new(
-                            data.base_token().clone(),
-                            data.quote_token().clone(),
-                            data.clone_box(),
-                            locked_source.clone_box(),
-                        );
-                        states.push(state);
+                        let state = RFQState::new(data.clone_box(), locked_source.clone_box());
+                        let id = format!("{} {} {}", rfq, data.base_token(), data.quote_token());
+                        states.insert(id, state);
                     }
                 }
                 Err(err) => {
@@ -52,5 +43,6 @@ pub async fn stream_rfq_states(
                 }
             }
         }
+        tx.send(states).await.unwrap();
     }
 }

@@ -1,6 +1,5 @@
 use crate::{
-    evm::protocol::rfq::errors::RFQError,
-    models::{GetAmountOutParams, Token},
+    evm::protocol::rfq::errors::RFQError, models::GetAmountOutParams,
     protocol::models::GetAmountOutResult,
 };
 
@@ -8,8 +7,8 @@ use crate::{
 /// It might hold price levels, order books, or any other data needed by the RFQ to compute the
 /// current price.
 pub trait PriceEstimator: Send + Sync {
-    fn base_token(&self) -> &Token;
-    fn quote_token(&self) -> &Token;
+    fn base_token(&self) -> &String;
+    fn quote_token(&self) -> &String;
     fn get_amount_out(&self, params: GetAmountOutParams) -> Result<GetAmountOutResult, RFQError>;
 
     fn spot_price(&self) -> f64;

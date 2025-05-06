@@ -4,25 +4,25 @@ use crate::{
     evm::protocol::rfq::{
         client::RFQClient, errors::RFQError, price_estimator::PriceEstimator, state::SignedQuote,
     },
-    models::{GetAmountOutParams, Token},
+    models::GetAmountOutParams,
     protocol::models::GetAmountOutResult,
 };
 
 #[derive(Clone, Debug)]
 pub struct BebopIndicativePrice {
-    pub base_token: Token,
-    pub quote_token: Token,
+    pub base_token: String,
+    pub quote_token: String,
     pub bids: Vec<(f64, f64)>,
     pub asks: Vec<(f64, f64)>,
 }
 
 #[async_trait]
 impl PriceEstimator for BebopIndicativePrice {
-    fn base_token(&self) -> &Token {
+    fn base_token(&self) -> &String {
         &self.base_token
     }
 
-    fn quote_token(&self) -> &Token {
+    fn quote_token(&self) -> &String {
         &self.quote_token
     }
 
