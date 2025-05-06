@@ -53,6 +53,7 @@ pub struct ProtocolComponent {
     pub static_attributes: HashMap<String, Bytes>,
     pub creation_tx: Bytes,
     pub created_at: NaiveDateTime,
+    pub additional_execution_data: Option<HashMap<String, Bytes>>,
 }
 
 impl ProtocolComponent {
@@ -80,6 +81,7 @@ impl ProtocolComponent {
             static_attributes,
             creation_tx,
             created_at,
+            additional_execution_data: None,
         }
     }
 
@@ -100,6 +102,14 @@ impl ProtocolComponent {
             core_model.creation_tx,
             core_model.created_at,
         )
+    }
+
+    pub fn additional_execution_data(
+        mut self,
+        additional_execution_data: HashMap<String, Bytes>,
+    ) -> Self {
+        self.additional_execution_data = Some(additional_execution_data);
+        self
     }
 }
 
