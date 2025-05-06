@@ -18,6 +18,18 @@ impl TickInfo {
         let sqrt_price = get_sqrt_ratio_at_tick(index).unwrap();
         TickInfo { index, net_liquidity, sqrt_price }
     }
+
+    pub fn get_index(&self) -> i32 {
+        self.index
+    }
+
+    pub fn get_net_liquidity(&self) -> i128 {
+        self.net_liquidity
+    }
+
+    pub fn get_sqrt_price(&self) -> U256 {
+        self.sqrt_price
+    }
 }
 
 impl PartialOrd for TickInfo {
@@ -160,6 +172,10 @@ impl TickList {
             Ok(idx) => Ok(&self.ticks[idx]),
             Err(_) => Err(TickListError { kind: TickListErrorKind::NotFound }),
         }
+    }
+
+    pub fn get_ticks(&self) -> &Vec<TickInfo> {
+        &self.ticks
     }
 
     fn next_initialized_tick(&self, index: i32, lte: bool) -> Result<&TickInfo, TickListError> {
