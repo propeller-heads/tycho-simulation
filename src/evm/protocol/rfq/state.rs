@@ -9,7 +9,7 @@ use num_bigint::BigUint;
 use tycho_common::{dto::ProtocolStateDelta, Bytes};
 
 use crate::{
-    evm::protocol::rfq::{client::RFQClientSource, indicative_price::IndicativePrice},
+    evm::protocol::rfq::{client::RFQClient, price_estimator::PriceEstimator},
     models::{Balances, GetAmountOutParams, Token},
     protocol::{
         errors::{SimulationError, TransitionError},
@@ -21,16 +21,16 @@ use crate::{
 pub struct RFQState {
     pub base_token: Token,
     pub quote_token: Token,
-    pub price_data: Box<dyn IndicativePrice>,
-    pub quote_provider: Box<dyn RFQClientSource>, // needed to get binding quote
+    pub price_data: Box<dyn PriceEstimator>,
+    pub quote_provider: Box<dyn RFQClient>, // needed to get binding quote
 }
 
 impl RFQState {
     pub fn new(
         base_token: Token,
         quote_token: Token,
-        price_data: Box<dyn IndicativePrice>,
-        quote_provider: Box<dyn RFQClientSource>,
+        price_data: Box<dyn PriceEstimator>,
+        quote_provider: Box<dyn RFQClient>,
     ) -> Self {
         RFQState { base_token, quote_token, price_data, quote_provider }
     }
@@ -100,23 +100,26 @@ impl ProtocolSim for RFQState {
     }
 }
 
-pub struct BindingQuote {
-    pub price: f64,
-    pub base_amount: f64,
-    pub quote_amount: f64,
-    pub signature: String,
+pub struct SignedQuote {
+    pub base_token: Address,
+    pub quote_token: Address,
+    pub amount_in: BigUint,
+    pub amount_out: BigUint,
+    // each RFQ will need different attributes
+    pub quote_attributes: HashMap<String, Bytes>,
 }
 
-// I don't like this name
 pub trait IndicativelyPriced: ProtocolSim {
+    // this will be true when the price is only an estimation/indicative price
     fn is_indicatively_priced() -> bool {
         false
     }
 
-    async fn request_binding_quote(
+    // if it is indicatively priced, then we need to request a signed quote for the final price
+    async fn request_signed_quote(
         &self,
         params: GetAmountOutParams,
-    ) -> Result<BindingQuote, SimulationError> {
+    ) -> Result<SignedQuote, SimulationError> {
         Err(SimulationError::NotImplemented)
     }
 }
@@ -126,10 +129,10 @@ impl IndicativelyPriced for RFQState {
         true
     }
 
-    async fn request_binding_quote(
+    async fn request_signed_quote(
         &self,
         params: GetAmountOutParams,
-    ) -> Result<BindingQuote, SimulationError> {
+    ) -> Result<SignedQuote, SimulationError> {
         let binding_quote = self
             .quote_provider
             .request_binding_quote(&params)

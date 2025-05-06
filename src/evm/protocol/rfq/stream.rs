@@ -1,10 +1,10 @@
 use std::sync::Mutex;
 
-use crate::evm::protocol::rfq::{client::RFQClientSource, state::RFQState};
+use crate::evm::protocol::rfq::{client::RFQClient, state::RFQState};
 
 pub struct RFQStreamBuilder {
     // example: ("bebop", BebopClient)
-    providers: Vec<(String, Mutex<Box<dyn RFQClientSource>>)>,
+    providers: Vec<(String, Mutex<Box<dyn RFQClient>>)>,
 }
 
 impl RFQStreamBuilder {
@@ -12,12 +12,12 @@ impl RFQStreamBuilder {
         Self { providers: Vec::new() }
     }
 
-    pub fn add_provider(&mut self, provider: String, source: Mutex<Box<dyn RFQClientSource>>) {
+    pub fn add_provider(&mut self, provider: String, source: Mutex<Box<dyn RFQClient>>) {
         self.providers.push((provider, source));
     }
 
     pub async fn build(self, tx: tokio::sync::mpsc::Sender<Vec<RFQState>>) {
-        let sources: Vec<Mutex<Box<dyn RFQClientSource>>> = self
+        let sources: Vec<Mutex<Box<dyn RFQClient>>> = self
             .providers
             .into_iter()
             .map(|(_, source)| source)
@@ -27,7 +27,7 @@ impl RFQStreamBuilder {
 }
 
 pub async fn stream_rfq_states(
-    sources: Vec<Mutex<Box<dyn RFQClientSource>>>,
+    sources: Vec<Mutex<Box<dyn RFQClient>>>,
     tx: tokio::sync::mpsc::Sender<Vec<RFQState>>,
 ) {
     loop {

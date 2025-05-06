@@ -1,6 +1,6 @@
 mod client;
 mod errors;
-mod indicative_price;
+mod price_estimator;
 mod protocols;
 pub mod state;
 mod stream;
