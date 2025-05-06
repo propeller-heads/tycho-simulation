@@ -19,7 +19,7 @@ use tokio::{select, sync::mpsc::Receiver};
 use tracing::warn;
 use tycho_common::Bytes;
 use tycho_simulation::protocol::{
-    models::{BlockUpdate, ProtocolComponent},
+    models::{ProtocolComponent, Update},
     state::ProtocolSim,
 };
 
@@ -80,13 +80,13 @@ pub struct App {
     quote_amount: BigUint,
     zero2one: bool,
     items: Vec<Data>,
-    rx: Receiver<BlockUpdate>,
+    rx: Receiver<Update>,
     scroll_state: ScrollbarState,
     colors: TableColors,
 }
 
 impl App {
-    pub fn new(rx: Receiver<BlockUpdate>) -> Self {
+    pub fn new(rx: Receiver<Update>) -> Self {
         let data_vec = Vec::new();
         Self {
             state: TableState::default().with_selected(0),
@@ -141,7 +141,7 @@ impl App {
         }
     }
 
-    pub fn update_data(&mut self, update: BlockUpdate) {
+    pub fn update_data(&mut self, update: Update) {
         for (id, comp) in update.new_pairs.iter() {
             let name = format!("{comp_id:#042x}", comp_id = comp.id);
             let tokens = comp

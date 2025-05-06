@@ -1,6 +1,11 @@
 use std::{collections::HashMap, sync::Mutex};
 
-use crate::evm::protocol::rfq::{client::RFQClient, state::RFQState};
+use chrono::Utc;
+
+use crate::{
+    evm::protocol::rfq::{client::RFQClient, state::RFQState},
+    protocol::{models::Update, state::ProtocolSim},
+};
 
 pub struct RFQStreamBuilder {
     // example: ("bebop", BebopClient)
@@ -16,14 +21,14 @@ impl RFQStreamBuilder {
         self.providers.push((provider, source));
     }
 
-    pub async fn build(self, tx: tokio::sync::mpsc::Sender<HashMap<String, RFQState>>) {
+    pub async fn build(self, tx: tokio::sync::mpsc::Sender<Update>) {
         stream_rfq_states(self.providers, tx).await;
     }
 }
 
 pub async fn stream_rfq_states(
     sources: Vec<(String, Mutex<Box<dyn RFQClient>>)>,
-    tx: tokio::sync::mpsc::Sender<HashMap<String, RFQState>>,
+    tx: tokio::sync::mpsc::Sender<Update>,
 ) {
     loop {
         let mut states = HashMap::new();
@@ -34,8 +39,7 @@ pub async fn stream_rfq_states(
                 Ok(prices_data) => {
                     for data in prices_data.iter() {
                         let state = RFQState::new(data.clone_box(), locked_source.clone_box());
-                        let id = format!("{} {} {}", rfq, data.base_token(), data.quote_token());
-                        states.insert(id, state);
+                        states.insert(data.id(), Box::new(state) as Box<dyn ProtocolSim>);
                     }
                 }
                 Err(err) => {
@@ -43,6 +47,15 @@ pub async fn stream_rfq_states(
                 }
             }
         }
-        tx.send(states).await.unwrap();
+        let timestamp = Utc::now()
+            .naive_utc()
+            .and_utc()
+            .timestamp() as u64;
+
+        // TODO: how to handle updated, new or removed states?
+        // TODO: how to handle states from different RFQ protocols? (different latency most likely)
+        tx.send(Update::new(timestamp, states, HashMap::new()))
+            .await
+            .unwrap();
     }
 }

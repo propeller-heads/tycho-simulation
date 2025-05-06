@@ -176,7 +176,8 @@ impl GetAmountOutResult {
 }
 
 #[derive(Debug)]
-pub struct BlockUpdate {
+pub struct Update {
+    pub marker: u64,
     pub block_number: u64,
     /// The new and updated states of this block
     pub states: HashMap<String, Box<dyn ProtocolSim>>,
@@ -186,13 +187,19 @@ pub struct BlockUpdate {
     pub removed_pairs: HashMap<String, ProtocolComponent>,
 }
 
-impl BlockUpdate {
+impl Update {
     pub fn new(
-        block_number: u64,
+        marker: u64,
         states: HashMap<String, Box<dyn ProtocolSim>>,
         new_pairs: HashMap<String, ProtocolComponent>,
     ) -> Self {
-        BlockUpdate { block_number, states, new_pairs, removed_pairs: HashMap::new() }
+        Update {
+            marker: marker.clone(),
+            block_number: marker,
+            states,
+            new_pairs,
+            removed_pairs: HashMap::new(),
+        }
     }
 
     pub fn set_removed_pairs(mut self, pairs: HashMap<String, ProtocolComponent>) -> Self {

@@ -10,6 +10,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct BebopIndicativePrice {
+    pub maker: String,
     pub base_token: String,
     pub quote_token: String,
     pub bids: Vec<(f64, f64)>,
@@ -18,6 +19,9 @@ pub struct BebopIndicativePrice {
 
 #[async_trait]
 impl PriceEstimator for BebopIndicativePrice {
+    fn id(&self) -> String {
+        format!("bebop-{}-{} {}", self.maker, self.base_token, self.quote_token)
+    }
     fn base_token(&self) -> &String {
         &self.base_token
     }
