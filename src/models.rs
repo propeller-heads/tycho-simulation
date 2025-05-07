@@ -121,6 +121,8 @@ pub struct GetAmountOutParams {
     pub amount_in: BigUint,
     pub token_in: Token,
     pub token_out: Token,
+    pub sender: Bytes,
+    pub receiver: Bytes,
 }
 
 #[derive(Default)]

@@ -11,7 +11,8 @@ pub trait RFQClient: Send + Sync {
     // IndicativePrice
     async fn next_price_update(&mut self) -> Result<Vec<Box<dyn PriceEstimator>>, RFQError>;
 
-    // This method is responsible for fetching the binding quote from the RFQ API
+    // This method is responsible for fetching the binding quote from the RFQ API. Use sender and
+    // receiver from GetAmountOutParams to ask for the quote
     async fn request_binding_quote(
         &self,
         params: &GetAmountOutParams,

@@ -48,6 +48,8 @@ impl ProtocolSim for RFQState {
                 amount_in,
                 token_in: token_in.clone(),
                 token_out: token_out.clone(),
+                sender: Bytes::new(),
+                receiver: Bytes::new(),
             })?)
     }
 

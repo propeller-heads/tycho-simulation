@@ -74,6 +74,13 @@ impl RFQClient for BebopClient {
         // 'https://api.bebop.xyz/pmm/ethereum/v3/quote?sell_tokens=0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2&buy_tokens=0xdAC17F958D2ee523a2206206994597C13D831ec7&sell_amounts=1000000000000000&taker_address=0xabA2fC41e2dB95E77C6799D0F580034395FF2B9E&approval_type=Standard&skip_validation=true&skip_taker_checks=true&gasless=true&expiry_type=standard&fee=0&is_ui=false&gasless=false&origin_address=0x5206213Da4F6FE0E71d61cA00bB100dB2d6fe441' \
         // -H 'accept: application/json'
         todo!()
+        // in quote_attributes we need to save the whole tx and the toSign parameters
+        // then in encoding we will match the sender and receiver to the taker_address and
+        // maker_address.
+        // in execution we will need to check if the amountIn is the same as the quoted amount:
+        //   - if it's less, we need to do a partial fill https://docs.bebop.xyz/bebop/bebop-api-pmm-rfq/rfq-api-endpoints/trade/self-execute-order#partial-fills
+        //   - if it's more, we can only do the quoted amount and the rest will not be used (it will
+        //     either stay in the router or in the user or in the previous pool?)
     }
 
     fn clone_box(&self) -> Box<dyn RFQClient> {
