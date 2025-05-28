@@ -10,6 +10,7 @@ use crate::{
     evm::protocol::{
         safe_math::{safe_add_u256, safe_sub_u256},
         u256_num::u256_to_biguint,
+        uniswap_v4::hook_handler::HookHandler,
         utils::uniswap::{
             i24_be_bytes_to_i32, liquidity_math,
             sqrt_price_math::{get_amount0_delta, get_amount1_delta, sqrt_price_q96_to_f64},
@@ -30,14 +31,27 @@ use crate::{
     },
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct UniswapV4State {
     liquidity: u128,
     sqrt_price: U256,
     fees: UniswapV4Fees,
     tick: i32,
     ticks: TickList,
+    hook: Option<Box<dyn HookHandler>>,
 }
+
+impl PartialEq for UniswapV4State {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.hook, &other.hook) {
+            (Some(a), Some(b)) => a.is_equal(&**b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for UniswapV4State {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UniswapV4Fees {
@@ -78,7 +92,11 @@ impl UniswapV4State {
                 .expect("tick_spacing should always be positive"),
             ticks,
         );
-        UniswapV4State { liquidity, sqrt_price, fees, tick, ticks: tick_list }
+        UniswapV4State { liquidity, sqrt_price, fees, tick, ticks: tick_list, hook: None }
+    }
+
+    pub fn set_hook_handler(&mut self, handler: Box<dyn HookHandler>) {
+        self.hook = Some(handler);
     }
 
     fn swap(
@@ -236,6 +254,7 @@ impl ProtocolSim for UniswapV4State {
     }
 
     fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
+        // TODO: not sure yet how to handle spot prices
         if base < quote {
             Ok(sqrt_price_q96_to_f64(self.sqrt_price, base.decimals as u32, quote.decimals as u32))
         } else {
@@ -254,6 +273,8 @@ impl ProtocolSim for UniswapV4State {
         token_in: &Token,
         token_out: &Token,
     ) -> Result<GetAmountOutResult, SimulationError> {
+        // TODO: if hook is set and has permissions, call the before_swap
+        // has_permission(hook.address(), HookOptions::BeforeSwap)
         let zero_for_one = token_in < token_out;
         let amount_specified = I256::checked_from_sign_and_abs(
             Sign::Positive,
@@ -265,6 +286,8 @@ impl ProtocolSim for UniswapV4State {
 
         let result = self.swap(zero_for_one, amount_specified, None)?;
 
+        // TODO: if hook is set and has permissions, call the after_swap
+        // Add gas used by the hook to the result
         trace!(?amount_in, ?token_in, ?token_out, ?zero_for_one, ?result, "V4 SWAP");
         let mut new_state = self.clone();
         new_state.liquidity = result.liquidity;
@@ -377,6 +400,7 @@ impl ProtocolSim for UniswapV4State {
         _tokens: &HashMap<Bytes, Token>,
         _balances: &Balances,
     ) -> Result<(), TransitionError<String>> {
+        // if hook is set, call the delta_transition on it as well
         // Apply attribute changes
         if let Some(liquidity) = delta
             .updated_attributes
