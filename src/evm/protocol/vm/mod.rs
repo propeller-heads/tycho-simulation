@@ -1,6 +1,7 @@
 mod adapter_contract;
 pub mod constants;
 mod erc20_token;
+mod generic_vm_hook_handler;
 mod models;
 pub mod state;
 pub mod state_builder;

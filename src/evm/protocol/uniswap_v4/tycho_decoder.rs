@@ -1,13 +1,16 @@
 use std::collections::HashMap;
 
-use alloy::primitives::U256;
+use alloy::primitives::{Address, U256};
 use tycho_client::feed::{synchronizer::ComponentWithState, Header};
 use tycho_common::Bytes;
 
 use super::state::UniswapV4State;
 use crate::{
     evm::protocol::{
-        uniswap_v4::state::UniswapV4Fees,
+        uniswap_v4::{
+            hook_handler_creator::{instantiate_hook_handler, HookCreationParams},
+            state::UniswapV4Fees,
+        },
         utils::uniswap::{i24_be_bytes_to_i32, tick_list::TickInfo},
     },
     models::Token,
@@ -121,7 +124,18 @@ impl TryFromWithBlock<ComponentWithState> for UniswapV4State {
 
         ticks.sort_by_key(|tick| tick.index);
 
-        Ok(UniswapV4State::new(liquidity, sqrt_price, fees, tick, tick_spacing, ticks))
+        let mut state = UniswapV4State::new(liquidity, sqrt_price, fees, tick, tick_spacing, ticks);
+        let hook_params = HookCreationParams::new();
+        let hook_address = Address::from_slice(
+            snapshot
+                .component
+                .static_attributes
+                .get("hook")
+                .ok_or_else(|| InvalidSnapshotError::MissingAttribute("hook".to_string()))?,
+        );
+        let hook_handler = instantiate_hook_handler(&hook_address, hook_params)?;
+        state.set_hook_handler(hook_handler);
+        Ok(state)
     }
 }
 
