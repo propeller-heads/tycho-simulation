@@ -13,23 +13,23 @@ use crate::{
 pub type BeforeSwapDelta = I256;
 pub type SwapDelta = I256;
 
-struct StateContext {
-    currency_0: Address,
-    currency_1: Address,
-    fees: UniswapV4Fees,
-    tick: i32,
+pub struct StateContext {
+    pub currency_0: Address,
+    pub currency_1: Address,
+    pub fees: UniswapV4Fees,
+    pub tick: i32,
 }
 
 pub struct SwapParams {
-    zero_for_one: bool,
-    amount_specified: I256,
-    sqrt_price_limit: U256,
+    pub zero_for_one: bool,
+    pub amount_specified: I256,
+    pub sqrt_price_limit: U256,
 }
 pub struct BeforeSwapParameters {
-    context: StateContext,
-    sender: Address,
-    swap_params: SwapParams,
-    hook_data: Bytes,
+    pub context: StateContext,
+    pub sender: Address,
+    pub swap_params: SwapParams,
+    pub hook_data: Bytes,
 }
 
 pub struct AfterSwapParameters {
@@ -40,9 +40,10 @@ pub struct AfterSwapParameters {
     hook_data: Bytes,
 }
 
+#[derive(Debug, Clone)]
 pub struct WithGasEstimate<T> {
-    gas_estimate: u32,
-    result: T,
+    pub gas_estimate: u64,
+    pub result: T,
 }
 
 pub struct AmountRanges {
@@ -50,16 +51,25 @@ pub struct AmountRanges {
     amount_out_range: (U256, U256),
 }
 
-#[derive(Error, Debug)]
+// TODO: do we really need an extra enum for hook errors?
+#[derive(Error, Debug, Clone)]
 pub enum HookError {
     #[error("Method {0} not provided by the hook handler")]
     MethodNotProvided(String),
+    #[error("Fatal Error: {0}")]
+    FatalError(String),
     // TODO: what other errors can occur?
 }
 
 impl From<HookError> for SimulationError {
     fn from(error: HookError) -> Self {
         SimulationError::FatalError(error.to_string())
+    }
+}
+
+impl From<SimulationError> for HookError {
+    fn from(error: SimulationError) -> Self {
+        HookError::FatalError(error.to_string())
     }
 }
 
@@ -70,7 +80,8 @@ pub trait HookHandler: Debug + Send + Sync + 'static {
     fn before_swap(
         &self,
         params: BeforeSwapParameters,
-    ) -> Result<WithGasEstimate<(BeforeSwapDelta, u32)>, HookError>;
+        block: u64,
+    ) -> Result<WithGasEstimate<BeforeSwapDelta>, HookError>;
 
     /// Simulates the afterSwap Solidity behaviour
     fn after_swap(&self, params: AfterSwapParameters) -> Result<WithGasEstimate<i128>, HookError>;

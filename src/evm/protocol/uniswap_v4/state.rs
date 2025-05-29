@@ -56,11 +56,11 @@ impl Eq for UniswapV4State {}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UniswapV4Fees {
     // Protocol fees in the zero for one direction
-    zero_for_one: u32,
+    pub zero_for_one: u32,
     // Protocol fees in the one for zero direction
-    one_for_zero: u32,
+    pub one_for_zero: u32,
     // Liquidity providers fees
-    lp_fee: u32,
+    pub lp_fee: u32,
 }
 
 impl UniswapV4Fees {
@@ -284,6 +284,8 @@ impl ProtocolSim for UniswapV4State {
             SimulationError::InvalidInput("I256 overflow: amount_in".to_string(), None)
         })?;
 
+        // pass the amountToSwap and lpFeeOveride from the before swap hook
+        // Update swap to receive a lp_fee override
         let result = self.swap(zero_for_one, amount_specified, None)?;
 
         // TODO: if hook is set and has permissions, call the after_swap
