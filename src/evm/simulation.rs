@@ -1,6 +1,9 @@
-use std::{clone::Clone, collections::HashMap, default::Default, fmt::Debug};
+use std::{clone::Clone, collections::HashMap, default::Default, fmt::Debug, str::FromStr};
 
-use alloy::primitives::{Address, Bytes, U256};
+use alloy::{
+    hex,
+    primitives::{keccak256, Address, Bytes, U256},
+};
 use foundry_config::{Chain, Config};
 use foundry_evm::traces::{SparsedTraceArena, TraceKind};
 use revm::{
@@ -114,24 +117,31 @@ where
             ..Default::default()
         };
 
-        let mut cfg_env: CfgEnv<SpecId> = CfgEnv::default();
+        let mut cfg_env: CfgEnv<SpecId> = CfgEnv::new_with_spec(SpecId::PRAGUE);
         cfg_env.disable_nonce_check = true;
         cfg_env.disable_eip3607 = true;
-        cfg_env
-            .clone()
-            .with_spec(SpecId::CANCUN);
 
-        let default_builder = Context::mainnet()
-            .with_cfg(cfg_env)
+        // TODO: We need to expose transient storage changes in the SimulationParameters and use
+        // them here
+        let pool_manager = Address::from_str("0x000000000004444c5dc75cB358380D2e3dE08A90")
+            .expect("Invalid pool manager address");
+
+        let is_unlocked_slot = U256::from_be_bytes(keccak256("Unlocked").0) - U256::from(1);
+
+        let context = Context::mainnet()
             .with_ref_db(db_ref)
+            .with_cfg(cfg_env)
             .with_block(block_env)
-            .with_tx(tx_env.clone());
+            .with_tx(tx_env.clone())
+            .modify_journal_chained(|journal| {
+                journal.tstore(pool_manager, is_unlocked_slot, U256::from(1)); // set it to true
+            });
 
         let evm_result = if self.trace {
             let mut tracer = TracingInspector::new(TracingInspectorConfig::default());
 
             let res = {
-                let mut vm = default_builder.build_mainnet_with_inspector(&mut tracer);
+                let mut vm = context.build_mainnet_with_inspector(&mut tracer);
                 debug!(
                     "Starting simulation with tx parameters: {:#?} {:#?}",
                     vm.ctx.tx, vm.ctx.block
@@ -143,7 +153,7 @@ where
 
             res
         } else {
-            let mut vm = default_builder.build_mainnet();
+            let mut vm = context.build_mainnet();
 
             debug!("Starting simulation with tx parameters: {:#?} {:#?}", vm.ctx.tx, vm.ctx.block);
 
@@ -346,6 +356,7 @@ pub struct SimulationParameters {
     pub block_number: u64,
     /// The timestamp to be used by the transaction
     pub timestamp: u64,
+    // pub transient_storage: Option<HashMap<Address, (U256, U256)>>,
 }
 
 #[cfg(test)]

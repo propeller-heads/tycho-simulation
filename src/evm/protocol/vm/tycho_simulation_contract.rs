@@ -123,6 +123,7 @@ where
         overrides: Option<HashMap<Address, HashMap<U256, U256>>>,
         caller: Option<Address>,
         value: U256,
+        // transient_storage: Option<HashMap<Address, (U256, U256)>>,
     ) -> Result<TychoSimulationResponse, SimulationError> {
         let call_data = self.encode_input(selector, args);
         let params = SimulationParameters {
@@ -141,6 +142,7 @@ where
             gas_limit: None,
         };
 
+        println!("timestamp: {}", params.timestamp);
         let sim_result = self.simulate(params)?;
 
         Ok(TychoSimulationResponse {

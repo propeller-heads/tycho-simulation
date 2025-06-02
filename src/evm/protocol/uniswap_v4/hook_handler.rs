@@ -1,6 +1,9 @@
 use std::{collections::HashMap, fmt::Debug};
 
-use alloy::primitives::{Address, I256, U256};
+use alloy::{
+    primitives::{Address, I256, U256},
+    sol,
+};
 use thiserror::Error;
 use tycho_common::{dto::ProtocolStateDelta, Bytes};
 
@@ -9,9 +12,6 @@ use crate::{
     models::{Balances, Token},
     protocol::errors::{SimulationError, TransitionError},
 };
-
-pub type BeforeSwapDelta = I256;
-pub type SwapDelta = I256;
 
 pub struct StateContext {
     pub currency_0: Address,
@@ -32,11 +32,22 @@ pub struct BeforeSwapParameters {
     pub hook_data: Bytes,
 }
 
+pub type BeforeSwapDelta = I256;
+
+sol! {
+    #[derive(Debug)]
+    struct BeforeSwapReturn {
+        bytes4 selector;
+        int256 amountDelta;
+        uint24 fee;
+    }
+}
+
 pub struct AfterSwapParameters {
     context: StateContext,
     sender: Address,
     swap_params: SwapParams,
-    delta: SwapDelta,
+    delta: BeforeSwapDelta,
     hook_data: Bytes,
 }
 
@@ -81,10 +92,13 @@ pub trait HookHandler: Debug + Send + Sync + 'static {
         &self,
         params: BeforeSwapParameters,
         block: u64,
-    ) -> Result<WithGasEstimate<BeforeSwapDelta>, HookError>;
+    ) -> Result<WithGasEstimate<BeforeSwapReturn>, HookError>;
 
     /// Simulates the afterSwap Solidity behaviour
-    fn after_swap(&self, params: AfterSwapParameters) -> Result<WithGasEstimate<i128>, HookError>;
+    fn after_swap(
+        &self,
+        params: AfterSwapParameters,
+    ) -> Result<WithGasEstimate<BeforeSwapDelta>, HookError>;
 
     // Currently fee is not accessible on v4 pools, this is for future use
     // as soon as we adapt the ProtocolSim interface
