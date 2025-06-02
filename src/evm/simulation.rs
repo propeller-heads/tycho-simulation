@@ -116,6 +116,7 @@ where
 
         let mut cfg_env: CfgEnv<SpecId> = CfgEnv::default();
         cfg_env.disable_nonce_check = true;
+        cfg_env.disable_eip3607 = true;
         cfg_env
             .clone()
             .with_spec(SpecId::CANCUN);
@@ -131,12 +132,6 @@ where
 
             let res = {
                 let mut vm = default_builder.build_mainnet_with_inspector(&mut tracer);
-                {
-                    // TODO: this needs to be exposed. And it's necessary to allow the caller to be
-                    // a contract and not an EOA
-                    let cfg = vm.cfg_mut();
-                    cfg.disable_eip3607 = true;
-                }
                 debug!(
                     "Starting simulation with tx parameters: {:#?} {:#?}",
                     vm.ctx.tx, vm.ctx.block

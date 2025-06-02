@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Debug};
 
-use alloy_primitives::{Address, I256, U256};
+use alloy::primitives::{Address, I256, U256};
 use thiserror::Error;
 use tycho_common::{dto::ProtocolStateDelta, Bytes};
 

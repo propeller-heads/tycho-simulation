@@ -1,7 +1,6 @@
 use std::{collections::HashMap, sync::RwLock};
 
-use alloy::rpc::types::Header;
-use alloy_primitives::Address;
+use alloy::{primitives::Address, rpc::types::Header};
 use lazy_static::lazy_static;
 use tycho_common::Bytes;
 

@@ -1,9 +1,12 @@
 use std::{any::Any, collections::HashMap, fmt::Debug, str::FromStr};
 
-use alloy_primitives::{keccak256, Address, Bytes as AlloyBytes, Signed, Uint, B256, U160, U256};
-use alloy_sol_types::{sol, SolValue};
+use alloy::{
+    primitives::{keccak256, Address, Bytes as AlloyBytes, Signed, Uint, B256, U160, U256},
+    sol,
+    sol_types::SolValue,
+};
 use revm::{
-    primitives::{AccountInfo, Bytecode},
+    state::{AccountInfo, Bytecode},
     DatabaseRef,
 };
 use tycho_common::{dto::ProtocolStateDelta, Bytes};
@@ -123,7 +126,7 @@ where
                 params.context.currency_0,
                 params.context.currency_1,
                 Uint::<24, 1>::from(params.context.fees.lp_fee),
-                Signed::<24, 1>::from(Signed::try_from(params.context.tick).unwrap()), /* TODO: be better */
+                Signed::<24, 1>::try_from(params.context.tick).unwrap(),
                 self.address,
             ),
             (
@@ -146,8 +149,8 @@ where
         )?;
 
         println!("Before swap call result: {:?}", res);
-        let decoded: BeforeSwapReturn = BeforeSwapReturn::abi_decode(&res.return_value, true)
-            .map_err(|e| {
+        let decoded: BeforeSwapReturn =
+            BeforeSwapReturn::abi_decode(&res.return_value).map_err(|e| {
                 SimulationError::FatalError(format!(
                     "Failed to decode before swap return value: {e:?}"
                 ))
@@ -239,44 +242,18 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{env, str::FromStr, sync::Arc};
+    use std::str::FromStr;
 
-    use alloy::{
-        providers::{ProviderBuilder, RootProvider},
-        transports::BoxTransport,
-    };
-    use alloy_primitives::{B256, I256};
-    use dotenv::dotenv;
-    use tokio::runtime::Runtime;
+    use alloy::primitives::{B256, I256};
 
     use super::*;
     use crate::evm::{
-        engine_db::simulation_db::{BlockHeader, SimulationDB},
+        engine_db::{
+            simulation_db::{BlockHeader, SimulationDB},
+            utils::{get_client, get_runtime},
+        },
         protocol::uniswap_v4::{hook_handler::StateContext, state::UniswapV4Fees},
     };
-
-    fn get_runtime() -> Option<Arc<Runtime>> {
-        let runtime = tokio::runtime::Handle::try_current()
-            .is_err()
-            .then(|| Runtime::new().unwrap())
-            .unwrap();
-        Some(Arc::new(runtime))
-    }
-
-    fn get_client() -> Arc<RootProvider<BoxTransport>> {
-        let runtime = get_runtime().unwrap();
-        let eth_rpc_url = env::var("RPC_URL").unwrap_or_else(|_| {
-            dotenv().expect("Missing .env file");
-            env::var("RPC_URL").expect("Missing RPC_URL in .env file")
-        });
-        let client = runtime.block_on(async {
-            ProviderBuilder::new()
-                .on_builtin(&eth_rpc_url)
-                .await
-                .unwrap()
-        });
-        Arc::new(client)
-    }
 
     #[test]
     fn test_hook_simulation() {
@@ -288,7 +265,7 @@ mod tests {
             .unwrap(),
             timestamp: 1748397011,
         };
-        let db = SimulationDB::new(get_client(), get_runtime(), Some(block));
+        let db = SimulationDB::new(get_client(None), get_runtime(), Some(block));
         let engine = create_engine(db, true).expect("Failed to create simulation engine");
 
         let hook_address = Address::from_str("0x0010d0d5db05933fa0d9f7038d365e1541a41888")
