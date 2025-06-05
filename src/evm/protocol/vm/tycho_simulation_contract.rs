@@ -71,9 +71,9 @@ where
     }
 
     // Creates a new instance with the ISwapAdapter ABI
-    pub fn new_swap_adapter(
+    pub fn new_contract(
         address: Address,
-        adapter_contract_bytecode: Bytecode,
+        contract_bytecode: Bytecode,
         engine: SimulationEngine<D>,
     ) -> Result<Self, SimulationError> {
         engine.state.init_account(
@@ -81,12 +81,8 @@ where
             AccountInfo {
                 balance: *MAX_BALANCE,
                 nonce: 0,
-                code_hash: B256::from(keccak256(
-                    adapter_contract_bytecode
-                        .clone()
-                        .bytes(),
-                )),
-                code: Some(adapter_contract_bytecode),
+                code_hash: B256::from(keccak256(contract_bytecode.clone().bytes())),
+                code: Some(contract_bytecode),
             },
             None,
             false,
@@ -127,6 +123,7 @@ where
         overrides: Option<HashMap<Address, HashMap<U256, U256>>>,
         caller: Option<Address>,
         value: U256,
+        // transient_storage: Option<HashMap<Address, (U256, U256)>>,
     ) -> Result<TychoSimulationResponse, SimulationError> {
         let call_data = self.encode_input(selector, args);
         let params = SimulationParameters {
@@ -145,6 +142,7 @@ where
             gas_limit: None,
         };
 
+        println!("timestamp: {}", params.timestamp);
         let sim_result = self.simulate(params)?;
 
         Ok(TychoSimulationResponse {
@@ -220,7 +218,7 @@ mod tests {
     fn create_contract() -> TychoSimulationContract<MockDatabase> {
         let address = Address::ZERO;
         let engine = create_mock_engine();
-        TychoSimulationContract::new_swap_adapter(
+        TychoSimulationContract::new_contract(
             address,
             Bytecode::new_raw(BALANCER_V2.into()),
             engine,
