@@ -32,11 +32,11 @@ use crate::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UniswapV4State {
-    liquidity: u128,
-    sqrt_price: U256,
-    fees: UniswapV4Fees,
-    tick: i32,
-    ticks: TickList,
+    pub liquidity: u128,
+    pub sqrt_price: U256,
+    pub fees: UniswapV4Fees,
+    pub tick: i32,
+    pub ticks: TickList,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,8 +117,8 @@ impl UniswapV4State {
         };
         let mut gas_used = U256::from(130_000);
 
-        while state.amount_remaining != I256::from_raw(U256::from(0u64)) &&
-            state.sqrt_price != price_limit
+        while state.amount_remaining != I256::from_raw(U256::from(0u64))
+            && state.sqrt_price != price_limit
         {
             let (mut next_tick, initialized) = match self
                 .ticks
@@ -239,8 +239,8 @@ impl ProtocolSim for UniswapV4State {
         if base < quote {
             Ok(sqrt_price_q96_to_f64(self.sqrt_price, base.decimals as u32, quote.decimals as u32))
         } else {
-            Ok(1.0f64 /
-                sqrt_price_q96_to_f64(
+            Ok(1.0f64
+                / sqrt_price_q96_to_f64(
                     self.sqrt_price,
                     quote.decimals as u32,
                     base.decimals as u32,
@@ -456,11 +456,11 @@ impl ProtocolSim for UniswapV4State {
             .as_any()
             .downcast_ref::<UniswapV4State>()
         {
-            self.liquidity == other_state.liquidity &&
-                self.sqrt_price == other_state.sqrt_price &&
-                self.fees == other_state.fees &&
-                self.tick == other_state.tick &&
-                self.ticks == other_state.ticks
+            self.liquidity == other_state.liquidity
+                && self.sqrt_price == other_state.sqrt_price
+                && self.fees == other_state.fees
+                && self.tick == other_state.tick
+                && self.ticks == other_state.ticks
         } else {
             false
         }
