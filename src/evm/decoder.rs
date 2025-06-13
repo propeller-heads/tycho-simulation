@@ -155,6 +155,7 @@ impl TychoStreamDecoder {
         let mut new_pairs = HashMap::new();
         let mut removed_pairs = HashMap::new();
         let mut contracts_map = HashMap::new();
+        let mut component_tvl = HashMap::new();
 
         let block = msg
             .state_msgs
@@ -315,6 +316,9 @@ impl TychoStreamDecoder {
                 }
 
                 new_pairs.insert(id.clone(), component);
+                if let Some(tvl) = snapshot.component_tvl {
+                    component_tvl.insert(id.clone(), tvl);
+                }
 
                 // Construct state from snapshot
                 if let Some(state_decode_f) = self.registry.get(protocol.as_str()) {
@@ -372,6 +376,10 @@ impl TychoStreamDecoder {
                 )
                 .await;
                 info!("Engine updated");
+
+                for (id, tvl) in deltas.component_tvl {
+                    component_tvl.insert(id.clone(), tvl);
+                }
 
                 // Collect all pools related to the updated accounts
                 let mut pools_to_update = HashSet::new();
@@ -466,7 +474,8 @@ impl TychoStreamDecoder {
 
         // Send the tick with all updated states
         Ok(BlockUpdate::new(block.number, updated_states, new_pairs)
-            .set_removed_pairs(removed_pairs))
+            .set_removed_pairs(removed_pairs)
+            .set_component_tvl(component_tvl))
     }
 
     fn apply_update(
@@ -587,6 +596,38 @@ mod tests {
             .expect("decode failure");
 
         assert_eq!(res1.states.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_decode_component_tvl() {
+        let decoder = setup_decoder(false).await;
+        let tokens = [
+            Bytes::from("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2").lpad(20, 0),
+            Bytes::from("0xdac17f958d2ee523a2206206994597c13d831ec7").lpad(20, 0),
+        ]
+        .iter()
+        .map(|addr| {
+            let addr_str = format!("{addr:x}");
+            (addr.clone(), Token::new(&addr_str, 18, &addr_str, 100_000.to_biguint().unwrap()))
+        })
+        .collect();
+        decoder.set_tokens(tokens).await;
+        let msg = load_test_msg("uniswap_v2_with_tvl_snapshot");
+        let snapshot_res = decoder
+            .decode(msg)
+            .await
+            .expect("decode failure");
+        let msg = load_test_msg("uniswap_v2_with_tvl_delta");
+        let delta_res = decoder
+            .decode(msg)
+            .await
+            .expect("decode failure");
+
+        for (key, _) in delta_res.component_tvl {
+            assert!(snapshot_res
+                .component_tvl
+                .contains_key(&key));
+        }
     }
 
     #[rstest]
