@@ -39,6 +39,7 @@ pub struct BeforeSwapParameters {
 }
 
 pub type BeforeSwapDelta = I256;
+pub type AfterSwapDelta = I256;
 
 sol! {
     #[derive(Debug)]
@@ -119,7 +120,7 @@ pub trait HookHandler: Debug + Send + Sync + 'static {
         block: BlockHeader,
         overwrites: Option<HashMap<Address, HashMap<U256, U256>>>,
         transient_storage_params: Option<HashMap<Address, HashMap<U256, U256>>>,
-    ) -> Result<WithGasEstimate<BeforeSwapDelta>, SimulationError>;
+    ) -> Result<WithGasEstimate<AfterSwapDelta>, SimulationError>;
 
     // Currently fee is not accessible on v4 pools, this is for future use
     // as soon as we adapt the ProtocolSim interface

@@ -1,26 +1,33 @@
 use std::{any::Any, collections::HashMap};
 
-use alloy::primitives::{Sign, I256, U256};
+use alloy::primitives::{Address, Sign, I256, U256};
 use num_bigint::BigUint;
 use num_traits::Zero;
 use tracing::trace;
 use tycho_common::{dto::ProtocolStateDelta, Bytes};
 
+use super::hooks::utils::{has_permission, HookOptions};
 use crate::{
-    evm::protocol::{
-        safe_math::{safe_add_u256, safe_sub_u256},
-        u256_num::u256_to_biguint,
-        uniswap_v4::hooks::hook_handler::HookHandler,
-        utils::uniswap::{
-            i24_be_bytes_to_i32, liquidity_math,
-            sqrt_price_math::{get_amount0_delta, get_amount1_delta, sqrt_price_q96_to_f64},
-            swap_math,
-            tick_list::{TickInfo, TickList, TickListErrorKind},
-            tick_math::{
-                get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio, MAX_SQRT_RATIO, MAX_TICK,
-                MIN_SQRT_RATIO, MIN_TICK,
+    evm::{
+        engine_db::simulation_db::BlockHeader,
+        protocol::{
+            safe_math::{safe_add_u256, safe_sub_u256},
+            u256_num::u256_to_biguint,
+            uniswap_v4::hooks::hook_handler::{
+                AfterSwapParameters, BeforeSwapParameters, HookHandler, StateContext, SwapParams,
             },
-            StepComputation, SwapResults, SwapState,
+            utils::uniswap::{
+                i24_be_bytes_to_i32, liquidity_math,
+                sqrt_price_math::{get_amount0_delta, get_amount1_delta, sqrt_price_q96_to_f64},
+                swap_math,
+                tick_list::{TickInfo, TickList, TickListErrorKind},
+                tick_math::{
+                    get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio, MAX_SQRT_RATIO, MAX_TICK,
+                    MIN_SQRT_RATIO, MIN_TICK,
+                },
+                StepComputation, SwapResults, SwapState,
+            },
+            vm::constants::EXTERNAL_ACCOUNT,
         },
     },
     models::{Balances, Token},
@@ -39,6 +46,8 @@ pub struct UniswapV4State {
     tick: i32,
     ticks: TickList,
     pub hook: Option<Box<dyn HookHandler>>,
+    /// The current block, will be used to set vm context
+    block: BlockHeader,
 }
 
 impl PartialEq for UniswapV4State {
@@ -68,9 +77,9 @@ impl UniswapV4Fees {
         Self { zero_for_one, one_for_zero, lp_fee }
     }
 
-    fn calculate_swap_fees_pips(&self, zero_for_one: bool) -> u32 {
+    fn calculate_swap_fees_pips(&self, zero_for_one: bool, lp_fee_override: Option<u32>) -> u32 {
         let protocol_fees = if zero_for_one { self.zero_for_one } else { self.one_for_zero };
-        protocol_fees + self.lp_fee
+        protocol_fees + lp_fee_override.unwrap_or(self.lp_fee)
     }
 }
 
@@ -83,6 +92,7 @@ impl UniswapV4State {
         tick: i32,
         tick_spacing: i32,
         ticks: Vec<TickInfo>,
+        block: BlockHeader,
     ) -> Self {
         let tick_list = TickList::from(
             tick_spacing
@@ -92,7 +102,7 @@ impl UniswapV4State {
                 .expect("tick_spacing should always be positive"),
             ticks,
         );
-        UniswapV4State { liquidity, sqrt_price, fees, tick, ticks: tick_list, hook: None }
+        UniswapV4State { liquidity, sqrt_price, fees, tick, ticks: tick_list, hook: None, block }
     }
 
     fn swap(
@@ -100,6 +110,7 @@ impl UniswapV4State {
         zero_for_one: bool,
         amount_specified: I256,
         sqrt_price_limit: Option<U256>,
+        lp_fee_override: Option<u32>,
     ) -> Result<SwapResults, SimulationError> {
         if self.liquidity == 0 {
             return Err(SimulationError::RecoverableError("No liquidity".to_string()));
@@ -167,7 +178,7 @@ impl UniswapV4State {
                 state.liquidity,
                 state.amount_remaining,
                 self.fees
-                    .calculate_swap_fees_pips(zero_for_one),
+                    .calculate_swap_fees_pips(zero_for_one, lp_fee_override),
             )?;
             state.sqrt_price = sqrt_price;
 
@@ -274,6 +285,7 @@ impl ProtocolSim for UniswapV4State {
     ) -> Result<GetAmountOutResult, SimulationError> {
         let zero_for_one = token_in < token_out;
         let amount_specified = I256::checked_from_sign_and_abs(
+            // TODO this is negative in the tenderly simulation. Not sure we can work with that simulation because of this.
             Sign::Positive,
             U256::from_be_slice(&amount_in.to_bytes_be()),
         )
@@ -281,7 +293,95 @@ impl ProtocolSim for UniswapV4State {
             SimulationError::InvalidInput("I256 overflow: amount_in".to_string(), None)
         })?;
 
-        let result = self.swap(zero_for_one, amount_specified, None)?;
+        let mut amount_to_swap = amount_specified;
+        let mut lp_fee_override: Option<u32> = None;
+        let mut before_swap_gas = 0u64;
+        let mut after_swap_gas = 0u64;
+
+        let token_in_address = Address::from_slice(&token_in.address);
+        let token_out_address = Address::from_slice(&token_out.address);
+
+        let state_context = StateContext {
+            currency_0: if zero_for_one { token_in_address } else { token_out_address },
+            currency_1: if zero_for_one { token_out_address } else { token_in_address },
+            fees: self.fees.clone(),
+            tick: self.tick,
+        };
+
+        let swap_params = SwapParams {
+            zero_for_one,
+            amount_specified,
+            sqrt_price_limit: U256::ZERO, // Will be set to appropriate limit in swap
+        };
+
+        // Check if hook is set and has before_swap permissions
+        if let Some(ref hook) = self.hook {
+            if has_permission(hook.address(), HookOptions::BeforeSwap) {
+                let before_swap_params = BeforeSwapParameters {
+                    context: state_context.clone(),
+                    sender: *EXTERNAL_ACCOUNT,
+                    swap_params: swap_params.clone(),
+                    hook_data: Bytes::new(),
+                };
+
+                let before_swap_result = hook
+                    .before_swap(before_swap_params, self.block, None, None)
+                    .map_err(|e| {
+                        SimulationError::FatalError(format!("BeforeSwap hook failed: {e:?}"))
+                    })?;
+
+                before_swap_gas = before_swap_result.gas_estimate;
+                let before_swap_amount_delta = before_swap_result.result.amount_delta;
+
+                // Convert amountDelta to amountToSwap as per Uniswap V4 spec
+                // See: https://github.com/Uniswap/v4-core/blob/main/src/libraries/Hooks.sol#L270
+                if before_swap_amount_delta != I256::ZERO {
+                    amount_to_swap = amount_specified + before_swap_amount_delta;
+                    // TODO check that exact input doesn't change to exact output (see USV4 code)
+                }
+
+                // Set LP fee override if provided by hook
+                if before_swap_result
+                    .result
+                    .fee
+                    .to::<u32>() !=
+                    0
+                {
+                    lp_fee_override = Some(
+                        before_swap_result
+                            .result
+                            .fee
+                            .to::<u32>(),
+                    );
+                }
+            }
+        }
+
+        // Perform the swap with potential hook modifications
+        let result = self.swap(zero_for_one, amount_to_swap, None, lp_fee_override)?;
+
+        let mut after_swap_amount_delta: I256 = I256::ZERO;
+
+        if let Some(ref hook) = self.hook {
+            if has_permission(hook.address(), HookOptions::AfterSwap) {
+                let after_swap_params = AfterSwapParameters {
+                    context: state_context,
+                    sender: *EXTERNAL_ACCOUNT,
+                    swap_params,
+                    delta: result.amount_calculated,
+                    hook_data: Bytes::new(),
+                };
+
+                let after_swap_result = hook
+                    // TODO pass storage overwrites here
+                    .after_swap(after_swap_params, self.block, None, None)
+                    .map_err(|e| {
+                        SimulationError::FatalError(format!("AfterSwap hook failed: {e:?}"))
+                    })?;
+                after_swap_gas = after_swap_result.gas_estimate;
+                after_swap_amount_delta = after_swap_result.result;
+            }
+        }
 
         trace!(?amount_in, ?token_in, ?token_out, ?zero_for_one, ?result, "V4 SWAP");
         let mut new_state = self.clone();
@@ -289,14 +389,18 @@ impl ProtocolSim for UniswapV4State {
         new_state.tick = result.tick;
         new_state.sqrt_price = result.sqrt_price;
 
+        // Add hook gas costs to baseline swap cost
+        let total_gas_used = result.gas_used + U256::from(before_swap_gas + after_swap_gas);
+
         Ok(GetAmountOutResult::new(
             u256_to_biguint(
                 result
                     .amount_calculated
                     .abs()
-                    .into_raw(),
+                    .into_raw() +
+                    after_swap_amount_delta.into_raw(),
             ),
-            u256_to_biguint(result.gas_used),
+            u256_to_biguint(total_gas_used),
             Box::new(new_state),
         ))
     }
@@ -492,13 +596,32 @@ mod tests {
     use num_bigint::ToBigUint;
     use num_traits::FromPrimitive;
     use serde_json::Value;
-    use tycho_client::feed::synchronizer::ComponentWithState;
+    use tycho_client::feed::{synchronizer::ComponentWithState, Header};
 
     use super::*;
-    use crate::protocol::models::TryFromWithBlock;
+    use crate::{
+        evm::{
+            engine_db::{
+                create_engine,
+                simulation_db::SimulationDB,
+                utils::{get_client, get_runtime},
+            },
+            protocol::uniswap_v4::hooks::generic_vm_hook_handler::GenericVMHookHandler,
+        },
+        protocol::models::TryFromWithBlock,
+    };
 
     #[test]
     fn test_delta_transition() {
+        let block = Header {
+            number: 7239119,
+            hash: Bytes::from_str(
+                "0x28d41d40f2ac275a4f5f621a636b9016b527d11d37d610a45ac3a821346ebf8c",
+            )
+            .expect("Invalid block hash"),
+            parent_hash: Bytes::from(vec![0; 32]),
+            revert: false,
+        };
         let mut pool = UniswapV4State::new(
             1000,
             U256::from_str("1000").unwrap(),
@@ -506,6 +629,7 @@ mod tests {
             100,
             60,
             vec![TickInfo::new(120, 10000), TickInfo::new(180, -10000)],
+            block.into(),
         );
 
         let attributes: HashMap<String, Bytes> = [
@@ -557,6 +681,7 @@ mod tests {
     /// using Tycho-simulation and a state extracted with Tycho-indexer
     async fn test_swap_sim() {
         let project_root = env!("CARGO_MANIFEST_DIR");
+
         let asset_path = Path::new(project_root)
             .join("tests/assets/decoder/uniswap_v4_snapshot_sepolia_block_7239119.json");
         let json_data = fs::read_to_string(asset_path).expect("Failed to read test asset");
@@ -565,9 +690,19 @@ mod tests {
         let state: ComponentWithState = serde_json::from_value(data)
             .expect("Expected json to match ComponentWithState structure");
 
+        let block = Header {
+            number: 7239119,
+            hash: Bytes::from_str(
+                "0x28d41d40f2ac275a4f5f621a636b9016b527d11d37d610a45ac3a821346ebf8c",
+            )
+            .expect("Invalid block hash"),
+            parent_hash: Bytes::from(vec![0; 32]),
+            revert: false,
+        };
+
         let usv4_state = UniswapV4State::try_from_with_block(
             state,
-            Default::default(),
+            block,
             &Default::default(),
             &Default::default(),
         )
@@ -620,6 +755,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_limits() {
+        let block = Header {
+            number: 22689129,
+            hash: Bytes::from_str(
+                "0x7763ea30d11aef68da729b65250c09a88ad00458c041064aad8c9a9dbf17adde",
+            )
+            .expect("Invalid block hash"),
+            parent_hash: Bytes::from(vec![0; 32]),
+            revert: false,
+        };
+
         let project_root = env!("CARGO_MANIFEST_DIR");
         let asset_path =
             Path::new(project_root).join("tests/assets/decoder/uniswap_v4_snapshot.json");
@@ -631,7 +776,7 @@ mod tests {
 
         let usv4_state = UniswapV4State::try_from_with_block(
             state,
-            Default::default(),
+            block,
             &Default::default(),
             &Default::default(),
         )
@@ -662,5 +807,91 @@ mod tests {
             .expect("swap for limit in didn't work");
 
         assert_eq!(&res.1, &out.amount);
+    }
+
+    #[test]
+    fn test_get_amount_out_with_hook() {
+        // Test using transaction 0xb372306a81c6e840f4ec55f006da6b0b097f435802a2e6fd216998dd12fb4aca
+        //
+        // Output of beforeSwap:
+        // "output":{
+        //      "amountToSwap":"0"
+        //      "hookReturn":"2520471492123673565794154180707800634502860978735"
+        //      "lpFeeOverride":"2520471492123673565794154180707800634502860978735"
+        // }
+        //
+        // Output of afterSwap:
+        // "output":{
+        //      "0":"2520471492123673565794154180707800634502860978735" // swapDelta
+        //      "1":"-2520471491783391198873215717244426027071092767279" // hookDelta
+        // }
+        //
+        // Output of entire swap, including hooks:
+        // "swapDelta":"-2520471491783391198873215717244426027071092767279"
+
+        let block = Header {
+            number: 22689129,
+            hash: Bytes::from_str(
+                "0x7763ea30d11aef68da729b65250c09a88ad00458c041064aad8c9a9dbf17adde",
+            )
+            .expect("Invalid block hash"),
+            parent_hash: Bytes::from(vec![0; 32]),
+            revert: false,
+            // timestamp: 1749695867,
+        };
+
+        // Pool ID: 0xdd8dd509e58ec98631b800dd6ba86ee569c517ffbd615853ed5ab815bbc48ccb
+        // Information taken from Tenderly simulation
+        let mut usv4_state = UniswapV4State::new(
+            0,
+            U256::from_str("79228162514264337593543950336").unwrap(),
+            UniswapV4Fees { zero_for_one: 100, one_for_zero: 90, lp_fee: 500 },
+            0,
+            1,
+            // Except the ticks - not sure where to get these...
+            vec![],
+            block.clone().into(),
+        );
+
+        // TODO There are two hook addresses in the tx:
+        // 0xF5d35536482f62c9031b4d6bD34724671BCE33d1 and 0x69058613588536167ba0aa94f0cc1fe420ef28a8
+        // It seems the latter is a proxy though. Not sure which one to use.
+        // The former fails with 0x28561ddc LockedHook()
+        // and the latter with 0xa7c12499 InsufficientCalldata()
+        let hook_address: Address = Address::from_str("0x69058613588536167ba0aa94f0cc1fe420ef28a8")
+            .expect("Invalid hook address");
+
+        // Note: get_runtime will fail if this test is async
+        let db = SimulationDB::new(get_client(None), get_runtime(), Some(block.into()));
+        let engine = create_engine(db, true).expect("Failed to create simulation engine");
+        let pool_manager = Address::from_str("0x000000000004444c5dc75cb358380d2e3de08a90")
+            .expect("Invalid pool manager address");
+
+        let hook_handler = GenericVMHookHandler::new(
+            hook_address,
+            engine,
+            pool_manager,
+            HashMap::new(),
+            HashMap::new(),
+        )
+        .unwrap();
+
+        let t0 = Token::new(
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            6,
+            "USDC",
+            10_000.to_biguint().unwrap(), // gas
+        );
+        let t1 = Token::new(
+            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+            18,
+            "WETH",
+            10_000.to_biguint().unwrap(), // gas
+        );
+
+        usv4_state.set_hook_handler(Box::new(hook_handler));
+        let _out = usv4_state
+            .get_amount_out(BigUint::from_u64(7407000000).unwrap(), &t0, &t1)
+            .unwrap();
     }
 }
