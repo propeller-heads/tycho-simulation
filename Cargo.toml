@@ -59,12 +59,13 @@ revm = { version = "24.0.0", features = ["alloydb", "serde"], optional = true }
 revm-inspectors = { version = "0.23", features = ["serde"], optional = true }
 num-bigint = { version = "0.4", features = ["serde"] }
 tokio-stream = "0.1.16"
+async-trait = "0.1.88"
 
 # Dialoguer
 dialoguer = "0.10.4"
 
 # Ekubo
-evm_ekubo_sdk = "0.6.2"
+evm_ekubo_sdk = "0.4.0"
 
 [dev-dependencies]
 tokio-test = "0.4.4"
