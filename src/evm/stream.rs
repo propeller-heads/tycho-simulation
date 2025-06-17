@@ -1,12 +1,15 @@
 use std::{collections::HashMap, sync::Arc};
 
 use futures::{Stream, StreamExt};
+use futures::stream::select_all;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::warn;
 use tycho_client::{
     feed::{component_tracker::ComponentFilter, synchronizer::ComponentWithState},
     stream::{StreamError, TychoStreamBuilder},
 };
+use tycho_client::feed::FeedMessage;
 use tycho_common::{models::Chain, Bytes};
 
 use crate::{
@@ -51,6 +54,7 @@ use crate::{
 pub struct ProtocolStreamBuilder {
     decoder: TychoStreamDecoder,
     stream_builder: TychoStreamBuilder,
+    extensions: Vec<ProtocolStreamExtension>,
 }
 
 impl ProtocolStreamBuilder {
@@ -58,6 +62,7 @@ impl ProtocolStreamBuilder {
         Self {
             decoder: TychoStreamDecoder::new(),
             stream_builder: TychoStreamBuilder::new(tycho_url, chain.into()),
+            extensions: Vec::new(),
         }
     }
 
@@ -141,18 +146,81 @@ impl ProtocolStreamBuilder {
         self
     }
 
+    /// Extend the stream with messages from an offchain source.
+    ///
+    /// This is useful when you need to enrich the main chain data with auxiliary
+    /// off-chain information—such as signatures, hookData or signed oracle prices.
+    pub fn add_stream_extension(mut self, extension: ProtocolStreamExtension) -> Self {
+        self.extensions.push(extension);
+        self
+    }
+
     pub async fn build(
         self,
     ) -> Result<impl Stream<Item = Result<BlockUpdate, StreamDecodeError>>, StreamError> {
         let (_, rx) = self.stream_builder.build().await?;
         let decoder = Arc::new(self.decoder);
+        let extensions_tx: Vec<_> = self
+            .extensions
+            .iter()
+            .filter_map(|ext| ext.tx.clone())
+            .collect();
 
-        Ok(Box::pin(ReceiverStream::new(rx).then({
+        let main_stream = ReceiverStream::new(rx).then({
             let decoder = decoder.clone(); // Clone the decoder for the closure
             move |msg| {
+                let arced_msg = Arc::new(msg.clone());
                 let decoder = decoder.clone(); // Clone again for the async block
-                async move { decoder.decode(msg).await }
+                let txs = extensions_tx.clone();
+                async move {
+                    for tx in &txs {
+                        // TODO: we ignore errors here but we should end the stream instead,
+                        //  to support that we'd need to return a result here
+                        let _ = tx.send(arced_msg.clone()).await;
+                    }
+                    decoder.decode(msg).await
+                }
             }
-        })))
+        });
+
+        let mut all_streams = vec![main_stream.boxed()];
+
+        for ext in self.extensions {
+            let rx_stream = ReceiverStream::new(ext.rx).then({
+                let decoder = decoder.clone();
+                move |msg| {
+                    let decoder = decoder.clone();
+                    async move { decoder.decode(msg).await }
+                }
+            });
+            all_streams.push(rx_stream.boxed());
+        }
+
+        // === Merge the main and all external streams ===
+        let merged = select_all(all_streams);
+
+        Ok(Box::pin(merged))
     }
+}
+
+
+
+/// Extends the `tycho-client` stream with messages from external sources.
+///
+/// When `tx` is set, each `FeedMessage` from the main Tycho stream is forwarded
+/// through it. External systems can use this to synchronize their state or to
+/// observe the canonical sequence of messages as they arrive. This is especially
+/// helpful if your external data is ephemeral or needs to be reset in case of
+/// reorgs or reverts.
+///
+/// The `rx` field allows external sources to inject `FeedMessage`s into the main
+/// processing pipeline. These messages are merged with the original Tycho stream,
+/// and all messages—whether from Tycho or external sources—are decoded with the
+/// same decoder.
+///
+/// This structure makes it easy to interleave custom logic with on-chain data
+/// while preserving consistency and order.
+pub struct ProtocolStreamExtension {
+    pub tx: Option<Sender<Arc<FeedMessage>>>,
+    pub rx: Receiver<FeedMessage>,
 }
