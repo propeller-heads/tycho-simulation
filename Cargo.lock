@@ -8260,6 +8260,7 @@ dependencies = [
  "alloy",
  "anyhow",
  "approx",
+ "async-trait",
  "chrono",
  "clap",
  "crossterm",

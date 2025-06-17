@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fmt::Debug};
 
 use alloy::primitives::{Address, U256};
+use async_trait::async_trait;
 use tycho_common::{dto::ProtocolStateDelta, Bytes};
 
 use crate::{
@@ -17,12 +18,14 @@ use crate::{
     models::{Balances, Token},
     protocol::errors::{SimulationError, TransitionError},
 };
+use crate::evm::protocol::uniswap_v4::hooks::models::GetHookDataParameters;
 
 /// Trait for simulating the swap-related behavior of Uniswap V4 hooks.
 /// https://github.com/Uniswap/v4-core/blob/main/src/interfaces/IHooks.sol
 ///
 /// Implementations of this trait should encapsulate any custom logic tied to hook execution,
 /// including spot price adjustments, swap constraints, and state transitions.
+#[async_trait]
 pub trait HookHandler: Debug + Send + Sync + 'static {
     fn address(&self) -> Address;
     /// Simulates the beforeSwap Solidity behaviour
@@ -66,11 +69,17 @@ pub trait HookHandler: Debug + Send + Sync + 'static {
         tokens: &HashMap<Bytes, Token>,
         balances: &Balances,
     ) -> Result<(), TransitionError<String>>;
+
+    // Returns the calldata required to execute a swap on this hook
+    async fn get_hook_data(&self, _params: GetHookDataParameters) -> Result<Bytes, SimulationError> {
+        return Ok(Bytes::new())
+    }
     fn clone_box(&self) -> Box<dyn HookHandler>;
 
     fn as_any(&self) -> &dyn std::any::Any;
 
     fn is_equal(&self, other: &dyn HookHandler) -> bool;
+
 }
 
 impl Clone for Box<dyn HookHandler> {

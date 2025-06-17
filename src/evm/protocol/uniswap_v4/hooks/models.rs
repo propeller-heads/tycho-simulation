@@ -33,6 +33,12 @@ pub struct BeforeSwapParameters {
     pub hook_data: Bytes,
 }
 
+pub struct GetHookDataParameters {
+    pub context: StateContext,
+    pub sender: Address,
+    pub swap_params: SwapParams,
+}
+
 /// Replicating https://github.com/Uniswap/v4-core/blob/59d3ecf53afa9264a16bba0e38f4c5d2231f80bc/src/types/BeforeSwapDelta.sol#L6
 /// Upper 128 bits is the delta in specified tokens. Lower 128 bits is delta in unspecified tokens
 /// (to match the afterSwap hook)
