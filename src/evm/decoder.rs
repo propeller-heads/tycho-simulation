@@ -311,7 +311,7 @@ impl TychoStreamDecoder {
                     Some((addr.clone(), balances))
                 })
                 .collect::<AccountBalances>();
-            info!("Updating engine with {} snapshots", storage_by_address.len());
+            info!("Updating engine with {} contracts from snapshots", storage_by_address.len());
             update_engine(
                 SHARED_TYCHO_DB.clone(),
                 block.clone().into(),
