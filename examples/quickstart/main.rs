@@ -8,19 +8,18 @@ use std::{
 use alloy::{
     eips::BlockNumberOrTag,
     network::{Ethereum, EthereumWallet},
+    primitives::{Address, Bytes as AlloyBytes, Keccak256, Signature, TxKind, B256, U256},
     providers::{
         fillers::{FillProvider, JoinFill, WalletFiller},
-        Identity, Provider, ProviderBuilder, ReqwestProvider,
+        Identity, Provider, ProviderBuilder, RootProvider,
     },
     rpc::types::{
         simulate::{SimBlock, SimulatePayload},
         TransactionInput, TransactionRequest,
     },
-    signers::local::PrivateKeySigner,
-    transports::http::{Client, Http},
+    signers::{local::PrivateKeySigner, SignerSync},
+    sol_types::{eip712_domain, SolStruct, SolValue},
 };
-use alloy_primitives::{Address, Bytes as AlloyBytes, TxKind, B256, U256};
-use alloy_sol_types::SolValue;
 use clap::Parser;
 use dialoguer::{theme::ColorfulTheme, Select};
 use foundry_config::NamedChain;
@@ -31,18 +30,19 @@ use tracing_subscriber::EnvFilter;
 use tycho_common::Bytes;
 pub mod utils;
 use tycho_execution::encoding::{
-    evm::{
-        encoder_builder::EVMEncoderBuilder, tycho_encoder::EVMTychoEncoder, utils::encode_input,
-    },
-    models::{Solution, Swap, Transaction},
-    tycho_encoder::TychoEncoder,
+    errors::EncodingError,
+    evm::{approvals::permit2::PermitSingle, encoder_builders::TychoRouterEncoderBuilder},
+    models,
+    models::{EncodedSolution, Solution, Swap, Transaction, UserTransferType},
 };
 use tycho_simulation::{
     evm::{
         engine_db::tycho_db::PreCachedDB,
         protocol::{
             ekubo::state::EkuboState,
-            filters::{balancer_pool_filter, curve_pool_filter, uniswap_v4_pool_with_hook_filter},
+            filters::{
+                balancer_v2_pool_filter, curve_pool_filter, uniswap_v4_pool_with_hook_filter,
+            },
             pancakeswap_v2::state::PancakeswapV2State,
             u256_num::biguint_to_u256,
             uniswap_v2::state::UniswapV2State,
@@ -127,6 +127,9 @@ async fn main() {
 
     let tvl_filter = ComponentFilter::with_tvl_range(cli.tvl_threshold, cli.tvl_threshold);
 
+    let pk = B256::from_str(&cli.swapper_pk).expect("Failed to convert swapper pk to B256");
+    let signer = PrivateKeySigner::from_bytes(&pk).expect("Failed to create PrivateKeySigner");
+
     println!("Loading tokens from Tycho... {url}", url = tycho_url.as_str());
     let all_tokens =
         load_all_tokens(tycho_url.as_str(), false, Some(tycho_api_key.as_str()), chain, None, None)
@@ -176,7 +179,7 @@ async fn main() {
                 .exchange::<EVMPoolState<PreCachedDB>>(
                     "vm:balancer_v2",
                     tvl_filter.clone(),
-                    Some(balancer_pool_filter),
+                    Some(balancer_v2_pool_filter),
                 )
                 .exchange::<UniswapV4State>(
                     "uniswap_v4",
@@ -189,6 +192,8 @@ async fn main() {
                     tvl_filter.clone(),
                     Some(curve_pool_filter),
                 );
+            // COMING SOON!
+            // .exchange::<EVMPoolState<PreCachedDB>>("vm:maverick_v2", tvl_filter.clone(), None);
         }
         Chain::Base => {
             protocol_stream = protocol_stream
@@ -223,10 +228,9 @@ async fn main() {
         .expect("Failed building protocol stream");
 
     // Initialize the encoder
-    let encoder = EVMEncoderBuilder::new()
+    let encoder = TychoRouterEncoderBuilder::new()
         .chain(chain)
-        .initialize_tycho_router_with_permit2(cli.swapper_pk.clone())
-        .expect("Failed to create encoder builder")
+        .user_transfer_type(UserTransferType::TransferFromPermit2)
         .build()
         .expect("Failed to build encoder");
 
@@ -237,15 +241,12 @@ async fn main() {
     let tx_signer = EthereumWallet::from(wallet.clone());
     let named_chain =
         NamedChain::from_str(&cli.chain.replace("ethereum", "mainnet")).expect("Invalid chain");
-    let provider = ProviderBuilder::new()
+    let provider = ProviderBuilder::default()
         .with_chain(named_chain)
         .wallet(tx_signer.clone())
-        .on_http(
-            env::var("RPC_URL")
-                .expect("RPC_URL env var not set")
-                .parse()
-                .expect("Failed to parse RPC_URL"),
-        );
+        .connect(&env::var("RPC_URL").expect("RPC_URL env var not set"))
+        .await
+        .expect("Failed to connect provider");
 
     while let Some(message_result) = protocol_stream.next().await {
         let message = match message_result {
@@ -274,8 +275,7 @@ async fn main() {
             // Clone expected_amount to avoid ownership issues
             let expected_amount_copy = expected_amount.clone();
 
-            let tx = encode(
-                encoder.clone(),
+            let solution = create_solution(
                 component,
                 sell_token.clone(),
                 buy_token.clone(),
@@ -284,12 +284,28 @@ async fn main() {
                 expected_amount,
             );
 
+            // Encode the swaps of the solution
+            let encoded_solution = encoder
+                .encode_solutions(vec![solution.clone()])
+                .expect("Failed to encode router calldata")[0]
+                .clone();
+
+            let tx = encode_tycho_router_call(
+                named_chain.into(),
+                encoded_solution.clone(),
+                &solution,
+                chain.native_token().address,
+                signer.clone(),
+            )
+            .expect("Failed to encode router call");
+
             // Print token balances before showing the swap options
             if cli.swapper_pk != FAKE_PK {
                 match get_token_balance(
                     &provider,
                     Address::from_slice(&sell_token.address),
                     wallet.address(),
+                    Address::from_slice(&chain.native_token().address),
                 )
                 .await
                 {
@@ -306,6 +322,7 @@ async fn main() {
                                 formatted_balance = formatted_balance,
                                 sell_symbol = sell_token.symbol,
                             );
+                            return;
                         }
                     }
                     Err(e) => eprintln!("Failed to get token balance: {e}"),
@@ -316,6 +333,7 @@ async fn main() {
                     &provider,
                     Address::from_slice(&buy_token.address),
                     wallet.address(),
+                    Address::from_slice(&chain.native_token().address),
                 )
                 .await
                 {
@@ -435,7 +453,7 @@ async fn main() {
                                         );
 
                                         println!(
-                                            "Summary: Swapped {formatted_in} {sell_symbol} → {formatted_out} {buy_symbol} at 
+                                            "Summary: Swapped {formatted_in} {sell_symbol} → {formatted_out} {buy_symbol} at
                                             a price of {forward_price:.6} {buy_symbol} per {sell_symbol}",
                                             formatted_in = format_token_amount(&amount_in, &sell_token),
                                             sell_symbol = sell_token.symbol,
@@ -479,7 +497,7 @@ async fn main() {
                             );
 
                             println!(
-                                "Summary: Swapped {formatted_in} {sell_symbol} → {formatted_out} {buy_symbol} at 
+                                "Summary: Swapped {formatted_in} {sell_symbol} → {formatted_out} {buy_symbol} at
                                 a price of {forward_price:.6} {buy_symbol} per {sell_symbol}",
                                 formatted_in = format_token_amount(&amount_in, &sell_token),
                                 sell_symbol = sell_token.symbol,
@@ -571,7 +589,7 @@ fn get_best_swap(
 
         println!(
             "Swap: {formatted_in} {sell_symbol} -> {formatted_out} {buy_symbol} \n
-            Price: {forward_price:.6} {buy_symbol} per {sell_symbol}, 
+            Price: {forward_price:.6} {buy_symbol} per {sell_symbol},
             {reverse_price:.6} {sell_symbol} per {buy_symbol}",
             sell_symbol = sell_token.symbol,
             buy_symbol = buy_token.symbol,
@@ -584,15 +602,14 @@ fn get_best_swap(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn encode(
-    encoder: EVMTychoEncoder,
+fn create_solution(
     component: ProtocolComponent,
     sell_token: Token,
     buy_token: Token,
     sell_amount: BigUint,
     user_address: Bytes,
     expected_amount: BigUint,
-) -> Transaction {
+) -> Solution {
     // Prepare data to encode. First we need to create a swap object
     let simple_swap = Swap::new(
         component,
@@ -603,34 +620,137 @@ fn encode(
         0f64,
     );
 
+    // Compute a minimum amount out
+    //
+    // # ⚠️ Important Responsibility Note
+    // For maximum security, in production code, this minimum amount out should be computed
+    // from a third-party source.
+    let slippage = 0.0025; // 0.25% slippage
+    let bps = BigUint::from(10_000u32);
+    let slippage_percent = BigUint::from((slippage * 10000.0) as u32);
+    let multiplier = &bps - slippage_percent;
+    let min_amount_out = (expected_amount * &multiplier) / &bps;
+
     // Then we create a solution object with the previous swap
-    let solution = Solution {
+    Solution {
         sender: user_address.clone(),
         receiver: user_address,
         given_token: sell_token.address,
         given_amount: sell_amount,
         checked_token: buy_token.address,
-        slippage: Some(0.0025), // 0.25% slippage
-        expected_amount: Some(expected_amount),
-        exact_out: false,     // it's an exact in solution
-        checked_amount: None, // the amount out will not be checked in execution
+        exact_out: false, // it's an exact in solution
+        checked_amount: min_amount_out,
         swaps: vec![simple_swap],
         ..Default::default()
-    };
+    }
+}
 
-    // Encode the solution
-    encoder
-        .encode_router_calldata(vec![solution.clone()])
-        .expect("Failed to encode router calldata")[0]
-        .clone()
+/// Encodes a transaction for the Tycho Router using the `singleSwapPermit2` method.
+///
+/// # ⚠️ Important Responsibility Note
+///
+/// This function is intended as **an illustrative example only** and supports only the method of
+/// interest of this quickstart. **Users must implement their own encoding logic** to ensure:
+/// - Full control of parameters passed to the router.
+/// - Proper validation and setting of critical inputs such as `minAmountOut`.
+fn encode_tycho_router_call(
+    chain_id: u64,
+    encoded_solution: EncodedSolution,
+    solution: &Solution,
+    native_address: Bytes,
+    signer: PrivateKeySigner,
+) -> Result<Transaction, EncodingError> {
+    let p = encoded_solution
+        .permit
+        .expect("Permit object must be set");
+    let permit = PermitSingle::try_from(&p)
+        .map_err(|_| EncodingError::InvalidInput("Invalid permit".to_string()))?;
+    let signature = sign_permit(chain_id, &p, signer)?;
+    let given_amount = biguint_to_u256(&solution.given_amount);
+    let min_amount_out = biguint_to_u256(&solution.checked_amount);
+    let given_token = Address::from_slice(&solution.given_token);
+    let checked_token = Address::from_slice(&solution.checked_token);
+    let receiver = Address::from_slice(&solution.receiver);
+
+    let method_calldata = (
+        given_amount,
+        given_token,
+        checked_token,
+        min_amount_out,
+        false,
+        false,
+        receiver,
+        permit,
+        signature.as_bytes().to_vec(),
+        encoded_solution.swaps,
+    )
+        .abi_encode();
+
+    let contract_interaction = encode_input(&encoded_solution.function_signature, method_calldata);
+    let value = if solution.given_token == native_address {
+        solution.given_amount.clone()
+    } else {
+        BigUint::ZERO
+    };
+    Ok(Transaction { to: encoded_solution.interacting_with, value, data: contract_interaction })
+}
+
+/// Signs a Permit2 `PermitSingle` struct using the EIP-712 signing scheme.
+///
+/// This function constructs an EIP-712 domain specific to the Permit2 contract and computes the
+/// hash of the provided `PermitSingle`. It then uses the given `PrivateKeySigner` to produce
+/// a cryptographic signature of the permit.
+///
+/// # Warning
+/// This is only an **example implementation** provided for reference purposes.
+/// **Do not rely on this in production.** You should implement your own version.
+fn sign_permit(
+    chain_id: u64,
+    permit_single: &models::PermitSingle,
+    signer: PrivateKeySigner,
+) -> Result<Signature, EncodingError> {
+    let permit2_address = Address::from_str("0x000000000022D473030F116dDEE9F6B43aC78BA3")
+        .map_err(|_| EncodingError::FatalError("Permit2 address not valid".to_string()))?;
+    let domain = eip712_domain! {
+        name: "Permit2",
+        chain_id: chain_id,
+        verifying_contract: permit2_address,
+    };
+    let permit_single: PermitSingle = PermitSingle::try_from(permit_single)?;
+    let hash = permit_single.eip712_signing_hash(&domain);
+    signer
+        .sign_hash_sync(&hash)
+        .map_err(|e| {
+            EncodingError::FatalError(format!("Failed to sign permit2 approval with error: {e}"))
+        })
+}
+
+/// Encodes the input data for a function call to the given function selector.
+pub fn encode_input(selector: &str, mut encoded_args: Vec<u8>) -> Vec<u8> {
+    let mut hasher = Keccak256::new();
+    hasher.update(selector.as_bytes());
+    let selector_bytes = &hasher.finalize()[..4];
+    let mut call_data = selector_bytes.to_vec();
+    // Remove extra prefix if present (32 bytes for dynamic data)
+    // Alloy encoding is including a prefix for dynamic data indicating the offset or length
+    // but at this point we don't want that
+    if encoded_args.len() > 32 &&
+        encoded_args[..32] ==
+            [0u8; 31]
+                .into_iter()
+                .chain([32].to_vec())
+                .collect::<Vec<u8>>()
+    {
+        encoded_args = encoded_args[32..].to_vec();
+    }
+    call_data.extend(encoded_args);
+    call_data
 }
 
 async fn get_tx_requests(
     provider: FillProvider<
         JoinFill<Identity, WalletFiller<EthereumWallet>>,
-        ReqwestProvider,
-        Http<Client>,
-        Ethereum,
+        RootProvider<Ethereum>,
     >,
     amount_in: U256,
     user_address: Address,
@@ -639,7 +759,7 @@ async fn get_tx_requests(
     chain_id: u64,
 ) -> (TransactionRequest, TransactionRequest) {
     let block = provider
-        .get_block_by_number(BlockNumberOrTag::Latest, false)
+        .get_block_by_number(BlockNumberOrTag::Latest)
         .await
         .expect("Failed to fetch latest block")
         .expect("Block not found");
@@ -719,41 +839,43 @@ fn format_price_ratios(
 async fn get_token_balance(
     provider: &FillProvider<
         JoinFill<Identity, WalletFiller<EthereumWallet>>,
-        ReqwestProvider,
-        Http<Client>,
-        Ethereum,
+        RootProvider<Ethereum>,
     >,
     token_address: Address,
     wallet_address: Address,
+    native_token_address: Address,
 ) -> Result<BigUint, Box<dyn std::error::Error>> {
-    let balance_of_signature = "balanceOf(address)";
-    let args = (wallet_address,);
-    let data = encode_input(balance_of_signature, args.abi_encode());
+    let balance = if token_address == native_token_address {
+        provider
+            .get_balance(wallet_address)
+            .await?
+    } else {
+        let balance_of_signature = "balanceOf(address)";
+        let data = encode_input(balance_of_signature, (wallet_address,).abi_encode());
 
-    let result = provider
-        .call(&TransactionRequest {
-            to: Some(TxKind::Call(token_address)),
-            input: TransactionInput { input: Some(AlloyBytes::from(data)), data: None },
-            ..Default::default()
-        })
-        .await?;
+        let result = provider
+            .call(TransactionRequest {
+                to: Some(TxKind::Call(token_address)),
+                input: TransactionInput { input: Some(AlloyBytes::from(data)), data: None },
+                ..Default::default()
+            })
+            .await?;
 
-    let balance = U256::from_be_bytes(
-        result
-            .to_vec()
-            .try_into()
-            .unwrap_or([0u8; 32]),
-    );
+        U256::from_be_bytes(
+            result
+                .to_vec()
+                .try_into()
+                .unwrap_or([0u8; 32]),
+        )
+    };
     // Convert the U256 to BigUint
-    Ok(num_bigint::BigUint::from_bytes_be(&balance.to_be_bytes::<32>()))
+    Ok(BigUint::from_bytes_be(&balance.to_be_bytes::<32>()))
 }
 
 async fn execute_swap_transaction(
     provider: FillProvider<
         JoinFill<Identity, WalletFiller<EthereumWallet>>,
-        ReqwestProvider,
-        Http<Client>,
-        Ethereum,
+        RootProvider<Ethereum>,
     >,
     amount_in: &BigUint,
     wallet_address: Address,
@@ -761,21 +883,6 @@ async fn execute_swap_transaction(
     tx: Transaction,
     chain_id: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Check token balance first
-    let token_contract = Address::from_slice(sell_token_address);
-    let token_balance = get_token_balance(&provider, token_contract, wallet_address).await?;
-
-    // Get a more human-readable representation of the balance check
-    let decimal_balance = token_balance.to_f64().unwrap_or(0.0);
-    let decimal_required = amount_in.to_f64().unwrap_or(0.0);
-
-    if token_balance < *amount_in {
-        return Err(format!(
-            "\nInsufficient token balance. You have {decimal_balance} tokens but need {decimal_required} tokens 
-            (raw values: have {token_balance}, need {amount_in})\n",
-        ).into());
-    }
-
     println!("\nExecuting by performing an approval (for permit2) and a swap transaction...");
     let (approval_request, swap_request) = get_tx_requests(
         provider.clone(),
