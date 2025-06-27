@@ -4,19 +4,19 @@ use std::{
     fmt::{Debug, Formatter},
 };
 
-use alloy_primitives::Address;
+use alloy::primitives::Address;
 use num_bigint::BigUint;
-use tycho_common::{dto::ProtocolStateDelta, Bytes};
-
-use crate::{
-    evm::protocol::rfq::{client::RFQClient, price_estimator::PriceEstimator},
+use tycho_simulation::{
     models::{Balances, GetAmountOutParams, Token},
     protocol::{
         errors::{SimulationError, TransitionError},
         models::GetAmountOutResult,
         state::ProtocolSim,
     },
+    tycho_common::{Bytes, dto::ProtocolStateDelta},
 };
+
+use crate::{client::RFQClient, price_estimator::PriceEstimator};
 
 pub struct RFQState {
     pub price_data: Box<dyn PriceEstimator>,
@@ -63,8 +63,8 @@ impl ProtocolSim for RFQState {
 
     fn get_limits(
         &self,
-        sell_token: Address,
-        buy_token: Address,
+        sell_token: Bytes,
+        buy_token: Bytes,
     ) -> Result<(BigUint, BigUint), SimulationError> {
         todo!()
     }

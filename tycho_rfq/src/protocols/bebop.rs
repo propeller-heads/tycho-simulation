@@ -1,11 +1,8 @@
 use async_trait::async_trait;
+use tycho_simulation::{models::GetAmountOutParams, protocol::models::GetAmountOutResult};
 
 use crate::{
-    evm::protocol::rfq::{
-        client::RFQClient, errors::RFQError, price_estimator::PriceEstimator, state::SignedQuote,
-    },
-    models::GetAmountOutParams,
-    protocol::models::GetAmountOutResult,
+    client::RFQClient, errors::RFQError, price_estimator::PriceEstimator, state::SignedQuote,
 };
 
 #[derive(Clone, Debug)]

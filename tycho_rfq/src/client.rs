@@ -1,9 +1,7 @@
 use async_trait::async_trait;
+use tycho_simulation::models::GetAmountOutParams;
 
-use crate::{
-    evm::protocol::rfq::{errors::RFQError, price_estimator::PriceEstimator, state::SignedQuote},
-    models::GetAmountOutParams,
-};
+use crate::{errors::RFQError, price_estimator::PriceEstimator, state::SignedQuote};
 
 #[async_trait]
 pub trait RFQClient: Send + Sync {

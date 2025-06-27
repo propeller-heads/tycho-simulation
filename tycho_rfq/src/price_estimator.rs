@@ -1,7 +1,6 @@
-use crate::{
-    evm::protocol::rfq::errors::RFQError, models::GetAmountOutParams,
-    protocol::models::GetAmountOutResult,
-};
+use tycho_simulation::{models::GetAmountOutParams, protocol::models::GetAmountOutResult};
+
+use crate::errors::RFQError;
 
 /// This trait defines the interface for a price estimator
 /// It might hold price levels, order books, or any other data needed by the RFQ to compute the

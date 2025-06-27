@@ -1,11 +1,9 @@
 use std::{collections::HashMap, sync::Mutex};
 
 use chrono::Utc;
+use tycho_simulation::protocol::{models::Update, state::ProtocolSim};
 
-use crate::{
-    evm::protocol::rfq::{client::RFQClient, state::RFQState},
-    protocol::{models::Update, state::ProtocolSim},
-};
+use crate::{client::RFQClient, state::RFQState};
 
 pub struct RFQStreamBuilder {
     // example: ("bebop", BebopClient)

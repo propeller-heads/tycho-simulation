@@ -10,4 +10,3 @@ pub mod utils;
 pub mod vm;
 
 mod cpmm;
-mod rfq;

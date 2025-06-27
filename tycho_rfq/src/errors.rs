@@ -1,6 +1,5 @@
 use thiserror::Error;
-
-use crate::protocol::errors::SimulationError;
+use tycho_simulation::protocol::errors::SimulationError;
 
 #[derive(Debug, Error)]
 pub enum RFQError {
