@@ -175,6 +175,8 @@ pub struct BlockUpdate {
     pub new_pairs: HashMap<String, ProtocolComponent>,
     /// The pairs that were removed in this block
     pub removed_pairs: HashMap<String, ProtocolComponent>,
+    /// The total value locked (TVL) of each component in this block
+    pub component_tvl: HashMap<String, f64>,
 }
 
 impl BlockUpdate {
@@ -183,11 +185,22 @@ impl BlockUpdate {
         states: HashMap<String, Box<dyn ProtocolSim>>,
         new_pairs: HashMap<String, ProtocolComponent>,
     ) -> Self {
-        BlockUpdate { block_number, states, new_pairs, removed_pairs: HashMap::new() }
+        BlockUpdate {
+            block_number,
+            states,
+            new_pairs,
+            removed_pairs: HashMap::new(),
+            component_tvl: HashMap::new(),
+        }
     }
 
     pub fn set_removed_pairs(mut self, pairs: HashMap<String, ProtocolComponent>) -> Self {
         self.removed_pairs = pairs;
+        self
+    }
+
+    pub fn set_component_tvl(mut self, component_tvl: HashMap<String, f64>) -> Self {
+        self.component_tvl = component_tvl;
         self
     }
 }
