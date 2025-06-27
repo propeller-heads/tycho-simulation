@@ -18,7 +18,7 @@ use tracing::warn;
 use tycho_common::Bytes as TychoBytes;
 
 use super::{
-    constants::{EXTERNAL_ACCOUNT, MAX_BALANCE},
+    constants::{ERC20_PROXY_BYTECODE, EXTERNAL_ACCOUNT, MAX_BALANCE},
     models::Capability,
     state::EVMPoolState,
     tycho_simulation_contract::TychoSimulationContract,
@@ -29,7 +29,7 @@ use crate::{
         engine_db::{
             create_engine, engine_db_interface::EngineDatabaseInterface, simulation_db::BlockHeader,
         },
-        protocol::utils::bytes_to_address,
+        protocol::{utils::bytes_to_address, vm::erc20_token::IMPLEMENTATION_SLOT},
         simulation::{SimulationEngine, SimulationParameters},
     },
     protocol::errors::SimulationError,
@@ -253,6 +253,27 @@ where
             None,
             false,
         );
+
+        // Initialize token accounts with TokenProxy bytecode
+        for token_bytes in &self.tokens {
+            let token_address = bytes_to_address(token_bytes)?;
+
+            // Create storage with implementation slot pointing to original token
+            let mut storage = HashMap::new();
+            storage.insert(*IMPLEMENTATION_SLOT, U256::from_be_slice(token_address.as_slice()));
+
+            engine.state.init_account(
+                token_address,
+                AccountInfo {
+                    balance: Default::default(),
+                    nonce: 0,
+                    code_hash: KECCAK_EMPTY,
+                    code: Some(Bytecode::new_raw(ERC20_PROXY_BYTECODE.into())),
+                },
+                Some(storage),
+                true,
+            );
+        }
 
         if let Some(stateless_contracts) = &self.stateless_contracts {
             for (address, bytecode) in stateless_contracts.iter() {
