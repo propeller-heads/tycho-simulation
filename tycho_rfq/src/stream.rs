@@ -1,59 +1,89 @@
-use std::{collections::HashMap, sync::Mutex};
+use std::{collections::HashMap, pin::Pin, sync::Arc};
 
 use chrono::Utc;
-use tycho_simulation::protocol::{models::Update, state::ProtocolSim};
+use futures::{StreamExt, stream::select_all};
+use tycho_simulation::{
+    protocol::{errors::InvalidSnapshotError, models::Update, state::ProtocolSim},
+    tycho_client::feed::{FeedMessage, synchronizer::StateSyncMessage},
+};
 
-use crate::{client::RFQClient, state::RFQState};
+use crate::client::RFQClient;
+
+type DecodeFut =
+    Pin<Box<dyn Future<Output = Result<Box<dyn ProtocolSim>, InvalidSnapshotError>> + Send + Sync>>;
+type RegistryFn = dyn Fn(StateSyncMessage) -> DecodeFut + Send + Sync;
+pub struct RFQDecoder {
+    registry: HashMap<String, Box<RegistryFn>>,
+}
+
+impl RFQDecoder {
+    pub async fn decode(&self, msg: FeedMessage) -> Update {
+        // Something like:
+        let mut states = HashMap::new();
+        for (provider, state_msg) in msg.state_msgs {
+            // Create ProtocolStates for all pairs
+            // we will never have a partial update, so we need to construct the states over and over
+            // again here
+            if let Some(decode_fn) = self.registry.get(&provider) {
+                match decode_fn(state_msg).await {
+                    Ok(sim) => {
+                        states.insert(provider.clone(), sim);
+                    }
+                    Err(err) => {
+                        eprintln!("Error decoding {}: {:?}", provider, err);
+                    }
+                }
+            } else {
+                eprintln!("No decoder registered for provider: {}", provider);
+            }
+            // gather all deleted pairs
+        }
+
+        let timestamp = Utc::now().timestamp() as u64;
+
+        Update {
+            marker: timestamp,
+            block_number: 0,
+            states,
+            new_pairs: Default::default(),
+            removed_pairs: Default::default(),
+        }
+    }
+}
 
 pub struct RFQStreamBuilder {
-    // example: ("bebop", BebopClient)
-    providers: Vec<(String, Mutex<Box<dyn RFQClient>>)>,
+    providers: Vec<Arc<dyn RFQClient>>,
+    decoder: RFQDecoder,
 }
 
 impl RFQStreamBuilder {
-    pub fn new() -> Self {
-        Self { providers: Vec::new() }
+    pub fn new(decoder: RFQDecoder) -> Self {
+        Self { providers: Vec::new(), decoder }
     }
 
-    pub fn add_provider(&mut self, provider: String, source: Mutex<Box<dyn RFQClient>>) {
-        self.providers.push((provider, source));
+    pub fn add_provider(&mut self, provider: Arc<dyn RFQClient>) {
+        self.providers.push(provider);
     }
 
     pub async fn build(self, tx: tokio::sync::mpsc::Sender<Update>) {
-        stream_rfq_states(self.providers, tx).await;
-    }
-}
+        let streams: Vec<_> = self
+            .providers
+            .iter()
+            .map(|provider| provider.stream())
+            .collect();
 
-pub async fn stream_rfq_states(
-    sources: Vec<(String, Mutex<Box<dyn RFQClient>>)>,
-    tx: tokio::sync::mpsc::Sender<Update>,
-) {
-    loop {
-        let mut states = HashMap::new();
+        let mut merged = select_all(streams);
 
-        for (rfq, source) in &sources {
-            let mut locked_source = source.lock().unwrap();
-            match locked_source.next_price_update().await {
-                Ok(prices_data) => {
-                    for data in prices_data.iter() {
-                        let state = RFQState::new(data.clone_box(), locked_source.clone_box());
-                        states.insert(data.id(), Box::new(state) as Box<dyn ProtocolSim>);
-                    }
-                }
-                Err(err) => {
-                    eprintln!("Error updating price: {:?}", err);
-                }
-            }
+        while let Some((provider, msg)) = merged.next().await {
+            let update = self
+                .decoder
+                .decode(FeedMessage {
+                    state_msgs: HashMap::from([(provider.clone(), msg)]),
+                    sync_states: HashMap::new(),
+                })
+                .await;
+
+            tx.send(update).await.unwrap();
         }
-        let timestamp = Utc::now()
-            .naive_utc()
-            .and_utc()
-            .timestamp() as u64;
-
-        // TODO: how to handle updated, new or removed states?
-        // TODO: how to handle states from different RFQ protocols? (different latency most likely)
-        tx.send(Update::new(timestamp, states, HashMap::new()))
-            .await
-            .unwrap();
     }
 }

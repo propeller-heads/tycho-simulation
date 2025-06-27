@@ -1,13 +1,15 @@
 use async_trait::async_trait;
-use tycho_simulation::models::GetAmountOutParams;
+use futures::stream::BoxStream;
+use tycho_simulation::{
+    models::GetAmountOutParams, tycho_client::feed::synchronizer::StateSyncMessage,
+};
 
-use crate::{errors::RFQError, price_estimator::PriceEstimator, state::SignedQuote};
+use crate::{errors::RFQError, indicatively_priced::SignedQuote};
 
 #[async_trait]
 pub trait RFQClient: Send + Sync {
-    // This method is responsible for fetching data from the RFQ API and converting into an
-    // IndicativePrice
-    async fn next_price_update(&mut self) -> Result<Vec<Box<dyn PriceEstimator>>, RFQError>;
+    /// Returns a stream of updates tagged with the provider name.
+    fn stream(&self) -> BoxStream<'static, (String, StateSyncMessage)>;
 
     // This method is responsible for fetching the binding quote from the RFQ API. Use sender and
     // receiver from GetAmountOutParams to ask for the quote
@@ -18,3 +20,5 @@ pub trait RFQClient: Send + Sync {
 
     fn clone_box(&self) -> Box<dyn RFQClient>;
 }
+
+// TODO: how to handle stale streams and errors?

@@ -4,7 +4,6 @@ use std::{
     fmt::{Debug, Formatter},
 };
 
-use alloy::primitives::Address;
 use num_bigint::BigUint;
 use tycho_simulation::{
     models::{Balances, GetAmountOutParams, Token},
@@ -16,48 +15,41 @@ use tycho_simulation::{
     tycho_common::{Bytes, dto::ProtocolStateDelta},
 };
 
-use crate::{client::RFQClient, price_estimator::PriceEstimator};
+use crate::{
+    client::RFQClient,
+    indicatively_priced::{IndicativelyPriced, SignedQuote},
+};
 
-pub struct RFQState {
-    pub price_data: Box<dyn PriceEstimator>,
+pub struct BebopState {
     pub quote_provider: Box<dyn RFQClient>, // needed to get binding quote
+    pub maker: String,
+    pub base_token: String,
+    pub quote_token: String,
+    pub bids: Vec<(f64, f64)>,
+    pub asks: Vec<(f64, f64)>,
 }
 
-impl RFQState {
-    pub fn new(price_data: Box<dyn PriceEstimator>, quote_provider: Box<dyn RFQClient>) -> Self {
-        RFQState { price_data, quote_provider }
-    }
-}
-
-impl Debug for RFQState {
+impl Debug for BebopState {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         todo!()
     }
 }
 
-impl ProtocolSim for RFQState {
+impl ProtocolSim for BebopState {
+    fn fee(&self) -> f64 {
+        todo!()
+    }
+
+    fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
+        todo!()
+    }
+
     fn get_amount_out(
         &self,
         amount_in: BigUint,
         token_in: &Token,
         token_out: &Token,
     ) -> Result<GetAmountOutResult, SimulationError> {
-        Ok(self
-            .price_data
-            .get_amount_out(GetAmountOutParams {
-                amount_in,
-                token_in: token_in.clone(),
-                token_out: token_out.clone(),
-                sender: Bytes::new(),
-                receiver: Bytes::new(),
-            })?)
-    }
-
-    fn fee(&self) -> f64 {
-        todo!()
-    }
-
-    fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
         todo!()
     }
 
@@ -95,31 +87,7 @@ impl ProtocolSim for RFQState {
     }
 }
 
-pub struct SignedQuote {
-    pub base_token: Address,
-    pub quote_token: Address,
-    pub amount_in: BigUint,
-    pub amount_out: BigUint,
-    // each RFQ will need different attributes
-    pub quote_attributes: HashMap<String, Bytes>,
-}
-
-pub trait IndicativelyPriced: ProtocolSim {
-    // this will be true when the price is only an estimation/indicative price
-    fn is_indicatively_priced() -> bool {
-        false
-    }
-
-    // if it is indicatively priced, then we need to request a signed quote for the final price
-    async fn request_signed_quote(
-        &self,
-        params: GetAmountOutParams,
-    ) -> Result<SignedQuote, SimulationError> {
-        Err(SimulationError::NotImplemented)
-    }
-}
-
-impl IndicativelyPriced for RFQState {
+impl IndicativelyPriced for BebopState {
     fn is_indicatively_priced() -> bool {
         true
     }

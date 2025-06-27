@@ -135,6 +135,7 @@ impl From<ProtocolComponent> for tycho_common::models::protocol::ProtocolCompone
     }
 }
 
+// TODO: rename this to try from with Time?
 pub trait TryFromWithBlock<T> {
     type Error;
 
