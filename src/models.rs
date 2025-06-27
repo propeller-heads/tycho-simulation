@@ -117,6 +117,14 @@ impl TryFrom<ResponseToken> for Token {
     }
 }
 
+pub struct GetAmountOutParams {
+    pub amount_in: BigUint,
+    pub token_in: Token,
+    pub token_out: Token,
+    pub sender: Bytes,
+    pub receiver: Bytes,
+}
+
 #[derive(Default)]
 pub struct Balances {
     pub component_balances: HashMap<String, HashMap<Bytes, Bytes>>,

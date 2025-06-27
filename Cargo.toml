@@ -13,7 +13,7 @@ readme = "README.md"
 
 
 [workspace]
-members = ["tycho_simulation_py"]
+members = ["tycho_simulation_py", "tycho_rfq"]
 
 [dependencies]
 # Serialization/Deserialization
@@ -65,6 +65,8 @@ dialoguer = "0.10.4"
 
 # Ekubo
 evm_ekubo_sdk = "0.4.0"
+async-trait = "0.1.88"
+reqwest = "0.11.27"
 
 [dev-dependencies]
 tokio-test = "0.4.4"

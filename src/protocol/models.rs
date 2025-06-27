@@ -54,6 +54,7 @@ pub struct ProtocolComponent {
     pub static_attributes: HashMap<String, Bytes>,
     pub creation_tx: Bytes,
     pub created_at: NaiveDateTime,
+    pub additional_execution_data: Option<HashMap<String, Bytes>>,
 }
 
 impl ProtocolComponent {
@@ -81,6 +82,7 @@ impl ProtocolComponent {
             static_attributes,
             creation_tx,
             created_at,
+            additional_execution_data: None,
         }
     }
 
@@ -101,6 +103,14 @@ impl ProtocolComponent {
             core_model.creation_tx,
             core_model.created_at,
         )
+    }
+
+    pub fn additional_execution_data(
+        mut self,
+        additional_execution_data: HashMap<String, Bytes>,
+    ) -> Self {
+        self.additional_execution_data = Some(additional_execution_data);
+        self
     }
 }
 
@@ -125,6 +135,7 @@ impl From<ProtocolComponent> for tycho_common::models::protocol::ProtocolCompone
     }
 }
 
+// TODO: rename this to try from with Time?
 pub trait TryFromWithBlock<T> {
     type Error;
 
@@ -167,7 +178,8 @@ impl GetAmountOutResult {
 }
 
 #[derive(Debug, Clone)]
-pub struct BlockUpdate {
+pub struct Update {
+    pub marker: u64,
     pub block_number: u64,
     /// The new and updated states of this block
     pub states: HashMap<String, Box<dyn ProtocolSim>>,
@@ -177,13 +189,19 @@ pub struct BlockUpdate {
     pub removed_pairs: HashMap<String, ProtocolComponent>,
 }
 
-impl BlockUpdate {
+impl Update {
     pub fn new(
-        block_number: u64,
+        marker: u64,
         states: HashMap<String, Box<dyn ProtocolSim>>,
         new_pairs: HashMap<String, ProtocolComponent>,
     ) -> Self {
-        BlockUpdate { block_number, states, new_pairs, removed_pairs: HashMap::new() }
+        Update {
+            marker: marker.clone(),
+            block_number: marker,
+            states,
+            new_pairs,
+            removed_pairs: HashMap::new(),
+        }
     }
 
     pub fn set_removed_pairs(mut self, pairs: HashMap<String, ProtocolComponent>) -> Self {

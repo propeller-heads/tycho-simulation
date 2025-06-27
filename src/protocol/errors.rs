@@ -55,6 +55,8 @@ pub enum SimulationError {
     InvalidInput(String, Option<GetAmountOutResult>),
     #[error("Recoverable error: {0}")]
     RecoverableError(String),
+    #[error("Not implemented error")]
+    NotImplemented,
 }
 
 impl<T> From<SimulationError> for TransitionError<T> {
