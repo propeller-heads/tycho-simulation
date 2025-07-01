@@ -35,11 +35,11 @@ impl TryFrom<Bytes> for EkuboExtension {
     fn try_from(value: Bytes) -> Result<Self, Self::Error> {
         // See extension ID encoding in tycho-protocol-sdk
         match i32::from(value) {
-            0 => Err(InvalidSnapshotError::ValueError("unknown extension".to_string())),
+            0 => Err(InvalidSnapshotError::ValueError("Unknown Ekubo extension".to_string())),
             1 => Ok(Self::Base),
             2 => Ok(Self::Oracle),
             discriminant => Err(InvalidSnapshotError::ValueError(format!(
-                "unknown discriminant {discriminant}"
+                "Unknown Ekubo extension discriminant {discriminant}"
             ))),
         }
     }
@@ -193,6 +193,7 @@ mod tests {
             state: ResponseProtocolState { attributes: attributes(), ..Default::default() },
             component: component(),
             component_tvl: None,
+            entrypoints: Vec::new(),
         };
 
         let result = EkuboState::try_from_with_block(
@@ -235,6 +236,7 @@ mod tests {
             },
             component,
             component_tvl: None,
+            entrypoints: Vec::new(),
         };
 
         let result = EkuboState::try_from_with_block(
