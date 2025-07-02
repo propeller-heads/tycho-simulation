@@ -13,16 +13,21 @@ use crate::{client::RFQClient, errors::RFQError, indicatively_priced::SignedQuot
 
 #[derive(Clone)]
 pub struct BebopClient {
-    url: String,
-    // keep track of the current token pairs supported
-    pairs: Vec<(String, String)>,
     chain: Chain,
+    url: String,
+    // filter pairs that we want prices for
+    pairs: Vec<(String, String)>,
+    // min tvl value. for bebop we need to calculate the TVL using the price levels
+    // https://docs.bebop.xyz/bebop/bebop-api-pmm-rfq/rfq-api-endpoints/pricing#interpreting-price-levels
+    tvl: f64,
+    // auth method for Bebop
+    auth: String,
 }
 
 impl BebopClient {
-    pub fn new(chain: Chain) -> Self {
+    pub fn new(chain: Chain, pairs: Vec<(String, String)>, tvl: f64, auth: String) -> Self {
         let url = "wss://api.bebop.com/v1/price".to_string();
-        Self { url, pairs: vec![], chain }
+        Self { url, pairs: vec![], chain, tvl, auth }
     }
 }
 

@@ -42,8 +42,7 @@ impl RFQDecoder {
         let timestamp = Utc::now().timestamp() as u64;
 
         Update {
-            marker: timestamp,
-            block_number: 0,
+            block_number: timestamp,
             states,
             new_pairs: Default::default(),
             removed_pairs: Default::default(),
