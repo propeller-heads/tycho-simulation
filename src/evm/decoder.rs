@@ -60,7 +60,7 @@ type FilterFn = fn(&ComponentWithState) -> bool;
 /// **Note:** The tokens provided during configuration will be used for decoding, ensuring
 /// efficient handling of protocol components. Protocol components containing tokens which are not
 /// included in this initial list, or added when applying deltas, will not be decoded.
-pub(super) struct TychoStreamDecoder {
+pub struct TychoStreamDecoder {
     state: Arc<RwLock<DecoderState>>,
     skip_state_decode_failures: bool,
     min_token_quality: u32,
