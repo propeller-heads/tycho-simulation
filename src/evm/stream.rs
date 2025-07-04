@@ -124,6 +124,13 @@ impl ProtocolStreamBuilder {
         self
     }
 
+    pub fn include_tvl(mut self, include_tvl: bool) -> Self {
+        self.stream_builder = self
+            .stream_builder
+            .include_tvl(include_tvl);
+        self
+    }
+
     /// Sets the currently known tokens which to be considered during decoding.
     ///
     /// Protocol components containing tokens which are not included in this initial list, or
