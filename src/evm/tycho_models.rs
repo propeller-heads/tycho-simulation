@@ -280,9 +280,7 @@ impl From<tycho_common::dto::ResponseAccount> for ResponseAccount {
             code_hash: B256::from_slice(&value.code_hash[..]),
             balance_modify_tx: B256::from_slice(&value.balance_modify_tx[..]),
             code_modify_tx: B256::from_slice(&value.code_modify_tx[..]),
-            creation_tx: value
-                .creation_tx
-                .map(|tx| B256::from_slice(&tx[..])), // Optionally map creation_tx if present
+            creation_tx: None,
         }
     }
 }
