@@ -1,0 +1,75 @@
+{
+  "state_msgs": {
+    "uniswap_v2": {
+      "header": {
+        "hash": "0xf4e2dbcd5b099aa46f8cff87291f71fb0aa298b5a8cdaba567bb2950b9a15d36",
+        "number": 22641717,
+        "parent_hash": "0x970e70875fbf0a22792acca3a98ffe325b74ee27a367a0a4bcadcf5287549e15",
+        "revert": false
+      },
+      "snapshots": {
+        "states": {},
+        "vm_storage": {}
+      },
+      "deltas": {
+        "extractor": "uniswap_v2",
+        "chain": "ethereum",
+        "block": {
+          "number": 22641717,
+          "hash": "0xf4e2dbcd5b099aa46f8cff87291f71fb0aa298b5a8cdaba567bb2950b9a15d36",
+          "parent_hash": "0x970e70875fbf0a22792acca3a98ffe325b74ee27a367a0a4bcadcf5287549e15",
+          "chain": "ethereum",
+          "ts": "2025-06-05T23:34:35"
+        },
+        "finalized_block_height": 22641638,
+        "revert": false,
+        "new_tokens": {},
+        "account_updates": {},
+        "state_updates": {
+          "0x0d4a11d5eeaac28ec3f61d100daf4d40471f1852": {
+            "component_id": "0x0d4a11d5eeaac28ec3f61d100daf4d40471f1852",
+            "updated_attributes": {
+              "reserve0": "0x01bafbe6925e17a5874f",
+              "reserve1": "0x120a8a1b2da6"
+            },
+            "deleted_attributes": []
+          }
+        },
+        "new_protocol_components": {},
+        "deleted_protocol_components": {},
+        "component_balances": {
+          "0x0d4a11d5eeaac28ec3f61d100daf4d40471f1852": {
+            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": {
+              "token": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+              "balance": "0x01bafbe6925e17a5874f",
+              "balance_float": 8.171612236860606e21,
+              "modify_tx": "0x48197e792039221661cd8313297b2da9f59c38de8225f253d911de727eab96ab",
+              "component_id": "0x0d4a11d5eeaac28ec3f61d100daf4d40471f1852"
+            },
+            "0xdac17f958d2ee523a2206206994597c13d831ec7": {
+              "token": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+              "balance": "0x120a8a1b2da6",
+              "balance_float": 19836476009894.0,
+              "modify_tx": "0x48197e792039221661cd8313297b2da9f59c38de8225f253d911de727eab96ab",
+              "component_id": "0x0d4a11d5eeaac28ec3f61d100daf4d40471f1852"
+            }
+          }
+        },
+        "account_balances": {},
+        "component_tvl": {
+          "0x0d4a11d5eeaac28ec3f61d100daf4d40471f1852": 16331.518308333754
+        }
+      },
+      "removed_components": {}
+    }
+  },
+  "sync_states": {
+    "uniswap_v2": {
+      "status": "ready",
+      "hash": "0xf4e2dbcd5b099aa46f8cff87291f71fb0aa298b5a8cdaba567bb2950b9a15d36",
+      "number": 22641717,
+      "parent_hash": "0x970e70875fbf0a22792acca3a98ffe325b74ee27a367a0a4bcadcf5287549e15",
+      "revert": false
+    }
+  }
+}
