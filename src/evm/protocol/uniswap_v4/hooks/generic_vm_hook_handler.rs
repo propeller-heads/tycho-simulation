@@ -1,15 +1,10 @@
-#![allow(dead_code)]
-
 use std::{any::Any, collections::HashMap, fmt::Debug};
 
 use alloy::{
-    primitives::{keccak256, Address, Signed, Uint, B256, I256, U256},
+    primitives::{keccak256, Address, Signed, Uint, I128, U256},
     sol_types::SolType,
 };
-use revm::{
-    state::{AccountInfo, Bytecode},
-    DatabaseRef,
-};
+use revm::DatabaseRef;
 use tycho_common::{dto::ProtocolStateDelta, Bytes};
 
 use crate::{
@@ -18,16 +13,16 @@ use crate::{
         protocol::{
             uniswap_v4::{
                 hooks::{
-                    constants::POOL_MANAGER_BYTECODE,
-                    hook_handler::{
-                        AfterSwapParameters, AfterSwapSolReturn, AmountRanges, BeforeSwapDelta,
-                        BeforeSwapOutput, BeforeSwapParameters, BeforeSwapSolOutput, HookHandler,
-                        SwapParams, WithGasEstimate,
+                    hook_handler::HookHandler,
+                    models::{
+                        AfterSwapDelta, AfterSwapParameters, AfterSwapSolReturn, AmountRanges,
+                        BeforeSwapOutput, BeforeSwapParameters, BeforeSwapSolOutput, SwapParams,
+                        WithGasEstimate,
                     },
                 },
                 state::UniswapV4State,
             },
-            vm::{constants::MAX_BALANCE, tycho_simulation_contract::TychoSimulationContract},
+            vm::tycho_simulation_contract::TychoSimulationContract,
         },
         simulation::SimulationEngine,
     },
@@ -36,7 +31,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct GenericVMHookHandler<D: EngineDatabaseInterface + Clone + Debug>
+pub(crate) struct GenericVMHookHandler<D: EngineDatabaseInterface + Clone + Debug>
 where
     <D as DatabaseRef>::Error: Debug,
     <D as EngineDatabaseInterface>::Error: Debug,
@@ -68,24 +63,6 @@ where
         _all_tokens: HashMap<Bytes, Token>,
         _account_balances: HashMap<Bytes, HashMap<Bytes, Bytes>>,
     ) -> Result<Self, SimulationError> {
-        // TODO overwrite token balances (see how it's done in EVMPoolState)
-
-        // Init pool manager
-        // For now we use saved bytecode, but tycho-indexer should be able to provide this
-        let pool_manager_bytecode = Bytecode::new_raw(POOL_MANAGER_BYTECODE.into());
-
-        engine.state.init_account(
-            pool_manager,
-            AccountInfo {
-                balance: *MAX_BALANCE,
-                nonce: 0,
-                code_hash: B256::from(keccak256(pool_manager_bytecode.clone().bytes())),
-                code: Some(pool_manager_bytecode),
-            },
-            None,
-            false,
-        );
-
         Ok(GenericVMHookHandler {
             contract: TychoSimulationContract::new(address, engine)?,
             address,
@@ -126,7 +103,7 @@ where
                 params.context.currency_0,
                 params.context.currency_1,
                 Uint::<24, 1>::from(params.context.fees.lp_fee),
-                Signed::<24, 1>::try_from(params.context.tick).map_err(|e| {
+                Signed::<24, 1>::try_from(params.context.tick_spacing).map_err(|e| {
                     SimulationError::FatalError(format!("Failed to convert tick: {e:?}"))
                 })?,
                 self.address,
@@ -179,7 +156,7 @@ where
         block: BlockHeader,
         overwrites: Option<HashMap<Address, HashMap<U256, U256>>>,
         transient_storage: Option<HashMap<Address, HashMap<U256, U256>>>,
-    ) -> Result<WithGasEstimate<BeforeSwapDelta>, SimulationError> {
+    ) -> Result<WithGasEstimate<AfterSwapDelta>, SimulationError> {
         let mut transient_storage_params = self.unlock_pool_manager();
         if let Some(input_params) = transient_storage {
             transient_storage_params.extend(input_params);
@@ -190,7 +167,7 @@ where
                 params.context.currency_0,
                 params.context.currency_1,
                 Uint::<24, 1>::from(params.context.fees.lp_fee),
-                Signed::<24, 1>::try_from(params.context.tick).map_err(|e| {
+                Signed::<24, 1>::try_from(params.context.tick_spacing).map_err(|e| {
                     SimulationError::FatalError(format!("Failed to convert tick: {e:?}"))
                 })?,
                 self.address,
@@ -200,7 +177,7 @@ where
                 params.swap_params.amount_specified,
                 params.swap_params.sqrt_price_limit,
             ),
-            params.delta,
+            params.delta.as_i256(),
             params.hook_data.to_vec(),
         );
         let selector = "afterSwap(address,(address,address,uint24,int24,address),(bool,int256,uint160),int256,bytes)";
@@ -221,7 +198,7 @@ where
         })?;
         Ok(WithGasEstimate {
             gas_estimate: res.simulation_result.gas_used,
-            result: I256::try_from(decoded.delta).map_err(|e| {
+            result: I128::try_from(decoded.delta).map_err(|e| {
                 SimulationError::FatalError(format!("Failed to convert delta: {e:?}"))
             })?,
         })
@@ -241,8 +218,8 @@ where
 
     fn get_amount_ranges(
         &self,
-        _token_in: Address,
-        _token_out: Address,
+        _token_in: Bytes,
+        _token_out: Bytes,
     ) -> Result<AmountRanges, SimulationError> {
         Err(SimulationError::RecoverableError(
             "get_amount_ranges is not implemented for GenericVMHookHandler".to_string(),
@@ -277,7 +254,8 @@ where
 mod tests {
     use std::str::FromStr;
 
-    use alloy::primitives::{aliases::U24, B256, I256};
+    use alloy::primitives::{aliases::U24, B256, I256, U256};
+    use revm::state::{AccountInfo, Bytecode};
 
     use super::*;
     use crate::evm::{
@@ -286,7 +264,16 @@ mod tests {
             simulation_db::{BlockHeader, SimulationDB},
             utils::{get_client, get_runtime},
         },
-        protocol::uniswap_v4::{hooks::hook_handler::StateContext, state::UniswapV4Fees},
+        protocol::{
+            uniswap_v4::{
+                hooks::{
+                    constants::POOL_MANAGER_BYTECODE,
+                    models::{BalanceDelta, BeforeSwapDelta, StateContext},
+                },
+                state::UniswapV4Fees,
+            },
+            vm::constants::MAX_BALANCE,
+        },
     };
 
     #[test]
@@ -325,7 +312,7 @@ mod tests {
                 currency_1: Address::from_str("0x000000c396558ffbab5ea628f39658bdf61345b3")
                     .unwrap(), // BUNNI
                 fees: UniswapV4Fees { zero_for_one: 0, one_for_zero: 0, lp_fee: 1 },
-                tick: 60,
+                tick_spacing: 60,
             },
             sender: Address::from_str("0x66a9893cc07d91d95644aedd05d03f95e1dba8af").unwrap(),
             swap_params: SwapParams {
@@ -341,9 +328,9 @@ mod tests {
         let res = result.unwrap().result;
         assert_eq!(
             res.amount_delta,
-            I256::from_raw(
+            BeforeSwapDelta(I256::from_raw(
                 U256::from_str("68056473384187693032957288407292048885944984507633924869").unwrap()
-            )
+            ))
         );
         assert_eq!(res.fee, U24::from(0));
 
@@ -392,6 +379,20 @@ mod tests {
         let pool_manager = Address::from_str("0x000000000004444c5dc75cB358380D2e3dE08A90")
             .expect("Invalid pool manager address");
 
+        let pool_manager_bytecode = Bytecode::new_raw(POOL_MANAGER_BYTECODE.into());
+
+        engine.state.init_account(
+            pool_manager,
+            AccountInfo {
+                balance: *MAX_BALANCE,
+                nonce: 0,
+                code_hash: B256::from(keccak256(pool_manager_bytecode.clone().bytes())),
+                code: Some(pool_manager_bytecode),
+            },
+            None,
+            false,
+        );
+
         let hook_address = Address::from_str("0x0010d0d5db05933fa0d9f7038d365e1541a41888")
             .expect("Invalid hook address");
 
@@ -430,7 +431,7 @@ mod tests {
             currency_0: Address::from_str("0x0000000000000000000000000000000000000000").unwrap(),
             currency_1: Address::from_str("0x000000c396558ffbab5ea628f39658bdf61345b3").unwrap(),
             fees: UniswapV4Fees { zero_for_one: 0, one_for_zero: 0, lp_fee: 1 },
-            tick: 60,
+            tick_spacing: 60,
         };
         let swap_params = SwapParams {
             zero_for_one: true,
@@ -442,8 +443,10 @@ mod tests {
             context,
             sender: Address::from_str("0x66a9893cc07d91d95644aedd05d03f95e1dba8af").unwrap(),
             swap_params,
-            delta: I256::from_dec_str("-3777134272822416944443458142492627143113384069767150805")
-                .unwrap(),
+            delta: BalanceDelta(
+                I256::from_dec_str("-3777134272822416944443458142492627143113384069767150805")
+                    .unwrap(),
+            ),
             hook_data: Bytes::new(),
         };
 
@@ -451,7 +454,7 @@ mod tests {
 
         let res = result.unwrap().result;
         // This hook does not return any delta, so we expect it to be zero.
-        assert_eq!(res, I256::from_raw(U256::from_str("0").unwrap()));
+        assert_eq!(res, I128::ZERO);
     }
 
     #[test]
@@ -495,7 +498,7 @@ mod tests {
             currency_0: Address::from_str("0x0000000000000000000000000000000000000000").unwrap(),
             currency_1: Address::from_str("0x7edc481366a345d7f9fcecb207408b5f2887ff99").unwrap(),
             fees: UniswapV4Fees { zero_for_one: 0, one_for_zero: 0, lp_fee: 100 },
-            tick: 1,
+            tick_spacing: 1,
         };
         let swap_params = SwapParams {
             zero_for_one: true,
@@ -520,14 +523,16 @@ mod tests {
             .before_swap(params, block, None, Some(transient_storage.clone()))
             .unwrap();
 
-        assert_eq!(result.result.amount_delta, I256::from_dec_str("0").unwrap());
+        assert_eq!(result.result.amount_delta, BeforeSwapDelta(I256::from_dec_str("0").unwrap()));
 
         let after_swap_params = AfterSwapParameters {
             context,
             sender: universal_router,
             swap_params,
-            delta: I256::from_dec_str("-3777134272822416944443458142492627143113384069767150805")
-                .unwrap(),
+            delta: BalanceDelta(
+                I256::from_dec_str("-3777134272822416944443458142492627143113384069767150805")
+                    .unwrap(),
+            ),
             hook_data: Bytes::new(),
         };
 
@@ -541,6 +546,6 @@ mod tests {
 
         let res = result.unwrap().result;
         // This hook does not return any delta, so we expect it to be zero.
-        assert_eq!(res, I256::from_raw(U256::from_str("0").unwrap()));
+        assert_eq!(res, I128::ZERO);
     }
 }
