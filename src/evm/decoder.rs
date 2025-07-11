@@ -1,4 +1,5 @@
 use std::{
+    any::Any,
     collections::{hash_map::Entry, HashMap, HashSet},
     future::Future,
     pin::Pin,
@@ -7,13 +8,19 @@ use std::{
 };
 
 use alloy::primitives::{Address, U256};
+use mockall::mock;
+use num_bigint::BigUint;
 use thiserror::Error;
 use tokio::sync::{RwLock, RwLockReadGuard};
 use tracing::{debug, error, info, warn};
-use tycho_client::feed::{synchronizer::ComponentWithState, FeedMessage, Header};
+use tycho_client::feed::{synchronizer::ComponentWithState, BlockHeader, FeedMessage};
 use tycho_common::{
     dto::{ChangeType, ProtocolStateDelta},
     models::{token::Token, Chain},
+    simulation::{
+        errors::{SimulationError, TransitionError},
+        protocol_sim::{Balances, GetAmountOutResult, ProtocolSim},
+    },
     Bytes,
 };
 
@@ -26,11 +33,9 @@ use crate::{
         },
         tycho_models::{AccountUpdate, ResponseAccount},
     },
-    models::Balances,
     protocol::{
         errors::InvalidSnapshotError,
         models::{BlockUpdate, ProtocolComponent, TryFromWithBlock},
-        state::ProtocolSim,
     },
 };
 
@@ -53,7 +58,7 @@ struct DecoderState {
 type DecodeFut =
     Pin<Box<dyn Future<Output = Result<Box<dyn ProtocolSim>, InvalidSnapshotError>> + Send + Sync>>;
 type AccountBalances = HashMap<Bytes, HashMap<Bytes, Bytes>>;
-type RegistryFn = dyn Fn(ComponentWithState, Header, AccountBalances, Arc<RwLock<DecoderState>>) -> DecodeFut
+type RegistryFn = dyn Fn(ComponentWithState, BlockHeader, AccountBalances, Arc<RwLock<DecoderState>>) -> DecodeFut
     + Send
     + Sync;
 type FilterFn = fn(&ComponentWithState) -> bool;
@@ -122,7 +127,7 @@ impl TychoStreamDecoder {
     {
         let decoder = Box::new(
             move |component: ComponentWithState,
-                  header: Header,
+                  header: BlockHeader,
                   account_balances: AccountBalances,
                   state: Arc<RwLock<DecoderState>>| {
                 Box::pin(async move {
@@ -191,7 +196,7 @@ impl TychoStreamDecoder {
                             .try_into()
                             .map(|token| (addr.clone(), token))
                             .map_err(|e| {
-                                warn!("Failed decoding token {e} {addr:#044x}");
+                                warn!("Failed decoding token {e:?} {addr:#044x}");
                                 e
                             })
                             .ok()
@@ -708,18 +713,97 @@ fn create_proxy_token_account(
 }
 
 #[cfg(test)]
+mock! {
+    #[derive(Debug)]
+    pub ProtocolSim {
+        pub fn fee(&self) -> f64;
+        pub fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError>;
+        pub fn get_amount_out(
+            &self,
+            amount_in: BigUint,
+            token_in: &Token,
+            token_out: &Token,
+        ) -> Result<GetAmountOutResult, SimulationError>;
+        pub fn get_limits(
+            &self,
+            sell_token: Bytes,
+            buy_token: Bytes,
+        ) -> Result<(BigUint, BigUint), SimulationError>;
+        pub fn delta_transition(
+            &mut self,
+            delta: ProtocolStateDelta,
+            tokens: &HashMap<Bytes, Token>,
+            balances: &Balances,
+        ) -> Result<(), TransitionError<String>>;
+        pub fn clone_box(&self) -> Box<dyn ProtocolSim>;
+        pub fn eq(&self, other: &dyn ProtocolSim) -> bool;
+    }
+}
+
+#[cfg(test)]
+impl ProtocolSim for MockProtocolSim {
+    fn fee(&self) -> f64 {
+        self.fee()
+    }
+
+    fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
+        self.spot_price(base, quote)
+    }
+
+    fn get_amount_out(
+        &self,
+        amount_in: BigUint,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<GetAmountOutResult, SimulationError> {
+        self.get_amount_out(amount_in, token_in, token_out)
+    }
+
+    fn get_limits(
+        &self,
+        sell_token: Bytes,
+        buy_token: Bytes,
+    ) -> Result<(BigUint, BigUint), SimulationError> {
+        self.get_limits(sell_token, buy_token)
+    }
+
+    fn delta_transition(
+        &mut self,
+        delta: ProtocolStateDelta,
+        tokens: &HashMap<Bytes, Token>,
+        balances: &Balances,
+    ) -> Result<(), TransitionError<String>> {
+        self.delta_transition(delta, tokens, balances)
+    }
+
+    fn clone_box(&self) -> Box<dyn ProtocolSim> {
+        self.clone_box()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        panic!("MockProtocolSim does not support as_any")
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        panic!("MockProtocolSim does not support as_any_mut")
+    }
+
+    fn eq(&self, other: &dyn ProtocolSim) -> bool {
+        self.eq(other)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
 
     use alloy::primitives::address;
     use mockall::predicate::*;
     use rstest::*;
-    use tycho_common::models::Chain;
+    use tycho_common::{models::Chain, Bytes};
 
     use super::*;
-    use crate::{
-        evm::protocol::uniswap_v2::state::UniswapV2State, protocol::state::MockProtocolSim,
-    };
+    use crate::evm::protocol::uniswap_v2::state::UniswapV2State;
 
     async fn setup_decoder(set_tokens: bool) -> TychoStreamDecoder {
         let mut decoder = TychoStreamDecoder::new();
