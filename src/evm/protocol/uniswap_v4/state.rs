@@ -54,6 +54,18 @@ impl UniswapV4Fees {
         Self { zero_for_one, one_for_zero, lp_fee }
     }
 
+    pub fn get_zero_for_one(&self) -> u32 {
+        self.zero_for_one
+    }
+
+    pub fn get_one_for_zero(&self) -> u32 {
+        self.one_for_zero
+    }
+
+    pub fn get_lp_fee(&self) -> u32 {
+        self.lp_fee
+    }
+
     fn calculate_swap_fees_pips(&self, zero_for_one: bool) -> u32 {
         let protocol_fees = if zero_for_one { self.zero_for_one } else { self.one_for_zero };
         protocol_fees + self.lp_fee
@@ -81,6 +93,26 @@ impl UniswapV4State {
         UniswapV4State { liquidity, sqrt_price, fees, tick, ticks: tick_list }
     }
 
+    pub fn get_liquidity(&self) -> u128 {
+        self.liquidity
+    }
+
+    pub fn get_sqrt_price(&self) -> U256 {
+        self.sqrt_price
+    }
+
+    pub fn get_fees(&self) -> &UniswapV4Fees {
+        &self.fees
+    }
+
+    pub fn get_tick(&self) -> i32 {
+        self.tick
+    }
+
+    pub fn get_ticks(&self) -> &Vec<TickInfo> {
+        self.ticks.get_ticks()
+    }
+
     fn swap(
         &self,
         zero_for_one: bool,
@@ -88,7 +120,7 @@ impl UniswapV4State {
         sqrt_price_limit: Option<U256>,
     ) -> Result<SwapResults, SimulationError> {
         if self.liquidity == 0 {
-            return Err(SimulationError::RecoverableError("No liquidity".to_string()));
+            return Err(SimulationError::RecoverableError("No liquidity".to_string()))
         }
         let price_limit = if let Some(limit) = sqrt_price_limit {
             limit
@@ -138,7 +170,7 @@ impl UniswapV4State {
                                 u256_to_biguint(gas_used),
                                 Box::new(new_state),
                             )),
-                        ));
+                        ))
                     }
                     _ => return Err(SimulationError::FatalError("Unknown error".to_string())),
                 },

@@ -61,6 +61,26 @@ impl UniswapV3State {
         UniswapV3State { liquidity, sqrt_price, fee, tick, ticks: tick_list }
     }
 
+    pub fn get_liquidity(&self) -> u128 {
+        self.liquidity
+    }
+
+    pub fn get_sqrt_price(&self) -> U256 {
+        self.sqrt_price
+    }
+
+    pub fn get_fee(&self) -> FeeAmount {
+        self.fee
+    }
+
+    pub fn get_tick(&self) -> i32 {
+        self.tick
+    }
+
+    pub fn get_ticks(&self) -> &Vec<TickInfo> {
+        self.ticks.get_ticks()
+    }
+
     fn get_spacing(fee: FeeAmount) -> u16 {
         match fee {
             FeeAmount::Lowest => 1,
@@ -108,8 +128,8 @@ impl UniswapV3State {
         };
         let mut gas_used = U256::from(130_000);
 
-        while state.amount_remaining != I256::from_raw(U256::from(0u64)) &&
-            state.sqrt_price != price_limit
+        while state.amount_remaining != I256::from_raw(U256::from(0u64))
+            && state.sqrt_price != price_limit
         {
             let (mut next_tick, initialized) = match self
                 .ticks
@@ -227,8 +247,8 @@ impl ProtocolSim for UniswapV3State {
         if a < b {
             Ok(sqrt_price_q96_to_f64(self.sqrt_price, a.decimals as u32, b.decimals as u32))
         } else {
-            Ok(1.0f64 /
-                sqrt_price_q96_to_f64(self.sqrt_price, b.decimals as u32, a.decimals as u32))
+            Ok(1.0f64
+                / sqrt_price_q96_to_f64(self.sqrt_price, b.decimals as u32, a.decimals as u32))
         }
     }
 
@@ -455,11 +475,11 @@ impl ProtocolSim for UniswapV3State {
             .as_any()
             .downcast_ref::<UniswapV3State>()
         {
-            self.liquidity == other_state.liquidity &&
-                self.sqrt_price == other_state.sqrt_price &&
-                self.fee == other_state.fee &&
-                self.tick == other_state.tick &&
-                self.ticks == other_state.ticks
+            self.liquidity == other_state.liquidity
+                && self.sqrt_price == other_state.sqrt_price
+                && self.fee == other_state.fee
+                && self.tick == other_state.tick
+                && self.ticks == other_state.ticks
         } else {
             false
         }
