@@ -8256,13 +8256,13 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber 0.3.19",
- "tycho-common",
+ "tycho-common 0.78.1",
  "uuid 1.17.0",
 ]
 
 [[package]]
 name = "tycho-common"
-version = "0.78.1"
+version = "0.77.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "373ea65e127370aa81515d167c4a966d9f6478492ce1594b5832d337d2a67c41"
 dependencies = [
@@ -8304,7 +8304,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
- "tycho-common",
+ "tycho-common 0.77.0",
 ]
 
 [[package]]
@@ -8354,7 +8354,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber 0.3.19",
  "tycho-client",
- "tycho-common",
+ "tycho-common 0.78.1",
  "tycho-execution",
  "unicode-width 0.1.14",
  "uuid 1.17.0",
