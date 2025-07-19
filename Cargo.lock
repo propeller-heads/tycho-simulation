@@ -8304,7 +8304,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
- "tycho-common 0.77.0",
+ "tycho-common",
 ]
 
 [[package]]
@@ -8354,7 +8354,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber 0.3.19",
  "tycho-client",
- "tycho-common 0.78.1",
+ "tycho-common",
  "tycho-execution",
  "unicode-width 0.1.14",
  "uuid 1.17.0",
