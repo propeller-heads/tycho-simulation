@@ -100,7 +100,6 @@ async fn main() {
     let cli = Cli::parse();
     let chain =
         Chain::from_str(&cli.chain).unwrap_or_else(|_| panic!("Unknown chain {}", cli.chain));
-
     let tycho_url = env::var("TYCHO_URL").unwrap_or_else(|_| {
         get_default_url(&chain).unwrap_or_else(|| panic!("Unknown URL for chain {}", cli.chain))
     });
