@@ -2,15 +2,15 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
 use alloy::primitives::U256;
-use num_bigint::BigUint;
+use num_bigint::{BigUint, ToBigUint};
 use tycho_client::feed::Header;
 use tycho_client::feed::synchronizer::ComponentWithState;
 use tycho_common::Bytes;
 use tycho_common::dto::ProtocolStateDelta;
 use crate::evm::protocol::cfmm::reserve_price::spot_price_from_reserves;
 use crate::evm::protocol::cpmm::protocol::CPMMProtocol;
-use crate::evm::protocol::safe_math::safe_mul_u256;
-use crate::evm::protocol::u256_num::biguint_to_u256;
+use crate::evm::protocol::safe_math::{safe_add_u256, safe_div_u256, safe_mul_u256, safe_sub_u256};
+use crate::evm::protocol::u256_num::{biguint_to_u256, u256_to_biguint};
 use crate::models::{Balances, Token};
 use crate::protocol::errors::{InvalidSnapshotError, SimulationError, TransitionError};
 use crate::protocol::models::{GetAmountOutResult, TryFromWithBlock};
@@ -102,11 +102,26 @@ impl<T: CFMMProtocol + Clone + 'static + std::fmt::Debug + Sync + Send> Protocol
         }
         let fee_multiplier = U256::from(10000 - self.get_fee_bps());
         let amount_in_with_fee = safe_mul_u256(amount_in, fee_multiplier)?;
+        let numerator = safe_mul_u256(amount_in_with_fee, reserve_buy)?;
+        let denominator =
+            safe_add_u256(safe_mul_u256(reserve_sell, U256::from(10000))?, amount_in_with_fee)?;
+
+        let amount_out = safe_div_u256(numerator, denominator)?;
+        let mut new_state = self.clone();
+        let (reserve0_mut, reserve1_mut) = new_state.get_reserves_mut();
+        if zero2one {
+            *reserve0_mut = safe_add_u256(reserve0, amount_in)?;
+            *reserve1_mut = safe_sub_u256(reserve1, amount_out)?;
+        } else {
+            *reserve0_mut = safe_sub_u256(reserve0, amount_out)?;
+            *reserve1_mut = safe_add_u256(reserve1, amount_in)?;
+        };
         Ok(GetAmountOutResult::new(
-            amount_in_with_fee,
-            reserve_sell,
-            reserve_buy,
-            zero2one,
+            u256_to_biguint(amount_out),
+            120_000
+                .to_biguint()
+                .expect("Expected an unsigned integer as gas value"),
+            Box::new(new_state),
         ))
     }
 
