@@ -152,6 +152,12 @@ impl HookHandler for AngstromHookHandler {
             .updated_attributes
             .get("angstrom_pools_update")
         {
+            if fees.is_empty() || fees.len() - 1 % 46 != 0 {
+                return Err(TransitionError::DecodeError(
+                    "angstrom_pools_update attributes are not properly formatted".to_string(),
+                ));
+            }
+
             let count = fees[0] as u8;
             let mut offset = 1;
 
@@ -171,6 +177,12 @@ impl HookHandler for AngstromHookHandler {
             .updated_attributes
             .get("angstrom_pools_removed")
         {
+            if fees.is_empty() || fees.len() - 1 % 40 != 0 {
+                return Err(TransitionError::DecodeError(
+                    "angstrom_pools_removed attributes are not properly formatted".to_string(),
+                ));
+            }
+
             let count = fees[0] as u8;
             let mut offset = 1;
 

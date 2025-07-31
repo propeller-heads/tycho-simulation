@@ -294,8 +294,8 @@ impl ProtocolSim for UniswapV4State {
         if base < quote {
             Ok(sqrt_price_q96_to_f64(self.sqrt_price, base.decimals as u32, quote.decimals as u32))
         } else {
-            Ok(1.0f64
-                / sqrt_price_q96_to_f64(
+            Ok(1.0f64 /
+                sqrt_price_q96_to_f64(
                     self.sqrt_price,
                     quote.decimals as u32,
                     base.decimals as u32,
@@ -378,8 +378,8 @@ impl ProtocolSim for UniswapV4State {
                 if before_swap_result
                     .result
                     .fee
-                    .to::<u32>()
-                    != 0
+                    .to::<u32>() !=
+                    0
                 {
                     lp_fee_override = Some(
                         before_swap_result
@@ -634,11 +634,11 @@ impl ProtocolSim for UniswapV4State {
             .as_any()
             .downcast_ref::<UniswapV4State>()
         {
-            self.liquidity == other_state.liquidity
-                && self.sqrt_price == other_state.sqrt_price
-                && self.fees == other_state.fees
-                && self.tick == other_state.tick
-                && self.ticks == other_state.ticks
+            self.liquidity == other_state.liquidity &&
+                self.sqrt_price == other_state.sqrt_price &&
+                self.fees == other_state.fees &&
+                self.tick == other_state.tick &&
+                self.ticks == other_state.ticks
         } else {
             false
         }

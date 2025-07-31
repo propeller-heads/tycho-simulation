@@ -1,17 +1,19 @@
-use super::streams::*;
-use futures::FutureExt;
-use futures::Stream;
-use futures::StreamExt;
-use jsonrpsee::core::client::Subscription;
-use jsonrpsee::core::ClientError;
-use jsonrpsee::ws_client::WsClient;
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
+
+use futures::{FutureExt, Stream, StreamExt};
+use jsonrpsee::{
+    core::{client::Subscription, ClientError},
+    ws_client::WsClient,
+};
 use serde::{Deserialize, Serialize};
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::Context;
-use std::task::Poll;
 use tycho_common::Bytes;
+
+use super::streams::*;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConsensusDataWithBlock<T> {

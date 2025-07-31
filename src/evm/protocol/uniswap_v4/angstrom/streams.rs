@@ -1,24 +1,27 @@
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+
+use alloy::primitives::{aliases::I24, FixedBytes, U256};
 use futures::StreamExt;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use jsonrpsee::{proc_macros::rpc, ws_client::WsClientBuilder};
 use tokio::sync::mpsc::{channel, Sender};
 use tokio_stream::wrappers::ReceiverStream;
 use tycho_client::{
     feed::{synchronizer::StateSyncMessage, FeedMessage, Header},
     stream::StreamError,
 };
-use tycho_common::dto::{BlockChanges, ProtocolStateDelta};
-use tycho_common::Bytes;
+use tycho_common::{
+    dto::{BlockChanges, ProtocolStateDelta},
+    Bytes,
+};
 
+use super::{slot0_stream::Slot0Update, unlock_stream::ConsensusDataWithBlock};
 use crate::evm::{
     protocol::uniswap_v4::angstrom::{slot0_stream::Slot0Client, unlock_stream::UnlockClient},
     stream::ProtocolStreamExtension,
 };
-
-use super::slot0_stream::Slot0Update;
-use super::unlock_stream::ConsensusDataWithBlock;
-use alloy::primitives::{aliases::I24, FixedBytes, U256};
-use jsonrpsee::{proc_macros::rpc, ws_client::WsClientBuilder};
 
 pub(super) type PoolId = FixedBytes<32>;
 

@@ -88,8 +88,8 @@ impl ProtocolStreamBuilder {
                 .register_filter(name, predicate);
         }
 
-        if ["uniswap_v4", "angstrom", "vm:balancer_v2", "vm:curve"].contains(&name)
-            && filter_fn.is_none()
+        if ["uniswap_v4", "angstrom", "vm:balancer_v2", "vm:curve"].contains(&name) &&
+            filter_fn.is_none()
         {
             warn!("Warning: For exchange type '{}', it is necessary to set a filter function because not all pools are supported. See all filters at src/evm/protocol/filters.rs", name);
         }

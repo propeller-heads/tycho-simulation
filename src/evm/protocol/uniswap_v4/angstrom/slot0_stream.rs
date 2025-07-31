@@ -1,19 +1,20 @@
-use super::streams::*;
-use futures::FutureExt;
-use futures::StreamExt;
-use jsonrpsee::core::client::Subscription;
-use jsonrpsee::core::ClientError;
-use std::future::Future;
-use std::task::Context;
-use std::task::{Poll, Waker};
+use std::{
+    collections::HashSet,
+    future::Future,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll, Waker},
+};
 
 use alloy::primitives::U160;
-use futures::Stream;
-use jsonrpsee::ws_client::WsClient;
+use futures::{FutureExt, Stream, StreamExt};
+use jsonrpsee::{
+    core::{client::Subscription, ClientError},
+    ws_client::WsClient,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use std::pin::Pin;
-use std::sync::Arc;
+
+use super::streams::*;
 
 type ReconnectionFut =
     Box<dyn Future<Output = Result<Subscription<Slot0Update>, ClientError>> + Send>;
