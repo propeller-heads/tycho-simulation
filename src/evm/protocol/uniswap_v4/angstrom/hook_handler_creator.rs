@@ -1,9 +1,13 @@
+use super::hook_handler::AngstromFees;
+use super::hook_handler::AngstromHookHandler;
 use crate::evm::protocol::uniswap_v4::hooks::hook_handler::HookHandler;
 use crate::evm::protocol::uniswap_v4::hooks::hook_handler_creator::{
     HookCreationParams, HookHandlerCreator,
 };
 use crate::protocol::errors::InvalidSnapshotError;
+use alloy::primitives::aliases::U24;
 use alloy::primitives::Address;
+use std::collections::HashMap;
 
 pub struct AngstromHookCreator;
 
@@ -24,23 +28,39 @@ impl HookHandlerCreator for AngstromHookCreator {
                 InvalidSnapshotError::MissingAttribute("pool_manager_address".to_string())
             })?;
 
+        let angstrom_pool_config = params
+            .attributes
+            .get("angstrom_pool_config")
+            .ok_or_else(|| {
+                InvalidSnapshotError::MissingAttribute("angstrom_pool_config".to_string())
+            })?;
+
+        // we need to assert that we are correctly offset
+        if angstrom_pool_config.is_empty() || angstrom_pool_config.len() - 1 % 46 != 0 {
+            return Err(InvalidSnapshotError::ValueError(
+                "angstrom pool config values are not encoded correctly".to_string(),
+            ));
+        }
+
+        let mut pools = HashMap::new();
+        let count = angstrom_pool_config[0] as u8;
+        let mut offset = 1;
+
+        for _ in 0..count {
+            let token_0 = Address::from_slice(&angstrom_pool_config[offset + 0..offset + 20]);
+            let token_1 = Address::from_slice(&angstrom_pool_config[offset + 20..offset + 40]);
+            let unlock = U24::from_be_slice(&angstrom_pool_config[offset + 40..offset + 43]);
+            let protocol_unlock =
+                U24::from_be_slice(&angstrom_pool_config[offset + 43..offset + 46]);
+            pools.insert((token_0, token_1), AngstromFees { unlock, protocol_unlock });
+
+            offset += 46;
+        }
+
         let hook_address = Address::from_slice(&hook_address_bytes.0);
         let pool_manager_address = Address::from_slice(&pool_manager_address_bytes.0);
 
-        let engine = create_engine(SHARED_TYCHO_DB.clone(), true).map_err(|e| {
-            InvalidSnapshotError::VMError(SimulationError::FatalError(format!(
-                "Failed to create engine: {e:?}"
-            )))
-        })?;
-
-        let hook_handler = GenericVMHookHandler::new(
-            hook_address,
-            engine,
-            pool_manager_address,
-            params.all_tokens.clone(),
-            params.account_balances.clone(),
-        )
-        .map_err(InvalidSnapshotError::VMError)?;
+        let hook_handler = AngstromHookHandler::new(hook_address, pool_manager_address, pools);
 
         Ok(Box::new(hook_handler))
     }

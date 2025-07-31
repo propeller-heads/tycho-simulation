@@ -41,7 +41,8 @@ use tycho_simulation::{
         protocol::{
             ekubo::state::EkuboState,
             filters::{
-                balancer_v2_pool_filter, curve_pool_filter, uniswap_v4_pool_with_hook_filter,
+                angstrom_pool_filter, balancer_v2_pool_filter, curve_pool_filter,
+                uniswap_v4_pool_with_hook_filter,
             },
             pancakeswap_v2::state::PancakeswapV2State,
             u256_num::biguint_to_u256,
@@ -185,6 +186,11 @@ async fn main() {
                     "uniswap_v4",
                     tvl_filter.clone(),
                     Some(uniswap_v4_pool_with_hook_filter),
+                )
+                .exchange::<UniswapV4State>(
+                    "angstrom",
+                    tvl_filter.clone(),
+                    Some(angstrom_pool_filter),
                 )
                 .exchange::<EkuboState>("ekubo_v2", tvl_filter.clone(), None)
                 .exchange::<EVMPoolState<PreCachedDB>>(
@@ -734,9 +740,9 @@ pub fn encode_input(selector: &str, mut encoded_args: Vec<u8>) -> Vec<u8> {
     // Remove extra prefix if present (32 bytes for dynamic data)
     // Alloy encoding is including a prefix for dynamic data indicating the offset or length
     // but at this point we don't want that
-    if encoded_args.len() > 32 &&
-        encoded_args[..32] ==
-            [0u8; 31]
+    if encoded_args.len() > 32
+        && encoded_args[..32]
+            == [0u8; 31]
                 .into_iter()
                 .chain([32].to_vec())
                 .collect::<Vec<u8>>()

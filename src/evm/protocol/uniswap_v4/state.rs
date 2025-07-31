@@ -134,7 +134,7 @@ impl UniswapV4State {
                 liquidity: self.liquidity,
                 tick: self.tick,
                 gas_used: U256::from(3_000), // baseline gas cost for no-op swap
-            })
+            });
         }
 
         if self.liquidity == 0 {
@@ -294,8 +294,8 @@ impl ProtocolSim for UniswapV4State {
         if base < quote {
             Ok(sqrt_price_q96_to_f64(self.sqrt_price, base.decimals as u32, quote.decimals as u32))
         } else {
-            Ok(1.0f64 /
-                sqrt_price_q96_to_f64(
+            Ok(1.0f64
+                / sqrt_price_q96_to_f64(
                     self.sqrt_price,
                     quote.decimals as u32,
                     base.decimals as u32,
@@ -370,7 +370,7 @@ impl ProtocolSim for UniswapV4State {
                     if amount_to_swap > I256::ZERO {
                         return Err(SimulationError::FatalError(
                             "Hook delta exceeds swap amount".into(),
-                        ))
+                        ));
                     }
                 }
 
@@ -378,8 +378,8 @@ impl ProtocolSim for UniswapV4State {
                 if before_swap_result
                     .result
                     .fee
-                    .to::<u32>() !=
-                    0
+                    .to::<u32>()
+                    != 0
                 {
                     lp_fee_override = Some(
                         before_swap_result
@@ -541,8 +541,8 @@ impl ProtocolSim for UniswapV4State {
     fn delta_transition(
         &mut self,
         delta: ProtocolStateDelta,
-        _tokens: &HashMap<Bytes, Token>,
-        _balances: &Balances,
+        tokens: &HashMap<Bytes, Token>,
+        balances: &Balances,
     ) -> Result<(), TransitionError<String>> {
         // Apply attribute changes
         if let Some(liquidity) = delta
@@ -603,6 +603,17 @@ impl ProtocolSim for UniswapV4State {
             }
         }
 
+        if let Some(hook) = self.hook.as_mut() {
+            if let Err(err) = hook.delta_transition(delta, tokens, balances) {
+                // Given some hooks don't implement delta transitions, we only want to error if we
+                // don't have a error that is recoverable. This is a workaround for now given that
+                // this error is shared amongst all types.
+                if !err.is_recoverable() {
+                    return Err(err);
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -623,11 +634,11 @@ impl ProtocolSim for UniswapV4State {
             .as_any()
             .downcast_ref::<UniswapV4State>()
         {
-            self.liquidity == other_state.liquidity &&
-                self.sqrt_price == other_state.sqrt_price &&
-                self.fees == other_state.fees &&
-                self.tick == other_state.tick &&
-                self.ticks == other_state.ticks
+            self.liquidity == other_state.liquidity
+                && self.sqrt_price == other_state.sqrt_price
+                && self.fees == other_state.fees
+                && self.tick == other_state.tick
+                && self.ticks == other_state.ticks
         } else {
             false
         }

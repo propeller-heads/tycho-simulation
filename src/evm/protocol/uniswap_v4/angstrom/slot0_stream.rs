@@ -15,6 +15,9 @@ use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
 
+type ReconnectionFut =
+    Box<dyn Future<Output = Result<Subscription<Slot0Update>, ClientError>> + Send>;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Slot0Update {
     /// there will be 120 updates per block or per 100ms
@@ -47,9 +50,7 @@ pub struct Slot0Client {
     client: Arc<WsClient>,
     subscription: Option<Subscription<Slot0Update>>,
     subscribed_pools: HashSet<PoolId>,
-    pending_subscription: Option<
-        Pin<Box<dyn Future<Output = Result<Subscription<Slot0Update>, ClientError>> + Send>>,
-    >,
+    pending_subscription: Option<Pin<ReconnectionFut>>,
     waker: Option<Waker>,
 }
 

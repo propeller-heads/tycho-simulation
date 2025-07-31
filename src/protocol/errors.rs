@@ -21,6 +21,16 @@ pub enum TransitionError<T> {
     SimulationError(SimulationError),
 }
 
+impl<T> TransitionError<T> {
+    pub fn is_recoverable(&self) -> bool {
+        if let Self::SimulationError(err) = self {
+            err.is_recoverable()
+        } else {
+            false
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum InvalidSnapshotError {
     #[error("Missing attributes {0}")]
@@ -55,6 +65,12 @@ pub enum SimulationError {
     InvalidInput(String, Option<GetAmountOutResult>),
     #[error("Recoverable error: {0}")]
     RecoverableError(String),
+}
+
+impl SimulationError {
+    fn is_recoverable(&self) -> bool {
+        matches!(self, Self::RecoverableError(_))
+    }
 }
 
 impl<T> From<SimulationError> for TransitionError<T> {

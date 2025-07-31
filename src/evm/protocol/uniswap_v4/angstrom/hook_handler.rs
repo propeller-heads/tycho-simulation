@@ -23,18 +23,27 @@ use crate::{
 pub(crate) struct AngstromHookHandler {
     address: Address,
     pool_manager: Address,
-    angstrom_address: Address,
     current_trading_pairs: HashMap<(Address, Address), AngstromFees>,
+}
+
+impl AngstromHookHandler {
+    pub fn new(
+        address: Address,
+        pool_manager: Address,
+        current_trading_pairs: HashMap<(Address, Address), AngstromFees>,
+    ) -> Self {
+        Self { address, pool_manager, current_trading_pairs }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub struct AngstromFees {
-    unlock: U24,
-    protocol_unlock: U24,
+    pub unlock: U24,
+    pub protocol_unlock: U24,
 }
 impl HookHandler for AngstromHookHandler {
     fn address(&self) -> Address {
-        self.angstrom_address
+        self.address
     }
     fn fee(
         &self,
@@ -133,6 +142,51 @@ impl HookHandler for AngstromHookHandler {
         })
     }
 
+    fn delta_transition(
+        &mut self,
+        delta: ProtocolStateDelta,
+        _tokens: &HashMap<Bytes, Token>,
+        _balances: &Balances,
+    ) -> Result<(), TransitionError<String>> {
+        if let Some(fees) = delta
+            .updated_attributes
+            .get("angstrom_pools_update")
+        {
+            let count = fees[0] as u8;
+            let mut offset = 1;
+
+            for _ in 0..count {
+                let token_0 = Address::from_slice(&fees[offset + 0..offset + 20]);
+                let token_1 = Address::from_slice(&fees[offset + 20..offset + 40]);
+                let unlock = U24::from_be_slice(&fees[offset + 40..offset + 43]);
+                let protocol_unlock = U24::from_be_slice(&fees[offset + 43..offset + 46]);
+                self.current_trading_pairs
+                    .insert((token_0, token_1), AngstromFees { unlock, protocol_unlock });
+
+                offset += 46;
+            }
+        }
+
+        if let Some(fees) = delta
+            .updated_attributes
+            .get("angstrom_pools_removed")
+        {
+            let count = fees[0] as u8;
+            let mut offset = 1;
+
+            for _ in 0..count {
+                let token_0 = Address::from_slice(&fees[offset + 0..offset + 20]);
+                let token_1 = Address::from_slice(&fees[offset + 20..offset + 40]);
+                self.current_trading_pairs
+                    .remove(&(token_0, token_1));
+
+                offset += 40;
+            }
+        }
+
+        Ok(())
+    }
+
     fn spot_price(&self, _base: &Token, _quote: &Token) -> Result<f64, SimulationError> {
         Err(SimulationError::RecoverableError(
             "spot_price is not implemented for AngstromHook".to_string(),
@@ -147,17 +201,6 @@ impl HookHandler for AngstromHookHandler {
         Err(SimulationError::RecoverableError(
             "get_amount_ranges is not implemented for AngstromHook".to_string(),
         ))
-    }
-
-    fn delta_transition(
-        &mut self,
-        _delta: ProtocolStateDelta,
-        _tokens: &HashMap<Bytes, Token>,
-        _balances: &Balances,
-    ) -> Result<(), TransitionError<String>> {
-        Err(TransitionError::SimulationError(SimulationError::RecoverableError(
-            "delta_transition is not implemented for AngstromHook".to_string(),
-        )))
     }
 
     fn clone_box(&self) -> Box<dyn HookHandler> {
