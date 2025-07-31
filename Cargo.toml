@@ -17,48 +17,57 @@ members = ["tycho_simulation_py"]
 
 [dependencies]
 # Serialization/Deserialization
+chrono = { version = "0.4.26", features = ["serde"] }
+hex = "0.4.3"
 serde = { version = "1.0", features = ["rc"] }
 serde_json = "1.0.105"
-uuid = { version = "1.4.1", features = ["serde", "v4", "fast-rng", "macro-diagnostics"] }
-hex = "0.4.3"
-chrono = { version = "0.4.26", features = ["serde"] }
+uuid = { version = "1.4.1", features = [
+  "serde",
+  "v4",
+  "fast-rng",
+  "macro-diagnostics",
+] }
 
 # Error handling
 thiserror = "1"
 
 # Async & concurrency
-tokio = { version = "1.38.0", features = ["full"] }
-futures = "0.3.31"
 async-trait = "0.1.74"
+futures = "0.3.31"
+tokio = { version = "1.38.0", features = ["full"] }
 
 # Logging & Tracing
 tracing = "0.1.37"
 
 # Utility
-num-traits = "0.2.17"
 dotenv = "0.15.0"
-itertools = "0.10.5"
 enum_delegate = "0.2.0"
+itertools = "0.10.5"
+num-traits = "0.2.17"
 
 # Enum utilities
 strum = "0.25.0"
 strum_macros = "0.25.2"
 
 # Caching
-mini-moka = "0.10"
 lazy_static = "1.4.0"
+mini-moka = "0.10"
 
 # Tycho dependencies
-tycho-common = "=0.70.8"
 tycho-client = "=0.70.8"
+tycho-common = "=0.70.8"
 
 # EVM dependencies
+alloy = { version = "1.0.6", features = [
+  "providers",
+  "signer-local",
+  "rpc-types-eth",
+], optional = true }
 foundry-config = { git = "https://github.com/foundry-rs/foundry", rev = "ab753e9", optional = true }
 foundry-evm = { git = "https://github.com/foundry-rs/foundry", rev = "ab753e9", optional = true }
-alloy = { version = "1.0.6", features = ["providers", "signer-local", "rpc-types-eth"], optional = true }
+num-bigint = { version = "0.4", features = ["serde"] }
 revm = { version = "24.0.0", features = ["alloydb", "serde"], optional = true }
 revm-inspectors = { version = "0.23", features = ["serde"], optional = true }
-num-bigint = { version = "0.4", features = ["serde"] }
 tokio-stream = "0.1.16"
 
 # Dialoguer
@@ -67,14 +76,17 @@ dialoguer = "0.10.4"
 # Ekubo
 evm_ekubo_sdk = "0.6.2"
 
+# Angstrom
+jsonrpsee = { version = "0.25.1", features = ["ws-client", "macros"] }
+
 [dev-dependencies]
 tokio-test = "0.4.4"
 approx = "0.5.1"
 rstest = "0.23.0"
 rstest_reuse = "0.7.0"
 tracing-subscriber = { version = "0.3.17", default-features = false, features = [
-    "env-filter",
-    "fmt",
+  "env-filter",
+  "fmt",
 ] }
 tempfile = "3.13.0"
 
@@ -96,7 +108,11 @@ tycho-execution = "0.97.0"
 default = ["evm"]
 network_tests = []
 evm = [
-    "dep:foundry-config", "dep:foundry-evm", "dep:revm", "dep:revm-inspectors", "dep:alloy",
+  "dep:foundry-config",
+  "dep:foundry-evm",
+  "dep:revm",
+  "dep:revm-inspectors",
+  "dep:alloy",
 ]
 
 [profile.bench]
