@@ -5,13 +5,17 @@ use futures::{stream::BoxStream, StreamExt};
 use num_bigint::BigUint;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+use tycho_common::models::token::Token;
 use tycho_simulation::{
     evm::{
         decoder::StreamDecodeError,
         engine_db::tycho_db::PreCachedDB,
         protocol::{
             ekubo::state::EkuboState,
-            filters::{balancer_pool_filter, curve_pool_filter, uniswap_v4_pool_with_hook_filter},
+            filters::{
+                balancer_v2_pool_filter_after_dci_update, curve_pool_filter,
+                uniswap_v4_pool_with_hook_filter,
+            },
             uniswap_v2::state::UniswapV2State,
             uniswap_v3::state::UniswapV3State,
             uniswap_v4::state::UniswapV4State,
@@ -19,8 +23,7 @@ use tycho_simulation::{
         },
         stream::ProtocolStreamBuilder,
     },
-    models::Token,
-    protocol::models::BlockUpdate,
+    protocol::models::Update,
     tycho_client::feed::component_tracker::ComponentFilter,
     tycho_common::models::Chain,
     utils::load_all_tokens,
@@ -48,8 +51,7 @@ fn validate_exchange(exchange: &str) -> Result<String, String> {
         Ok(exchange.to_string())
     } else {
         Err(format!(
-            "Unsupported exchange '{}'. Supported exchanges are: {:?}",
-            exchange, SUPPORTED_EXCHANGES
+            "Unsupported exchange '{exchange}'. Supported exchanges are: {SUPPORTED_EXCHANGES:?}",
         ))
     }
 }
@@ -123,7 +125,7 @@ async fn main() {
                     .exchange::<EVMPoolState<PreCachedDB>>(
                         "vm:balancer_v2",
                         tvl_filter.clone(),
-                        Some(balancer_pool_filter),
+                        Some(balancer_v2_pool_filter_after_dci_update),
                     )
                     .auth_key(Some(tycho_api_key.clone()))
                     .set_tokens(all_tokens.clone())
@@ -159,7 +161,7 @@ async fn main() {
                     .boxed(),
 
                 _ => {
-                    eprintln!("Unknown protocol: {}", protocol);
+                    eprintln!("Unknown protocol: {protocol}");
                     continue;
                 }
             };
@@ -176,7 +178,7 @@ async fn main() {
 }
 
 async fn benchmark_swaps(
-    mut protocol_stream: BoxStream<'_, Result<BlockUpdate, StreamDecodeError>>,
+    mut protocol_stream: BoxStream<'_, Result<Update, StreamDecodeError>>,
     n: usize,
 ) -> Vec<u128> {
     let mut times = Vec::new();
@@ -197,8 +199,7 @@ async fn benchmark_swaps(
 
         for (id, tokens) in pairs.iter().cycle() {
             if let Some(state) = message.states.get(id) {
-                let amount_in =
-                    BigUint::from(1u32) * BigUint::from(10u32).pow(tokens[0].decimals as u32);
+                let amount_in = BigUint::from(1u32) * BigUint::from(10u32).pow(tokens[0].decimals);
 
                 let start = Instant::now();
                 let _ = state.get_amount_out(amount_in.clone(), &tokens[0], &tokens[1]);
@@ -228,7 +229,7 @@ fn calculate_std_dev(times: &[u128], avg: f64) -> f64 {
 }
 
 fn analyze_results(results: &HashMap<String, Vec<u128>>, n_swaps: usize) {
-    println!("\n========== Benchmark Results on {} swaps ==========", n_swaps);
+    println!("\n========== Benchmark Results on {n_swaps} swaps ==========");
 
     for (protocol, times) in results {
         let avg = times.iter().sum::<u128>() as f64 / times.len() as f64;
@@ -238,8 +239,7 @@ fn analyze_results(results: &HashMap<String, Vec<u128>>, n_swaps: usize) {
         let median = calculate_median(times).unwrap_or(f64::NAN);
 
         println!(
-            "\n{} - Mean Time: {:.2} ns, Median Time: {:.2} ns, Max Time: {} ns, Min Time: {} ns, Std Dev: {:.2} ns",
-            protocol, avg, median, max, min, std_dev
+            "\n{protocol} - Mean Time: {avg:.2} ns, Median Time: {median:.2} ns, Max Time: {max} ns, Min Time: {min} ns, Std Dev: {std_dev:.2} ns"
         );
 
         generate_histogram(times, 10);
