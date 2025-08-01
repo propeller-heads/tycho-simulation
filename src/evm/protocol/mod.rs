@@ -6,7 +6,9 @@ pub mod u256_num;
 pub mod uniswap_v2;
 pub mod uniswap_v3;
 pub mod uniswap_v4;
+pub mod aerodrome_v1;
+pub mod aerodrome_slipstream;
 pub mod utils;
 pub mod vm;
-
 mod cpmm;
+mod cfmm;
