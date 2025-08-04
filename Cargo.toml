@@ -65,6 +65,7 @@ dialoguer = "0.10.4"
 
 # Ekubo
 evm_ekubo_sdk = "0.6.2"
+rand = "0.9.1"
 
 [dev-dependencies]
 tokio-test = "0.4.4"

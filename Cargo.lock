@@ -8344,6 +8344,7 @@ dependencies = [
  "mockall",
  "num-bigint",
  "num-traits",
+ "rand 0.9.1",
  "ratatui",
  "revm",
  "revm-inspectors",

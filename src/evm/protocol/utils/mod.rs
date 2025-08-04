@@ -1,5 +1,5 @@
+pub mod dodo;
 pub mod uniswap;
-
 use alloy::primitives::Address;
 use tycho_common::Bytes;
 
