@@ -11,10 +11,7 @@ use tycho_common::{models::token::Token, simulation::protocol_sim::ProtocolSim};
 use tycho_simulation::{
     evm::{
         engine_db::tycho_db::PreCachedDB,
-        protocol::{
-            filters::curve_pool_filter,
-            vm::state::EVMPoolState,
-        },
+        protocol::{filters::curve_pool_filter, vm::state::EVMPoolState},
         stream::ProtocolStreamBuilder,
     },
     protocol::models::ProtocolComponent,
@@ -53,7 +50,7 @@ type CurveDataByFactory = HashMap<String, CurveFactoryData>;
 
 async fn load_curve_benchmark_data() -> CurveDataByFactory {
     let (_, tvl_threshold) = get_config();
-    
+
     let tycho_url =
         env::var("TYCHO_URL").unwrap_or_else(|_| "tycho-beta.propellerheads.xyz".to_string());
     let tycho_api_key = env::var("TYCHO_API_KEY").unwrap_or_else(|_| "sampletoken".to_string());
@@ -85,7 +82,7 @@ async fn load_curve_benchmark_data() -> CurveDataByFactory {
 
     // Load initial data and organize by factory
     let mut factory_data: CurveDataByFactory = HashMap::new();
-    
+
     match stream.next().await {
         Some(Ok(message)) => {
             info!(
@@ -98,7 +95,7 @@ async fn load_curve_benchmark_data() -> CurveDataByFactory {
             for (id, component) in message.new_pairs.iter() {
                 // Extract factory from static_attributes
                 let factory_name = get_factory_name(component);
-                
+
                 let factory_data = factory_data
                     .entry(factory_name)
                     .or_insert_with(|| CurveFactoryData {
@@ -106,9 +103,13 @@ async fn load_curve_benchmark_data() -> CurveDataByFactory {
                         components: HashMap::new(),
                         states: HashMap::new(),
                     });
-                    
-                factory_data.pools.insert(id.clone(), component.tokens.clone());
-                factory_data.components.insert(id.clone(), component.clone());
+
+                factory_data
+                    .pools
+                    .insert(id.clone(), component.tokens.clone());
+                factory_data
+                    .components
+                    .insert(id.clone(), component.clone());
             }
 
             // Organize states by factory using the component information
@@ -135,9 +136,13 @@ async fn load_curve_benchmark_data() -> CurveDataByFactory {
 
 fn get_factory_name(component: &ProtocolComponent) -> String {
     // Try to get factory from static_attributes
-    if let Some(factory_bytes) = component.static_attributes.get("factory") {
+    if let Some(factory_bytes) = component
+        .static_attributes
+        .get("factory")
+    {
         // Convert Bytes to string, taking first 8 chars for readability
-        let factory_hex = String::from_utf8(factory_bytes.to_vec()).expect("failed parsing factory address");
+        let factory_hex =
+            String::from_utf8(factory_bytes.to_vec()).expect("failed parsing factory address");
         format!("factory_{}", &factory_hex)
     } else {
         "unknown_factory".to_string()
@@ -147,8 +152,10 @@ fn get_factory_name(component: &ProtocolComponent) -> String {
 fn benchmark_curve_factory_swaps(c: &mut Criterion, factory: &str, data: &CurveFactoryData) {
     let (n_swaps, _) = get_config();
 
-    let mut group = c.benchmark_group(format!("curve_{}_swaps", factory));
-    group.measurement_time(Duration::from_secs(10)).sample_size(10);
+    let mut group = c.benchmark_group(format!("curve_{factory}_swaps"));
+    group
+        .measurement_time(Duration::from_secs(10))
+        .sample_size(10);
 
     // Add pool metadata to the group
     let total_pools = data.pools.len();
@@ -161,7 +168,9 @@ fn benchmark_curve_factory_swaps(c: &mut Criterion, factory: &str, data: &CurveF
     for (pool_id, tokens) in data.pools.iter().cycle().take(n_swaps) {
         if let Some(state) = data.states.get(pool_id) {
             if tokens.len() >= 2 {
-                let (upper, _) = state.get_limits(tokens[0].address.clone(), tokens[1].address.clone()).expect("limits failed");
+                let (upper, _) = state
+                    .get_limits(tokens[0].address.clone(), tokens[1].address.clone())
+                    .expect("limits failed");
                 // take between 1% and 85% of the upper limit for swaps
                 let p: u32 = rng.random_range(1..=85);
                 let amount_in = upper * BigUint::from(p as u32) / BigUint::from(100u32);
@@ -182,19 +191,38 @@ fn benchmark_curve_factory_swaps(c: &mut Criterion, factory: &str, data: &CurveF
 
     // Verify first swap works and show some example swaps
     debug!("Sample swap scenarios for Curve factory {factory}:");
-    for (i, (pool_id, amount_in, token_in, token_out, state)) in swap_scenarios.iter().take(3).enumerate() {
+    for (i, (pool_id, amount_in, token_in, token_out, state)) in swap_scenarios
+        .iter()
+        .take(3)
+        .enumerate()
+    {
         match state.get_amount_out(amount_in.clone(), token_in, token_out) {
             Ok(result) => {
-                debug!("  [{i}] Pool {}: {} {} -> {} {} (amount: {})",
-                    &pool_id[..8], amount_in, token_in.symbol,
-                    result.amount, token_out.symbol, result.amount);
-            },
+                debug!(
+                    "  [{i}] Pool {}: {} {} -> {} {} (amount: {})",
+                    &pool_id[..8],
+                    amount_in,
+                    token_in.symbol,
+                    result.amount,
+                    token_out.symbol,
+                    result.amount
+                );
+            }
             Err(e) => {
-                warn!("  [{i}] Pool {} FAILED: {} {} -> {} error: {}",
-                    &pool_id[..8], amount_in, token_in.symbol, token_out.symbol, e);
-                if i == 0 { // Only panic on first swap failure
-                    panic!("Benchmark setup failed: Curve factory {} swap {} -> {} should work",
-                        factory, token_in.symbol, token_out.symbol);
+                warn!(
+                    "  [{i}] Pool {} FAILED: {} {} -> {} error: {}",
+                    &pool_id[..8],
+                    amount_in,
+                    token_in.symbol,
+                    token_out.symbol,
+                    e
+                );
+                if i == 0 {
+                    // Only panic on first swap failure
+                    panic!(
+                        "Benchmark setup failed: Curve factory {} swap {} -> {} should work",
+                        factory, token_in.symbol, token_out.symbol
+                    );
                 }
             }
         }
@@ -210,7 +238,9 @@ fn benchmark_curve_factory_swaps(c: &mut Criterion, factory: &str, data: &CurveF
             let mut scenario_iter = scenarios.iter().cycle();
             b.iter(|| {
                 let (_, amount_in, token_in, token_out, state) = scenario_iter.next().unwrap();
-                state.get_amount_out(amount_in.clone(), token_in, token_out).expect("swap failed!");
+                state
+                    .get_amount_out(amount_in.clone(), token_in, token_out)
+                    .expect("swap failed!");
             });
         },
     );
@@ -231,7 +261,7 @@ fn curve_factory_benchmarks(c: &mut Criterion) {
 
     info!("Found {} Curve factories", factory_data.len());
     for (factory, data) in &factory_data {
-        debug!("Factory {}: {} pools, {} states", factory, data.pools.len(), data.states.len());
+        debug!("Factory {factory}: {} pools, {} states", data.pools.len(), data.states.len());
     }
 
     // Benchmark each factory

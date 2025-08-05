@@ -96,10 +96,6 @@ async fn load_all_benchmark_data() -> BenchmarkDataByProtocol {
         .skip_state_decode_failures(true)
         .build()
         .await
-        .map_err(|e| {
-            warn!("Failed to build protocol stream: {:?}", e);
-            e
-        })
         .expect("Failed to build protocol stream")
         .boxed();
 
@@ -178,7 +174,9 @@ fn benchmark_protocol_swaps(c: &mut Criterion, protocol: &str, data: &ProtocolBe
     let (n_swaps, _) = get_config();
 
     let mut group = c.benchmark_group(format!("{protocol}_swaps"));
-    group.measurement_time(Duration::from_secs(10)).sample_size(n_swaps);
+    group
+        .measurement_time(Duration::from_secs(10))
+        .sample_size(n_swaps);
 
     // Add pool metadata to the group
     let total_pools = data.pools.len();
@@ -191,7 +189,9 @@ fn benchmark_protocol_swaps(c: &mut Criterion, protocol: &str, data: &ProtocolBe
     for (pool_id, tokens) in data.pools.iter().cycle().take(n_swaps) {
         if let Some(state) = data.states.get(pool_id) {
             if tokens.len() >= 2 {
-                let (upper, _) = state.get_limits(tokens[0].address.clone(), tokens[1].address.clone()).expect("limits failed");
+                let (upper, _) = state
+                    .get_limits(tokens[0].address.clone(), tokens[1].address.clone())
+                    .expect("limits failed");
                 let p: u32 = rng.random_range(1..=85);
                 let amount_in = upper * BigUint::from(p as u32) / BigUint::from(100u32);
                 swap_scenarios.push((
@@ -211,19 +211,38 @@ fn benchmark_protocol_swaps(c: &mut Criterion, protocol: &str, data: &ProtocolBe
 
     // Verify first swap works and show some example swaps
     debug!("Sample swap scenarios for {protocol}:");
-    for (i, (pool_id, amount_in, token_in, token_out, state)) in swap_scenarios.iter().take(5).enumerate() {
+    for (i, (pool_id, amount_in, token_in, token_out, state)) in swap_scenarios
+        .iter()
+        .take(5)
+        .enumerate()
+    {
         match state.get_amount_out(amount_in.clone(), token_in, token_out) {
             Ok(result) => {
-                debug!("  [{i}] Pool {}: {} {} -> {} {} (amount: {})", 
-                    &pool_id[..8], amount_in, token_in.symbol, 
-                    result.amount, token_out.symbol, result.amount);
-            },
+                debug!(
+                    "  [{i}] Pool {}: {} {} -> {} {} (amount: {})",
+                    &pool_id[..8],
+                    amount_in,
+                    token_in.symbol,
+                    result.amount,
+                    token_out.symbol,
+                    result.amount
+                );
+            }
             Err(e) => {
-                warn!("  [{i}] Pool {} FAILED: {} {} -> {} error: {}",
-                    &pool_id[..8], amount_in, token_in.symbol, token_out.symbol, e);
-                if i == 0 { // Only panic on first swap failure
-                    panic!("Benchmark setup failed: {} swap {} -> {} should work",
-                        protocol, token_in.symbol, token_out.symbol);
+                warn!(
+                    "  [{i}] Pool {} FAILED: {} {} -> {} error: {}",
+                    &pool_id[..8],
+                    amount_in,
+                    token_in.symbol,
+                    token_out.symbol,
+                    e
+                );
+                if i == 0 {
+                    // Only panic on first swap failure
+                    panic!(
+                        "Benchmark setup failed: {} swap {} -> {} should work",
+                        protocol, token_in.symbol, token_out.symbol
+                    );
                 }
             }
         }
@@ -239,7 +258,9 @@ fn benchmark_protocol_swaps(c: &mut Criterion, protocol: &str, data: &ProtocolBe
             let mut scenario_iter = scenarios.iter().cycle();
             b.iter(|| {
                 let (_, amount_in, token_in, token_out, state) = scenario_iter.next().unwrap();
-                state.get_amount_out(amount_in.clone(), token_in, token_out).expect("swap failed!");
+                state
+                    .get_amount_out(amount_in.clone(), token_in, token_out)
+                    .expect("swap failed!");
             });
         },
     );
