@@ -134,7 +134,7 @@ impl UniswapV4State {
                 liquidity: self.liquidity,
                 tick: self.tick,
                 gas_used: U256::from(3_000), // baseline gas cost for no-op swap
-            })
+            });
         }
 
         if self.liquidity == 0 {
@@ -370,7 +370,7 @@ impl ProtocolSim for UniswapV4State {
                     if amount_to_swap > I256::ZERO {
                         return Err(SimulationError::FatalError(
                             "Hook delta exceeds swap amount".into(),
-                        ))
+                        ));
                     }
                 }
 
@@ -541,8 +541,8 @@ impl ProtocolSim for UniswapV4State {
     fn delta_transition(
         &mut self,
         delta: ProtocolStateDelta,
-        _tokens: &HashMap<Bytes, Token>,
-        _balances: &Balances,
+        tokens: &HashMap<Bytes, Token>,
+        balances: &Balances,
     ) -> Result<(), TransitionError<String>> {
         // Apply attribute changes
         if let Some(liquidity) = delta
@@ -600,6 +600,17 @@ impl ProtocolSim for UniswapV4State {
                         .map_err(|err| TransitionError::DecodeError(err.to_string()))?,
                     0,
                 )
+            }
+        }
+
+        if let Some(hook) = self.hook.as_mut() {
+            if let Err(err) = hook.delta_transition(delta, tokens, balances) {
+                // Given some hooks don't implement delta transitions, we only want to error if we
+                // don't have a error that is recoverable. This is a workaround for now given that
+                // this error is shared amongst all types.
+                if !err.is_recoverable() {
+                    return Err(err);
+                }
             }
         }
 

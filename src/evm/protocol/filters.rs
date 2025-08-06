@@ -128,7 +128,7 @@ pub fn curve_pool_filter(component: &ComponentWithState) -> bool {
                 "Filtering out Curve pool {} because it belongs to an unsupported factory",
                 component.component.id
             );
-            return false
+            return false;
         }
     };
 
@@ -148,7 +148,7 @@ pub fn curve_pool_filter(component: &ComponentWithState) -> bool {
             "Filtering out Curve pool {} because it has a rebasing token that is not supported",
             component.component.id
         );
-        return false
+        return false;
     }
 
     true
@@ -163,6 +163,26 @@ pub fn uniswap_v4_pool_with_hook_filter(component: &ComponentWithState) -> bool 
     {
         if hooks.to_vec() != ZERO_ADDRESS_ARR {
             debug!("Filtering out UniswapV4 pool {} because it has hooks", component.component.id);
+            return false;
+        }
+    }
+    true
+}
+
+pub fn angstrom_pool_filter(component: &ComponentWithState) -> bool {
+    const ANGSTROM_ADDRESS: alloy::primitives::Address =
+        alloy::primitives::address!("0x0000000aa232009084Bd71A5797d089AA4Edfad4");
+
+    if let Some(hooks) = component
+        .component
+        .static_attributes
+        .get("hooks")
+    {
+        if hooks.to_vec() != **ANGSTROM_ADDRESS {
+            debug!(
+                "Filtering out UniswapV4 pool {} because it is not angstrom",
+                component.component.id
+            );
             return false;
         }
     }
