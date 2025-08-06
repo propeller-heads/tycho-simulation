@@ -110,6 +110,7 @@ pub(crate) fn solve_quadratic_function_for_trade(
             b_abs = safe_sub_u256(part2, b_abs)?;
             b_sig = true;
         }
+        b_abs = safe_div_u256(b_abs, ONE)?;
 
         let square_root_result = mul_floor(
             safe_mul_u256(safe_sub_u256(ONE, k)?, U256::from(4))?,
@@ -172,4 +173,174 @@ pub(crate) fn general_integrate(
         safe_mul_u256(safe_add_u256(safe_sub_u256(ONE, k)?, penalty)?, fair_amount)?,
         ONE2,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{ops::Div, str::FromStr};
+
+    use super::*;
+
+    fn eth(n: u64) -> U256 {
+        U256::from(n) * U256::pow(U256::from(10), U256::from(18))
+    }
+
+    #[test]
+    fn test_solve_quadratic_function_for_target_solidity() {
+        // k = 0
+        assert_eq!(
+            solve_quadratic_function_for_target(eth(100), eth(40), eth(1), U256::ZERO).unwrap(),
+            eth(140)
+        );
+
+        // Q1 = 0, return 0
+        assert_eq!(
+            solve_quadratic_function_for_target(U256::ZERO, eth(40), eth(1), eth(1)).unwrap(),
+            U256::ZERO
+        );
+
+        // i = 0, return Q1
+        assert_eq!(
+            solve_quadratic_function_for_target(eth(100), eth(40), U256::ZERO, eth(1)).unwrap(),
+            eth(100)
+        );
+
+        // deltaB = 0, return Q1
+        assert_eq!(
+            solve_quadratic_function_for_target(eth(100), U256::ZERO, eth(1), eth(1)).unwrap(),
+            eth(100)
+        );
+
+        // normal case
+        let res = solve_quadratic_function_for_target(
+            eth(100),
+            eth(40),
+            eth(1),
+            eth(1).div(U256::from(10)),
+        )
+        .unwrap();
+        assert_eq!(res, U256::from_str("138516480713450403000").unwrap());
+    }
+
+    #[test]
+    fn test_solve_quadratic_function_for_trade_solidity() {
+        // if V0 == 0 -> should revert or return error
+        let res =
+            solve_quadratic_function_for_trade(U256::ZERO, eth(100), eth(40), eth(1), U256::ZERO);
+        assert!(res.is_err());
+
+        // if delta == 0 -> always return 0
+        assert_eq!(
+            solve_quadratic_function_for_trade(eth(120), eth(100), U256::ZERO, eth(1), U256::ZERO)
+                .unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            solve_quadratic_function_for_trade(eth(120), eth(100), eth(1), U256::ZERO, eth(1))
+                .unwrap(),
+            U256::ZERO
+        );
+
+        // k = 0, constant price
+        // Q0 = 120 ether, Q1 = 100 ether, deltaB = 40 ether, i = 1 ether;
+        assert_eq!(
+            solve_quadratic_function_for_trade(eth(120), eth(100), eth(40), eth(1), U256::ZERO)
+                .unwrap(),
+            eth(40)
+        );
+        // Q0 = 120 ether, Q1 = 100 ether, deltaB = 40 ether, i = 2 ether;
+        assert_eq!(
+            solve_quadratic_function_for_trade(eth(120), eth(100), eth(40), eth(2), U256::ZERO)
+                .unwrap(),
+            eth(80)
+        );
+        // Q0 = 120 ether, Q1 = 100 ether, deltaB = 140 ether, i = 1 ether; maximum return is Q1
+        assert_eq!(
+            solve_quadratic_function_for_trade(eth(120), eth(100), eth(140), eth(1), U256::ZERO)
+                .unwrap(),
+            eth(100)
+        );
+        // Q0 = 120 ether, Q1 = 100 ether, deltaB = 60 ether, i = 2 ether; maximum return is Q1
+        assert_eq!(
+            solve_quadratic_function_for_trade(eth(120), eth(100), eth(60), eth(2), U256::ZERO)
+                .unwrap(),
+            eth(100)
+        );
+
+        // k = 1
+        // Q0 = 120 ether, Q1 = 100 ether, deltaB = 40 ether, i = 0;
+        assert_eq!(
+            solve_quadratic_function_for_trade(eth(120), eth(100), eth(40), U256::ZERO, U256::ZERO)
+                .unwrap(),
+            U256::ZERO
+        );
+        // Q0 = 100 ether, Q1 = 100 ether, deltaB = 40 ether, i = 1;
+        assert_eq!(
+            solve_quadratic_function_for_trade(eth(100), eth(100), eth(40), U256::ONE, eth(1))
+                .unwrap(),
+            U256::ZERO
+        );
+
+        // normal case, b is negative
+        let res = solve_quadratic_function_for_trade(
+            eth(120),
+            eth(100),
+            eth(40),
+            U256::ONE,
+            eth(1).div(U256::from(10)),
+        )
+        .unwrap();
+        assert_eq!(res, U256::from(38u64));
+
+        // normal case, b is positive
+        let res = solve_quadratic_function_for_trade(
+            eth(1),
+            eth(2),
+            eth(1),
+            eth(1),
+            eth(5).div(U256::from(10)),
+        )
+        .unwrap();
+        assert_eq!(res, U256::from_str("1219223593595584863").unwrap());
+    }
+
+    // reference tx: 0x8ab71d02d0d29958a619757ee64225b19d9f34c6043a680efd42def4e0c57076
+    #[test]
+    fn test_solve_quadratic_function_for_target() {
+        let v1 = U256::from_str("673062485699").unwrap();
+        let delta = U256::from_str("38828017565").unwrap();
+        let i = U256::from_str("1000000000000000000").unwrap();
+        let k = U256::from_str("80000000000000").unwrap();
+
+        let result = solve_quadratic_function_for_target(v1, delta, i, k);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), U256::from(711890324071u64));
+    }
+
+    #[test]
+    fn test_solve_quadratic_function_for_trade() {
+        let v0 = U256::from_str("711890324071").unwrap();
+        let v1 = U256::from_str("673062485699").unwrap();
+        let delta = U256::from_str("1475279565").unwrap();
+        let i = U256::from_str("1000000000000000000").unwrap();
+        let k = U256::from_str("80000000000000").unwrap();
+
+        let result = solve_quadratic_function_for_trade(v0, v1, delta, i, k);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), U256::from(1475265266));
+    }
+
+    // reference tx: 0xba4f820f677b3df7c3d29964b6a971891b4b835b01c7c9d25d679b7c930e4594
+    #[test]
+    fn test_general_integrate() {
+        let v0 = U256::from_str("711487341741").unwrap();
+        let v1 = U256::from_str("677767654931").unwrap();
+        let v2 = U256::from_str("671776002323").unwrap();
+        let i = U256::from_str("1000000000000000000").unwrap();
+        let k = U256::from_str("80000000000000").unwrap();
+
+        let result = general_integrate(v0, v1, v2, i, k);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), U256::from_str("5991706200").unwrap());
+    }
 }

@@ -430,3 +430,133 @@ impl ProtocolSim for DodoV2State {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, str::FromStr};
+
+    use alloy::primitives::Address;
+    use revm::primitives::U256;
+    use tycho_common::{
+        models::{token::Token, Chain},
+        Bytes,
+    };
+
+    use crate::evm::protocol::dodo_v2::state::{DodoV2State, RState};
+
+    #[test]
+    fn test_query_sell_quote_token() {
+        // reference tx trace: 0x8ab71d02d0d29958a619757ee64225b19d9f34c6043a680efd42def4e0c57076
+        let i = U256::from_str("1000000000000000000").unwrap();
+        let k = U256::from_str("80000000000000").unwrap();
+        let b = U256::from_str("673062485699").unwrap();
+        let q = U256::from_str("750288026085").unwrap();
+        let b0 = U256::from_str("711890324071").unwrap();
+        let q0 = U256::from_str("711460008520").unwrap();
+        let r = U256::from_str("1").unwrap();
+
+        let r_state = RState::try_from(r).unwrap();
+        let lp_fee_rate = U256::from_str("6400000000000").unwrap();
+        let mt_fee_rate = U256::from_str("1600000000000").unwrap();
+        let mt_fee_base = U256::from_str("95361908").unwrap();
+        let mt_fee_quote = U256::from_str("95863902").unwrap();
+
+        let base_token = Token::new(
+            &Bytes::from_str("0xdAC17F958D2ee523a2206206994597C13D831ec7").unwrap(),
+            "USDT",
+            6,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        );
+
+        let quote_token = Token::new(
+            &Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
+            "USDC",
+            6,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        );
+
+        let component_balance = HashMap::from_iter([
+            (Address::from_slice(&base_token.address), U256::from_str("673157847607").unwrap()),
+            (Address::from_slice(&quote_token.address), U256::from_str("750383889987").unwrap()),
+        ]);
+
+        let mut gsp_pool = DodoV2State::new(
+            i,
+            k,
+            b,
+            q,
+            b0,
+            q0,
+            r_state,
+            lp_fee_rate,
+            mt_fee_rate,
+            mt_fee_quote,
+            mt_fee_base,
+            base_token.address.clone(),
+            quote_token.address.clone(),
+            component_balance.clone(),
+        )
+        .unwrap();
+
+        let (maybe_b0, maybe_q0) = gsp_pool.adjust_target().unwrap();
+        if let Some(new_b0) = maybe_b0 {
+            gsp_pool.b0 = new_b0;
+        }
+        if let Some(new_q0) = maybe_q0 {
+            gsp_pool.q0 = new_q0;
+        }
+        let pay_quote_amount = U256::from_str("1475279565").unwrap();
+
+        let (receive_base_amount, mt_fee, new_r_state, new_quote_target) = gsp_pool
+            .query_sell_quote_token(pay_quote_amount)
+            .unwrap();
+
+        assert_eq!(receive_base_amount, U256::from_str("1475253465").unwrap());
+        assert_eq!(mt_fee, U256::from_str("2360").unwrap());
+        assert_eq!(new_r_state, RState::AboveOne);
+        assert_eq!(new_quote_target, U256::from_str("711460008520").unwrap());
+    }
+
+    #[test]
+    fn test_adjust_target() {
+        let i = U256::from_str("1000000000000000000").unwrap();
+        let k = U256::from_str("80000000000000").unwrap();
+        let b = U256::from_str("673062485699").unwrap();
+        let q = U256::from_str("750288026085").unwrap();
+        let b0 = U256::from_str("711890324071").unwrap();
+        let q0 = U256::from_str("711460008520").unwrap();
+        let r_state = RState::AboveOne;
+
+        let mut state = DodoV2State::new(
+            i,
+            k,
+            b,
+            q,
+            b0,
+            q0,
+            r_state,
+            U256::from(6400000000000u64), // lp_fee_rate
+            U256::from(1600000000000u64), // mt_fee_rate
+            U256::from(95863902u64),      // mt_fee_quote
+            U256::from(95361908u64),      // mt_fee_base
+            Bytes::from_str("0xdAC17F958D2ee523a2206206994597C13D831ec7").unwrap(),
+            Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
+            HashMap::new(),
+        )
+        .unwrap();
+
+        let (maybe_b0, maybe_q0) = state.adjust_target().unwrap();
+        assert!(maybe_b0.is_none());
+        assert!(maybe_q0.is_some());
+        assert_eq!(maybe_q0.unwrap(), U256::from_str("711460008520").unwrap());
+        assert_eq!(state.b0, U256::from_str("711890324071").unwrap());
+        assert_eq!(state.q0, U256::from_str("711460008520").unwrap());
+        assert_eq!(state.r, RState::AboveOne);
+    }
+}
