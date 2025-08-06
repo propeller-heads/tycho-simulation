@@ -136,6 +136,7 @@ impl DodoV2State {
         }
     }
 
+    /// ============ R = 1 cases ============
     fn r_one_sell_base_token(&self, pay_base_amount: U256) -> Result<U256, SimulationError> {
         solve_quadratic_function_for_trade(self.q0, self.q0, pay_base_amount, self.i, self.k)
     }
@@ -150,14 +151,22 @@ impl DodoV2State {
         )
     }
 
+    /// ============ R > 1 cases ============
     fn r_above_sell_base_token(&self, pay_base_amount: U256) -> Result<U256, SimulationError> {
         general_integrate(self.b0, safe_add_u256(self.b, pay_base_amount)?, self.b, self.i, self.k)
     }
 
     fn r_above_sell_quote_token(&self, pay_quote_amount: U256) -> Result<U256, SimulationError> {
-        general_integrate(self.b0, self.b, pay_quote_amount, reciprocal_floor(self.i)?, self.k)
+        solve_quadratic_function_for_trade(
+            self.b0,
+            self.b,
+            pay_quote_amount,
+            reciprocal_floor(self.i)?,
+            self.k,
+        )
     }
 
+    /// ============ R < 1 cases ============
     fn r_below_sell_base_token(&self, pay_base_amount: U256) -> Result<U256, SimulationError> {
         solve_quadratic_function_for_trade(self.q0, self.q, pay_base_amount, self.i, self.k)
     }
@@ -172,6 +181,12 @@ impl DodoV2State {
         )
     }
 
+    /// Sells base token and returns the amount of quote token received and the new RState.
+    /// # Arguments
+    /// * `pay_base_amount`: The amount of base token to sell.
+    /// # Returns
+    /// * `Result<(U256, RState), SimulationError>`: A tuple containing the amount of quote token
+    ///   received and the new RState. Returns an error if the operation fails.
     fn sell_base_token(&self, pay_base_amount: U256) -> Result<(U256, RState), SimulationError> {
         if self.r == RState::ONE {
             Ok((self.r_one_sell_base_token(pay_base_amount)?, RState::BelowOne))
@@ -201,9 +216,15 @@ impl DodoV2State {
         }
     }
 
+    /// Sells quote token and returns the amount of base token received and the new RState.
+    /// # Arguments
+    /// * `pay_quote_amount`: The amount of quote token to sell.
+    /// # Returns
+    /// * `Result<(U256, RState), SimulationError>`: A tuple containing the amount of base token
+    ///   received and the new RState. Returns an error if the operation fails.
     fn sell_quote_token(&self, pay_quote_amount: U256) -> Result<(U256, RState), SimulationError> {
         if self.r == RState::ONE {
-            Ok((self.r_one_sell_quote_token(pay_quote_amount)?, RState::BelowOne))
+            Ok((self.r_one_sell_quote_token(pay_quote_amount)?, RState::AboveOne))
         } else if self.r == RState::AboveOne {
             Ok((self.r_above_sell_quote_token(pay_quote_amount)?, RState::AboveOne))
         } else {
@@ -255,6 +276,19 @@ impl DodoV2State {
         Ok((receive_quote_amount, mt_fee, new_r_state, self.b0))
     }
 
+    /// Queries the amount of base token received when selling a quote token.
+    /// Returns the amount of base token received, the market maker fee, the new RState, and the
+    /// quote target.
+    ///
+    /// # Arguments
+    /// * `pay_quote_amount`: The amount of quote token to sell.
+    /// # Returns
+    /// * `Result<(U256, U256, RState, U256), SimulationError>`: A tuple containing the amount of
+    ///   base token received, the market maker fee, the new RState, and the quote target. Returns
+    ///  an error if the operation fails.
+    /// # Errors
+    /// * `SimulationError`: If the operation fails due to an error in the simulation, such as an
+    ///   invalid input or a mathematical error.
     fn query_sell_quote_token(
         &self,
         pay_quote_amount: U256,
@@ -307,10 +341,13 @@ impl ProtocolSim for DodoV2State {
         };
 
         if token_in.address == self.base_token {
-            let base_balance = safe_add_u256(get_balance(&token_in_address)?, amount_in_u256)?;
+            let base_balance = safe_sub_u256(
+                safe_add_u256(get_balance(&token_in_address)?, amount_in_u256)?,
+                self.mt_fee_base,
+            )?;
             let mut quote_balance = get_balance(&token_out_address)?;
 
-            let base_input = safe_sub_u256(amount_in_u256, self.mt_fee_base)?;
+            let base_input = safe_sub_u256(base_balance, self.b)?;
             let (receive_quote_amount, mt_fee, new_r_state, new_base_target) =
                 self.query_sell_base_token(base_input)?;
 
@@ -336,14 +373,17 @@ impl ProtocolSim for DodoV2State {
 
             Ok(GetAmountOutResult::new(
                 u256_to_biguint(receive_quote_amount),
-                u256_to_biguint(U256::from(0)), // todo gas
+                u256_to_biguint(U256::from(128000)),
                 Box::new(new_state),
             ))
         } else if token_in.address == self.quote_token {
-            let quote_balance = safe_add_u256(get_balance(&token_in_address)?, amount_in_u256)?;
+            let quote_balance = safe_sub_u256(
+                safe_add_u256(get_balance(&token_in_address)?, amount_in_u256)?,
+                self.mt_fee_quote,
+            )?;
             let mut base_balance = get_balance(&token_out_address)?;
 
-            let quote_input = safe_sub_u256(amount_in_u256, self.mt_fee_quote)?;
+            let quote_input = safe_sub_u256(quote_balance, self.q)?;
             let (receive_base_amount, mt_fee, new_r_state, new_quote_target) =
                 self.query_sell_quote_token(quote_input)?;
 
@@ -369,7 +409,7 @@ impl ProtocolSim for DodoV2State {
 
             Ok(GetAmountOutResult::new(
                 u256_to_biguint(receive_base_amount),
-                u256_to_biguint(U256::from(0)), // todo gas
+                u256_to_biguint(U256::from(116000)),
                 Box::new(new_state),
             ))
         } else {
@@ -436,31 +476,39 @@ mod tests {
     use std::{collections::HashMap, str::FromStr};
 
     use alloy::primitives::Address;
+    use num_bigint::BigUint;
     use revm::primitives::U256;
     use tycho_common::{
         models::{token::Token, Chain},
         Bytes,
     };
 
-    use crate::evm::protocol::dodo_v2::state::{DodoV2State, RState};
+    use crate::{
+        evm::protocol::dodo_v2::state::{DodoV2State, RState},
+        protocol::state::ProtocolSim,
+    };
 
-    #[test]
-    fn test_query_sell_quote_token() {
-        // reference tx trace: 0x8ab71d02d0d29958a619757ee64225b19d9f34c6043a680efd42def4e0c57076
-        let i = U256::from_str("1000000000000000000").unwrap();
-        let k = U256::from_str("80000000000000").unwrap();
-        let b = U256::from_str("673062485699").unwrap();
-        let q = U256::from_str("750288026085").unwrap();
-        let b0 = U256::from_str("711890324071").unwrap();
-        let q0 = U256::from_str("711460008520").unwrap();
-        let r = U256::from_str("1").unwrap();
+    struct TestEnv {
+        state: DodoV2State,
+        base_token: Token,
+        quote_token: Token,
+    }
 
-        let r_state = RState::try_from(r).unwrap();
-        let lp_fee_rate = U256::from_str("6400000000000").unwrap();
-        let mt_fee_rate = U256::from_str("1600000000000").unwrap();
-        let mt_fee_base = U256::from_str("95361908").unwrap();
-        let mt_fee_quote = U256::from_str("95863902").unwrap();
-
+    fn build_test_state(
+        i: &str,
+        k: &str,
+        b: &str,
+        q: &str,
+        b0: &str,
+        q0: &str,
+        lp_fee_rate: &str,
+        mt_fee_rate: &str,
+        mt_fee_quote: &str,
+        mt_fee_base: &str,
+        base_balance: &str,
+        quote_balance: &str,
+        r: RState,
+    ) -> TestEnv {
         let base_token = Token::new(
             &Bytes::from_str("0xdAC17F958D2ee523a2206206994597C13D831ec7").unwrap(),
             "USDT",
@@ -470,7 +518,6 @@ mod tests {
             Chain::Ethereum,
             100,
         );
-
         let quote_token = Token::new(
             &Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
             "USDC",
@@ -480,83 +527,199 @@ mod tests {
             Chain::Ethereum,
             100,
         );
-
         let component_balance = HashMap::from_iter([
-            (Address::from_slice(&base_token.address), U256::from_str("673157847607").unwrap()),
-            (Address::from_slice(&quote_token.address), U256::from_str("750383889987").unwrap()),
+            (Address::from_slice(&base_token.address), U256::from_str(base_balance).unwrap()),
+            (Address::from_slice(&quote_token.address), U256::from_str(quote_balance).unwrap()),
         ]);
 
-        let mut gsp_pool = DodoV2State::new(
-            i,
-            k,
-            b,
-            q,
-            b0,
-            q0,
-            r_state,
-            lp_fee_rate,
-            mt_fee_rate,
-            mt_fee_quote,
-            mt_fee_base,
+        let state = DodoV2State::new(
+            U256::from_str(i).unwrap(),
+            U256::from_str(k).unwrap(),
+            U256::from_str(b).unwrap(),
+            U256::from_str(q).unwrap(),
+            U256::from_str(b0).unwrap(),
+            U256::from_str(q0).unwrap(),
+            r,
+            U256::from_str(lp_fee_rate).unwrap(),
+            U256::from_str(mt_fee_rate).unwrap(),
+            U256::from_str(mt_fee_quote).unwrap(),
+            U256::from_str(mt_fee_base).unwrap(),
             base_token.address.clone(),
             quote_token.address.clone(),
-            component_balance.clone(),
+            component_balance,
         )
-        .unwrap();
-
-        let (maybe_b0, maybe_q0) = gsp_pool.adjust_target().unwrap();
-        if let Some(new_b0) = maybe_b0 {
-            gsp_pool.b0 = new_b0;
-        }
-        if let Some(new_q0) = maybe_q0 {
-            gsp_pool.q0 = new_q0;
-        }
-        let pay_quote_amount = U256::from_str("1475279565").unwrap();
-
-        let (receive_base_amount, mt_fee, new_r_state, new_quote_target) = gsp_pool
-            .query_sell_quote_token(pay_quote_amount)
             .unwrap();
 
-        assert_eq!(receive_base_amount, U256::from_str("1475253465").unwrap());
-        assert_eq!(mt_fee, U256::from_str("2360").unwrap());
-        assert_eq!(new_r_state, RState::AboveOne);
-        assert_eq!(new_quote_target, U256::from_str("711460008520").unwrap());
+        TestEnv { state, base_token, quote_token }
     }
 
     #[test]
-    fn test_adjust_target() {
-        let i = U256::from_str("1000000000000000000").unwrap();
-        let k = U256::from_str("80000000000000").unwrap();
-        let b = U256::from_str("673062485699").unwrap();
-        let q = U256::from_str("750288026085").unwrap();
-        let b0 = U256::from_str("711890324071").unwrap();
-        let q0 = U256::from_str("711460008520").unwrap();
-        let r_state = RState::AboveOne;
+    fn test_sell_quote_token_only() {
+        // reference tx trace: 0x8ab71d02d0d29958a619757ee64225b19d9f34c6043a680efd42def4e0c57076
+        let env = build_test_state(
+            "1000000000000000000",
+            "80000000000000",
+            "673062485699",
+            "750288026085",
+            "711890324071",
+            "711460008520",
+            "6400000000000",
+            "1600000000000",
+            "95863902",
+            "95361908",
+            "673157847607",
+            "750383889987",
+            RState::AboveOne,
+        );
 
-        let mut state = DodoV2State::new(
-            i,
-            k,
-            b,
-            q,
-            b0,
-            q0,
-            r_state,
-            U256::from(6400000000000u64), // lp_fee_rate
-            U256::from(1600000000000u64), // mt_fee_rate
-            U256::from(95863902u64),      // mt_fee_quote
-            U256::from(95361908u64),      // mt_fee_base
-            Bytes::from_str("0xdAC17F958D2ee523a2206206994597C13D831ec7").unwrap(),
-            Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
-            HashMap::new(),
-        )
-        .unwrap();
+        let pay_quote_amount = U256::from_str("1475279565").unwrap();
+        let (receive_base_amount, new_r_state) = env
+            .state
+            .sell_quote_token(pay_quote_amount)
+            .unwrap();
+        assert_eq!(receive_base_amount, U256::from_str("1475265266").unwrap());
+        assert_eq!(new_r_state, RState::AboveOne);
+    }
 
-        let (maybe_b0, maybe_q0) = state.adjust_target().unwrap();
-        assert!(maybe_b0.is_none());
-        assert!(maybe_q0.is_some());
-        assert_eq!(maybe_q0.unwrap(), U256::from_str("711460008520").unwrap());
-        assert_eq!(state.b0, U256::from_str("711890324071").unwrap());
-        assert_eq!(state.q0, U256::from_str("711460008520").unwrap());
-        assert_eq!(state.r, RState::AboveOne);
+    #[test]
+    fn test_query_sell_quote_token_only() {
+        // reference tx trace: 0x8ab71d02d0d29958a619757ee64225b19d9f34c6043a680efd42def4e0c57076
+        let env = build_test_state(
+            "1000000000000000000",
+            "80000000000000",
+            "673062485699",
+            "750288026085",
+            "711890324071",
+            "711460008520",
+            "6400000000000",
+            "1600000000000",
+            "95863902",
+            "95361908",
+            "673157847607",
+            "750383889987",
+            RState::AboveOne,
+        );
+
+        let pay_quote_amount = U256::from_str("1475279565").unwrap();
+        let (amount, mt_fee, r_state, q0) = env
+            .state
+            .query_sell_quote_token(pay_quote_amount)
+            .unwrap();
+        assert_eq!(amount, U256::from_str("1475253465").unwrap());
+        assert_eq!(mt_fee, U256::from_str("2360").unwrap());
+        assert_eq!(r_state, RState::AboveOne);
+        assert_eq!(q0, U256::from_str("711460008520").unwrap());
+    }
+
+    #[test]
+    fn test_get_amount_out_quote_to_base() {
+        // reference tx trace: 0x8ab71d02d0d29958a619757ee64225b19d9f34c6043a680efd42def4e0c57076
+        let env = build_test_state(
+            "1000000000000000000",
+            "80000000000000",
+            "673062485699",
+            "750288026085",
+            "711890324071",
+            "711460008520",
+            "6400000000000",
+            "1600000000000",
+            "95863902",
+            "95361908",
+            "673157847607",
+            "750383889987",
+            RState::AboveOne,
+        );
+
+        let pay_quote_amount = BigUint::from_str("1475279565").unwrap();
+        let res = env
+            .state
+            .get_amount_out(pay_quote_amount, &env.quote_token, &env.base_token)
+            .unwrap();
+        assert_eq!(res.amount, BigUint::from_str("1475253465").unwrap());
+    }
+
+    #[test]
+    fn test_sell_base_token_only() {
+        // reference tx trace: 0x2d83a1740f5a2eef4f3a423f1553619f0c2c64b52c8fc9be29ad974597884112
+        let env = build_test_state(
+            "1000000000000000000",
+            "80000000000000",
+            "670745193540",
+            "752725766257",
+            "711943314208",
+            "711527443153",
+            "6400000000000",
+            "1600000000000",
+            "110733284",
+            "110230253",
+            "670855423793",
+            "752836499541",
+            RState::AboveOne,
+        );
+
+        let pay_base_amount = U256::from_str("5415998652").unwrap();
+        let (receive_quote_amount, new_r_state) = env
+            .state
+            .sell_base_token(pay_base_amount)
+            .unwrap();
+        assert_eq!(receive_quote_amount, U256::from_str("5416049601").unwrap());
+        assert_eq!(new_r_state, RState::AboveOne);
+    }
+
+    #[test]
+    fn test_query_sell_base_token_only() {
+        // reference tx trace: 0x2d83a1740f5a2eef4f3a423f1553619f0c2c64b52c8fc9be29ad974597884112
+        let env = build_test_state(
+            "1000000000000000000",
+            "80000000000000",
+            "670745193540",
+            "752725766257",
+            "711943314208",
+            "711527443153",
+            "6400000000000",
+            "1600000000000",
+            "110733284",
+            "110230253",
+            "670855423793",
+            "752836499541",
+            RState::AboveOne,
+        );
+
+        let pay_base_amount = U256::from_str("5415998652").unwrap();
+        let (amount, mt_fee, r_state, q0) = env
+            .state
+            .query_sell_base_token(pay_base_amount)
+            .unwrap();
+        assert_eq!(amount, U256::from_str("5416006274").unwrap());
+        assert_eq!(mt_fee, U256::from_str("8665").unwrap());
+        assert_eq!(r_state, RState::AboveOne);
+        assert_eq!(q0, U256::from_str("711943314208").unwrap());
+    }
+
+    #[test]
+    fn test_get_amount_out_base_to_quote() {
+        // reference tx trace: 0x2d83a1740f5a2eef4f3a423f1553619f0c2c64b52c8fc9be29ad974597884112
+        let env = build_test_state(
+            "1000000000000000000",
+            "80000000000000",
+            "670745193540",
+            "752725766257",
+            "711943314208",
+            "711527443153",
+            "6400000000000",
+            "1600000000000",
+            "110733284",
+            "110230253",
+            "670855423793",
+            "752836499541",
+            RState::AboveOne,
+        );
+
+        let pay_base_amount = BigUint::from_str("5415998652").unwrap();
+        let res = env
+            .state
+            .get_amount_out(pay_base_amount, &env.base_token, &env.quote_token)
+            .unwrap();
+        assert_eq!(res.amount, BigUint::from_str("5416006274").unwrap());
     }
 }
