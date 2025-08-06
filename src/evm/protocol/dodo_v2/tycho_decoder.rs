@@ -165,6 +165,7 @@ impl TryFromWithBlock<ComponentWithState> for DodoV2State {
             base_token,
             quote_token,
             component_balances,
+            snapshot.component.id,
         )?)
     }
 }

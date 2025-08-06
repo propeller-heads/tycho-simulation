@@ -7,7 +7,7 @@ use tycho_common::{dto::ProtocolStateDelta, models::token::Token, Bytes};
 use crate::{
     evm::protocol::{
         safe_math::{safe_add_u256, safe_sub_u256},
-        u256_num::{biguint_to_u256, u256_to_biguint},
+        u256_num::{biguint_to_u256, u256_to_biguint, u256_to_f64},
         utils::dodo::{
             decimal_math::{mul_floor, reciprocal_floor, ONE},
             dodo_math::{
@@ -65,6 +65,7 @@ pub struct DodoV2State {
     mt_fee_quote: U256,
     mt_fee_base: U256,
     balances: HashMap<Address, U256>,
+    component_id: String,
 }
 
 impl DodoV2State {
@@ -84,6 +85,7 @@ impl DodoV2State {
         base_token: Bytes,
         quote_token: Bytes,
         balances: HashMap<Address, U256>,
+        component_id: String,
     ) -> Result<Self, SimulationError> {
         let mut state = Self {
             i,
@@ -100,6 +102,7 @@ impl DodoV2State {
             mt_fee_quote,
             mt_fee_base,
             balances,
+            component_id,
         };
         let (maybe_b0, maybe_q0) = state.adjust_target()?;
         if let Some(new_b0) = maybe_b0 {
@@ -255,7 +258,6 @@ impl DodoV2State {
     /// Returns the amount of quote token received, the market maker fee, the new RState, and the
     /// base target.
     ///
-    ///
     /// # Arguments
     /// * `pay_base_amount`: The amount of base token to sell.
     /// # Returns
@@ -285,7 +287,7 @@ impl DodoV2State {
     /// # Returns
     /// * `Result<(U256, U256, RState, U256), SimulationError>`: A tuple containing the amount of
     ///   base token received, the market maker fee, the new RState, and the quote target. Returns
-    ///  an error if the operation fails.
+    ///   an error if the operation fails.
     /// # Errors
     /// * `SimulationError`: If the operation fails due to an error in the simulation, such as an
     ///   invalid input or a mathematical error.
@@ -304,16 +306,19 @@ impl DodoV2State {
 
 impl ProtocolSim for DodoV2State {
     fn fee(&self) -> f64 {
-        let sum_f64 = (self.mt_fee_rate + self.lp_fee_rate)
-            .to_string()
-            .parse::<f64>()
-            .unwrap();
-        let base_f64 = ONE.to_string().parse::<f64>().unwrap();
-        (sum_f64 / base_f64) * 100.0
+        let sum = self.mt_fee_rate + self.lp_fee_rate;
+        let fee_times_100 = sum * U256::from(100u64);
+        u256_to_f64(fee_times_100) / u256_to_f64(ONE)
     }
 
-    fn spot_price(&self, _base: &Token, _quote: &Token) -> Result<f64, SimulationError> {
-        todo!()
+    fn spot_price(&self, a: &Token, b: &Token) -> Result<f64, SimulationError> {
+        if a < b {
+            let token_correction = 10f64.powi(a.decimals as i32 - b.decimals as i32);
+            Ok((u256_to_f64(self.q) / u256_to_f64(self.b)) * token_correction)
+        } else {
+            let token_correction = 10f64.powi(b.decimals as i32 - a.decimals as i32);
+            Ok((u256_to_f64(self.b) / u256_to_f64(self.q)) * token_correction)
+        }
     }
 
     fn get_amount_out(
@@ -427,11 +432,82 @@ impl ProtocolSim for DodoV2State {
 
     fn delta_transition(
         &mut self,
-        _delta: ProtocolStateDelta,
+        delta: ProtocolStateDelta,
         _tokens: &HashMap<Bytes, Token>,
-        _balances: &Balances,
+        balances: &Balances,
     ) -> Result<(), TransitionError<String>> {
-        todo!()
+        if let Some(base_reserve) = delta.updated_attributes.get("B") {
+            self.b = U256::from_be_slice(base_reserve);
+        };
+        if let Some(quote_reserve) = delta.updated_attributes.get("Q") {
+            self.q = U256::from_be_slice(quote_reserve);
+        };
+        if let Some(base_target) = delta.updated_attributes.get("B0") {
+            self.b0 = U256::from_be_slice(base_target);
+        };
+        if let Some(quote_target) = delta.updated_attributes.get("Q0") {
+            self.q0 = U256::from_be_slice(quote_target);
+        };
+        if let Some(r) = delta.updated_attributes.get("R") {
+            let r_uint = U256::from_be_slice(r);
+            self.r = RState::try_from(r_uint)
+                .map_err(|_| TransitionError::DecodeError("Unsupported R value".to_string()))?;
+        };
+        if let Some(i) = delta.updated_attributes.get("I") {
+            self.i = U256::from_be_slice(i);
+        };
+        if let Some(k) = delta.updated_attributes.get("K") {
+            self.k = U256::from_be_slice(k);
+        };
+        if let Some(lp_fee_rate) = delta
+            .updated_attributes
+            .get("LP_FEE_RATE")
+        {
+            self.lp_fee_rate = U256::from_be_slice(lp_fee_rate);
+        };
+        if let Some(mt_fee_rate) = delta
+            .updated_attributes
+            .get("MT_FEE_RATE")
+        {
+            self.mt_fee_rate = U256::from_be_slice(mt_fee_rate);
+        };
+        if let Some(mt_fee_quote) = delta
+            .updated_attributes
+            .get("MT_FEE_QUOTE")
+        {
+            self.mt_fee_quote = U256::from_be_slice(mt_fee_quote);
+        };
+        if let Some(mt_fee_base) = delta
+            .updated_attributes
+            .get("MT_FEE_BASE")
+        {
+            self.mt_fee_base = U256::from_be_slice(mt_fee_base);
+        };
+
+        let component_balances = balances
+            .component_balances
+            .get(&self.component_id)
+            .ok_or_else(|| {
+                TransitionError::DecodeError(format!(
+                    "Component ID {} not found",
+                    self.component_id
+                ))
+            })?;
+        if let Some(balance) = component_balances.get(&self.base_token) {
+            let balance_u256 = U256::from_be_slice(balance);
+            let address = Address::from_slice(&self.base_token);
+            self.balances
+                .insert(address, balance_u256);
+        }
+
+        if let Some(balance) = component_balances.get(&self.quote_token) {
+            let balance_u256 = U256::from_be_slice(balance);
+            let address = Address::from_slice(&self.quote_token);
+            self.balances
+                .insert(address, balance_u256);
+        }
+
+        Ok(())
     }
 
     fn clone_box(&self) -> Box<dyn ProtocolSim> {
@@ -479,12 +555,14 @@ mod tests {
     use num_bigint::BigUint;
     use revm::primitives::U256;
     use tycho_common::{
+        dto::ProtocolStateDelta,
         models::{token::Token, Chain},
         Bytes,
     };
 
     use crate::{
         evm::protocol::dodo_v2::state::{DodoV2State, RState},
+        models::Balances,
         protocol::state::ProtocolSim,
     };
 
@@ -494,6 +572,7 @@ mod tests {
         quote_token: Token,
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build_test_state(
         i: &str,
         k: &str,
@@ -547,10 +626,33 @@ mod tests {
             base_token.address.clone(),
             quote_token.address.clone(),
             component_balance,
+            "dodo_v2_test_component".to_string(),
         )
-            .unwrap();
+        .unwrap();
 
         TestEnv { state, base_token, quote_token }
+    }
+
+    #[test]
+    fn test_fee() {
+        let env = build_test_state(
+            "1000000000000000000",
+            "80000000000000",
+            "673062485699",
+            "750288026085",
+            "711890324071",
+            "711460008520",
+            "6400000000000",
+            "1600000000000",
+            "95863902",
+            "95361908",
+            "673157847607",
+            "750383889987",
+            RState::AboveOne,
+        );
+
+        let fee = env.state.fee();
+        assert_eq!(fee, 0.0008);
     }
 
     #[test]
@@ -721,5 +823,125 @@ mod tests {
             .get_amount_out(pay_base_amount, &env.base_token, &env.quote_token)
             .unwrap();
         assert_eq!(res.amount, BigUint::from_str("5416006274").unwrap());
+    }
+
+    #[test]
+    fn test_delta_transition() {
+        let before_transition_base_balance = 670855423793u64;
+        let before_transition_quote_balance = 752836499541u64;
+
+        let mut state = build_test_state(
+            "1000000000000000000",
+            "80000000000000",
+            "670745193540",
+            "752725766257",
+            "711943314208",
+            "711527443153",
+            "6400000000000",
+            "1600000000000",
+            "110733284",
+            "110230253",
+            &before_transition_base_balance.to_string(),
+            &before_transition_quote_balance.to_string(),
+            RState::AboveOne,
+        )
+        .state;
+
+        let attributes: HashMap<String, Bytes> = [
+            ("B".to_string(), Bytes::from(1000u64.to_be_bytes().to_vec())),
+            ("Q".to_string(), Bytes::from(2000u64.to_be_bytes().to_vec())),
+            (
+                "B0".to_string(),
+                Bytes::from(
+                    711_943_314_208u64
+                        .to_be_bytes()
+                        .to_vec(),
+                ),
+            ),
+            (
+                "Q0".to_string(),
+                Bytes::from(
+                    711_527_443_153u64
+                        .to_be_bytes()
+                        .to_vec(),
+                ),
+            ),
+            (
+                "R".to_string(),
+                Bytes::from(
+                    (RState::BelowOne as u8)
+                        .to_be_bytes()
+                        .to_vec(),
+                ),
+            ),
+            (
+                "I".to_string(),
+                Bytes::from(
+                    1_000_000_000_000u64
+                        .to_be_bytes()
+                        .to_vec(),
+                ),
+            ),
+            ("K".to_string(), Bytes::from(80_000_000_000u64.to_be_bytes().to_vec())),
+            ("LP_FEE_RATE".to_string(), Bytes::from(6_400_000_000u64.to_be_bytes().to_vec())),
+            ("MT_FEE_RATE".to_string(), Bytes::from(1_600_000_000u64.to_be_bytes().to_vec())),
+            ("MT_FEE_QUOTE".to_string(), Bytes::from(110_733_284u64.to_be_bytes().to_vec())),
+            ("MT_FEE_BASE".to_string(), Bytes::from(110_230_253u64.to_be_bytes().to_vec())),
+        ]
+        .into_iter()
+        .collect();
+
+        let delta = ProtocolStateDelta {
+            component_id: "dodo_v2_test_component".to_string(),
+            updated_attributes: attributes,
+            deleted_attributes: Default::default(),
+        };
+
+        let updated_base_balance = 670855423803u64;
+        let updated_quote_balance = 752836499531u64;
+        let balances = Balances {
+            component_balances: HashMap::from_iter([(
+                "dodo_v2_test_component".to_string(),
+                HashMap::from_iter([
+                    (
+                        state.base_token.clone(),
+                        Bytes::from(
+                            updated_base_balance
+                                .to_be_bytes()
+                                .to_vec(),
+                        ),
+                    ),
+                    (
+                        state.quote_token.clone(),
+                        Bytes::from(
+                            updated_quote_balance
+                                .to_be_bytes()
+                                .to_vec(),
+                        ),
+                    ),
+                ]),
+            )]),
+            account_balances: Default::default(),
+        };
+
+        state
+            .delta_transition(delta, &HashMap::new(), &balances)
+            .expect("Failed to transition state");
+
+        let after_transition_base_balance = state
+            .balances
+            .get(&Address::from_slice(&state.base_token))
+            .expect("Base token balance not found");
+
+        let after_transition_quote_balance = state
+            .balances
+            .get(&Address::from_slice(&state.quote_token))
+            .expect("Quote token balance not found");
+
+        assert_eq!(*after_transition_base_balance, U256::from(updated_base_balance));
+        assert_eq!(*after_transition_quote_balance, U256::from(updated_quote_balance));
+        assert_eq!(state.b, U256::from(1000u64));
+        assert_eq!(state.q, U256::from(2000u64));
+        assert_eq!(state.r, RState::BelowOne);
     }
 }
