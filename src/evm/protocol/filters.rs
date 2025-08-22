@@ -161,7 +161,7 @@ pub fn curve_pool_filter(component: &ComponentWithState) -> bool {
                 "Filtering out Curve pool {} because it belongs to an unsupported factory",
                 component.component.id
             );
-            return false
+            return false;
         }
     };
 
@@ -181,7 +181,7 @@ pub fn curve_pool_filter(component: &ComponentWithState) -> bool {
             "Filtering out Curve pool {} because it has a rebasing token that is not supported",
             component.component.id
         );
-        return false
+        return false;
     }
 
     true
