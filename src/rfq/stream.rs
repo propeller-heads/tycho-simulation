@@ -213,7 +213,7 @@ mod tests {
                         if error_at_time == current_time {
                             return Err(RFQError::FatalError(format!(
                                 "{name} stream is dying and can't go on"
-                            )))
+                            )));
                         };
                     };
                     let protocol_component =

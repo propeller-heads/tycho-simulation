@@ -24,6 +24,7 @@ hex = "0.4.3"
 chrono = { version = "0.4.26", features = ["serde"] }
 
 # Error handling
+miette = "7.6.0"
 thiserror = "1"
 
 # Async & concurrency
@@ -80,8 +81,8 @@ approx = "0.5.1"
 rstest = "0.23.0"
 rstest_reuse = "0.7.0"
 tracing-subscriber = { version = "0.3.17", default-features = false, features = [
-    "env-filter",
-    "fmt",
+  "env-filter",
+  "fmt",
 ] }
 tempfile = "3.13.0"
 
@@ -103,7 +104,7 @@ tycho-execution = "0.118.0"
 default = ["evm", "rfq"]
 network_tests = []
 evm = [
-    "dep:foundry-config", "dep:foundry-evm", "dep:revm", "dep:revm-inspectors", "dep:alloy",
+  "dep:foundry-config", "dep:foundry-evm", "dep:revm", "dep:revm-inspectors", "dep:alloy",
 ]
 rfq = ["dep:reqwest", "dep:async-trait", "dep:tokio-tungstenite", "dep:async-stream", "dep:http", "dep:prost"]
 
