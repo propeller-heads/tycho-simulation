@@ -1,11 +1,11 @@
 use std::{str::FromStr, time::Instant};
 
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use futures::StreamExt;
 use itertools::Itertools;
 use num_bigint::BigUint;
 use num_traits::{CheckedSub, One, Pow};
 use ratatui::{
-    crossterm::event::{self, Event, KeyCode, KeyEventKind},
     layout::{Constraint, Flex, Layout, Margin, Rect},
     style::{palette::tailwind, Color, Modifier, Style, Stylize},
     text::Text,

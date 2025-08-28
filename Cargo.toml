@@ -9,7 +9,7 @@ documentation = "https://docs.propellerheads.xyz/tycho"
 keywords = ["propellerheads", "solver", "defi", "dex", "mev"]
 license = "MIT"
 categories = ["finance", "cryptography::cryptocurrencies"]
-readme = "README.md"
+readme = "Readme.md"
 
 
 [workspace]
@@ -19,12 +19,11 @@ members = ["tycho_simulation_py"]
 # Serialization/Deserialization
 serde = { version = "1.0", features = ["rc"] }
 serde_json = "1.0.105"
-uuid = { version = "1.4.1", features = ["serde", "v4", "fast-rng", "macro-diagnostics"] }
 hex = "0.4.3"
 chrono = { version = "0.4.26", features = ["serde"] }
 
 # Error handling
-thiserror = "1"
+thiserror = "2.0.16"
 
 # Async & concurrency
 tokio = { version = "1.38.0", features = ["full"] }
@@ -36,24 +35,23 @@ tracing = "0.1.37"
 # Utility
 num-traits = "0.2.17"
 dotenv = "0.15.0"
-itertools = "0.10.5"
+itertools = "0.14.0"
 enum_delegate = "0.2.0"
 
 # Enum utilities
-strum = "0.25.0"
-strum_macros = "0.25.2"
+strum_macros = "0.27.2"
 
 # Caching
 mini-moka = "0.10"
 lazy_static = "1.4.0"
 
 # Tycho dependencies
-tycho-common = "0.81.5"
-tycho-client = "0.81.5"
+tycho-common = "0.82.0"
+tycho-client = "0.82.0"
 
 # EVM dependencies
-foundry-config = { git = "https://github.com/foundry-rs/foundry", rev = "5a552bb0de7126fa35170fd84532bbd3d40cd348", optional = true }
-foundry-evm = { git = "https://github.com/foundry-rs/foundry", rev = "5a552bb0de7126fa35170fd84532bbd3d40cd348", optional = true }
+foundry-config = { git = "https://github.com/foundry-rs/foundry", rev = "c4245d663339cdfdf478a4a17588c8fc0528e896", optional = true }
+foundry-evm = { git = "https://github.com/foundry-rs/foundry", rev = "c4245d663339cdfdf478a4a17588c8fc0528e896", optional = true }
 solar-config = "=0.1.5"
 alloy = { version = "1.0.6", features = ["providers", "signer-local", "rpc-types-eth"], optional = true }
 revm = { version = "27.0.3", features = ["alloydb", "serde"], optional = true }
@@ -62,7 +60,7 @@ num-bigint = { version = "0.4", features = ["serde"] }
 tokio-stream = "0.1.16"
 
 # Dialoguer
-dialoguer = "0.10.4"
+dialoguer = "0.12.0"
 
 # Ekubo
 evm_ekubo_sdk = "0.6.2"
@@ -70,21 +68,20 @@ evm_ekubo_sdk = "0.6.2"
 # rfq
 reqwest = { version = "0.12.22", optional = true }
 async-trait = { version = "0.1.88", optional = true }
-tokio-tungstenite = { version = "0.26.2", optional = true }
+tokio-tungstenite = { version = "0.27.0", optional = true }
 async-stream = { version = "0.3.6", optional = true }
 http = { version = "1.0", optional = true }
-prost = { version = "0.13", optional = true }
+prost = { version = "0.14.1", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4.4"
 approx = "0.5.1"
-rstest = "0.23.0"
+rstest = "0.26.1"
 rstest_reuse = "0.7.0"
 tracing-subscriber = { version = "0.3.17", default-features = false, features = [
   "env-filter",
   "fmt",
 ] }
-tempfile = "3.13.0"
 
 # testing
 mockall = "0.13"
@@ -93,8 +90,7 @@ mockall = "0.13"
 clap = { version = "4.5.3", features = ["derive"] }
 anyhow = "1.0.79"
 ratatui = "0.29.0"
-crossterm = { version = "0.28.1", features = ["event-stream"] }
-unicode-width = "0.1.13"
+crossterm = { version = "0.29.0", features = ["event-stream"] }
 tracing-appender = "0.2.3"
 
 # tycho execution for quickstart
