@@ -11,7 +11,7 @@ use crate::{
     evm::decoder::TychoStreamDecoder,
     protocol::{
         errors::InvalidSnapshotError,
-        models::{TryFromWithBlock, Update},
+        models::{TryFromWithBlock, Update, VMAttributes},
     },
     rfq::{client::RFQClient, models::TimestampHeader},
 };
@@ -50,7 +50,9 @@ impl RFQStreamBuilder {
             + 'static,
     {
         self.clients.push(provider);
-        self.decoder.register_decoder::<T>(name);
+        let vm_attributes = VMAttributes::new(None);
+        self.decoder
+            .register_decoder::<T>(name, vm_attributes);
         self
     }
 
@@ -180,6 +182,7 @@ mod tests {
             _header: TimestampHeader,
             _account_balances: &HashMap<Bytes, HashMap<Bytes, Bytes>>,
             _all_tokens: &HashMap<Bytes, Token>,
+            _vm_attributes: &VMAttributes,
         ) -> Result<Self, Self::Error> {
             Ok(DummyProtocol)
         }
