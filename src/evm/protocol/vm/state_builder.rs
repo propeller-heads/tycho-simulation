@@ -8,7 +8,6 @@ use alloy::{
     sol_types::SolValue,
 };
 use chrono::Utc;
-use itertools::Itertools;
 use revm::{
     primitives::KECCAK_EMPTY,
     state::{AccountInfo, Bytecode},
@@ -30,6 +29,7 @@ use crate::evm::{
     protocol::utils::bytes_to_address,
     simulation::{SimulationEngine, SimulationParameters},
 };
+use itertools::Itertools;
 
 #[derive(Debug)]
 /// `EVMPoolStateBuilder` is a builder pattern implementation for creating instances of
@@ -94,6 +94,7 @@ where
     engine: Option<SimulationEngine<D>>,
     adapter_contract: Option<TychoSimulationContract<D>>,
     adapter_contract_bytecode: Option<Bytecode>,
+    is_test: bool,
 }
 
 impl<D> EVMPoolStateBuilder<D>
@@ -124,12 +125,18 @@ where
             engine: None,
             adapter_contract: None,
             adapter_contract_bytecode: None,
+            is_test: false,
         }
     }
 
     #[deprecated(note = "Use account balances instead")]
     pub fn balance_owner(mut self, balance_owner: Address) -> Self {
         self.balance_owner = Some(balance_owner);
+        self
+    }
+
+    pub fn test(mut self) -> Self {
+        self.is_test = true;
         self
     }
 
@@ -215,7 +222,12 @@ where
         let capabilities = if let Some(capabilities) = &self.capabilities {
             capabilities.clone()
         } else {
-            self.get_default_capabilities()?
+            if !self.is_test {
+                self.get_default_capabilities()?
+            } else {
+                // Hack: The capabilities will be set later, after the bytecode is overwritten
+                HashSet::new()
+            }
         };
 
         let adapter_contract = self.adapter_contract.ok_or_else(|| {

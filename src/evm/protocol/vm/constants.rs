@@ -17,11 +17,14 @@ pub const BALANCER_V3: &[u8] = include_bytes!("assets/BalancerV3SwapAdapter.evm.
 pub const CURVE: &[u8] = include_bytes!("assets/CurveSwapAdapter.evm.runtime");
 pub const MAVERICK_V2: &[u8] = include_bytes!("assets/MaverickV2SwapAdapter.evm.runtime");
 pub fn get_adapter_file(protocol: &str) -> Result<&'static [u8], SimulationError> {
+    let empty: &[u8] = &[];
     match protocol {
         "balancer_v2" => Ok(BALANCER_V2),
         "balancer_v3" => Ok(BALANCER_V3),
         "curve" => Ok(CURVE),
         "maverick_v2" => Ok(MAVERICK_V2),
+        // Used only for integration tests
+        "test_protocol" => Ok(empty),
         _ => Err(SimulationError::FatalError(format!("Adapter for protocol {protocol} not found"))),
     }
 }

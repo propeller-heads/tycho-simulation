@@ -139,6 +139,10 @@ impl TryFromWithBlock<ComponentWithState, BlockHeader> for EVMPoolState<PreCache
                 .stateless_contracts(stateless_contracts)
                 .manual_updates(manual_updates);
 
+        if protocol_name == "test_protocol" {
+            pool_state_builder = pool_state_builder.test()
+        }
+
         if let Some(balance_owner) = balance_owner {
             pool_state_builder = pool_state_builder.balance_owner(balance_owner)
         };
@@ -148,7 +152,9 @@ impl TryFromWithBlock<ComponentWithState, BlockHeader> for EVMPoolState<PreCache
             .await
             .map_err(InvalidSnapshotError::VMError)?;
 
-        pool_state.set_spot_prices(all_tokens)?;
+        if protocol_name != "test_protocol" {
+            pool_state.set_spot_prices(all_tokens)?;
+        }
 
         Ok(pool_state)
     }

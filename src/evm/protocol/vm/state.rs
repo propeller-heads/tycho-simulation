@@ -10,6 +10,7 @@ use alloy::primitives::{Address, U256};
 use itertools::Itertools;
 use num_bigint::BigUint;
 use revm::DatabaseRef;
+use tracing::{info, warn};
 use tycho_client::feed::BlockHeader;
 use tycho_common::{
     dto::ProtocolStateDelta,
@@ -70,7 +71,7 @@ where
     /// the pool.
     manual_updates: bool,
     /// The adapter contract. This is used to interact with the protocol when running simulations
-    adapter_contract: TychoSimulationContract<D>,
+    pub adapter_contract: TychoSimulationContract<D>,
 }
 
 impl<D> EVMPoolState<D>
@@ -112,6 +113,50 @@ where
             manual_updates,
             adapter_contract,
         }
+    }
+
+    /// Sets the capabilities for this pool.
+    ///
+    /// Only used for integration testing. Capabilities should otherwise only be passed during pool
+    /// initialization.
+    pub fn set_default_capabilities(&mut self) -> Result<(), SimulationError> {
+        info!("Setting default capabilities.");
+        let mut capabilities = Vec::new();
+
+        // Generate all permutations of tokens and retrieve capabilities
+        for tokens_pair in self.tokens.iter().permutations(2) {
+            // Manually unpack the inner vector
+            if let [t0, t1] = tokens_pair[..] {
+                let caps = self
+                    .adapter_contract
+                    .get_capabilities(&self.id, bytes_to_address(t0)?, bytes_to_address(t1)?)?;
+                info!("Retrieved capabilities from the adapter contract.");
+                capabilities.push(caps);
+            }
+        }
+
+        // Find the maximum capabilities length
+        let max_capabilities = capabilities
+            .iter()
+            .map(|c| c.len())
+            .max()
+            .unwrap_or(0);
+
+        // Intersect all capability sets
+        let common_capabilities: HashSet<_> = capabilities
+            .iter()
+            .fold(capabilities[0].clone(), |acc, cap| acc.intersection(cap).cloned().collect());
+
+        // Check for mismatches in capabilities
+        if common_capabilities.len() < max_capabilities {
+            tracing::warn!(
+                "Warning: Pool {} has different capabilities depending on the token pair!",
+                self.id
+            );
+        }
+        self.capabilities = common_capabilities;
+        self.capabilities.insert(Capability::PriceFunction);
+        Ok(())
     }
 
     /// Ensures the pool supports the given capability
@@ -174,6 +219,7 @@ where
     ) -> Result<(), SimulationError> {
         match self.ensure_capability(Capability::PriceFunction) {
             Ok(_) => {
+                info!("Capability found");
                 for [sell_token_address, buy_token_address] in self
                     .tokens
                     .iter()
@@ -227,6 +273,7 @@ where
                 }
             }
             Err(SimulationError::FatalError(_)) => {
+                warn!("Capability not found");
                 // If the pool does not support price function, we need to calculate spot prices by
                 // swapping two amounts and use the approximation to get the derivative.
 

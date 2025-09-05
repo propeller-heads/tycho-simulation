@@ -8,6 +8,7 @@ use alloy::{
     sol_types::SolValue,
 };
 use revm::DatabaseRef;
+use tracing::info;
 use tycho_common::simulation::errors::SimulationError;
 
 use super::{
@@ -150,9 +151,13 @@ where
         let args = (string_to_bytes32(pair_id)?, sell_token, buy_token);
         let selector = "getCapabilities(bytes32,address,address)";
 
-        let res = self
-            .call(selector, args, 1, None, None, None, U256::from(0u64), None)?
-            .return_value;
+        let call_output = self
+            .call(selector, args, 1, None, None, None, U256::from(0u64), None)?;
+        // TODO why is it None :( Is the bytecode wrong?
+        // My result:
+        // TychoSimulationResponse { return_value: [], simulation_result: SimulationResult { result: 0x, state_updates: {0x00000000000000746573745f70726f746f636f6c: StateUpdate { storage: None, balance: Some(57896044618658097711785492504343953926634992332820282019728792003956564819967) }, 0xf847a638e44186f3287ee9f8caf73ff4d4b80784: StateUpdate { storage: None, balance: Some(57896044618658097711785492504343953926634992332820282019728792003956564819967) }, 0x0000000000000000000000000000000000000000: StateUpdate { storage: None, balance: Some(0) }}, gas_used: 24010, transient_storage: {} } }
+        info!("call_output: {call_output:?}");
+        let res = call_output.return_value;
         let decoded: CapabilitiesReturn = CapabilitiesReturn::abi_decode(&res).map_err(|e| {
             SimulationError::FatalError(format!(
                 "Adapter get_capabilities call failed: Failed to decode return value: {e:?}"

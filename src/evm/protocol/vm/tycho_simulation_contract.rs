@@ -9,6 +9,7 @@ use revm::{
     state::{AccountInfo, Bytecode},
     DatabaseRef,
 };
+use tracing::info;
 use tycho_common::simulation::errors::SimulationError;
 
 use super::{
@@ -91,6 +92,50 @@ where
         );
 
         Ok(Self { address, engine })
+    }
+
+    /// Updates the contract bytecode by reinitializing the account with new bytecode.
+    ///
+    /// This method updates the contract's bytecode in the simulation engine's state,
+    /// allowing for dynamic bytecode updates during testing or simulation.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_bytecode` - The new bytecode to set for this contract
+    ///
+    /// # Returns
+    ///
+    /// * `Result<(), SimulationError>` - Returns `Ok(())` if the bytecode was successfully updated,
+    ///   or a `SimulationError` if the update failed.
+    pub fn update_bytecode(&self, new_bytecode: Bytecode) -> Result<(), SimulationError> {
+        info!("Updating TychoSimulationContract bytecode.");
+        // Get current account info or create default
+        let current_account = self.engine.state.basic_ref(self.address)
+            .map(|account| account.unwrap_or_default())
+            .unwrap_or_else(|_| AccountInfo {
+                balance: *MAX_BALANCE,
+                nonce: 0,
+                code_hash: B256::ZERO,
+                code: None,
+            });
+
+        // Create new account info with updated bytecode
+        let updated_account = AccountInfo {
+            balance: current_account.balance,
+            nonce: current_account.nonce,
+            code_hash: B256::from(keccak256(new_bytecode.clone().bytes())),
+            code: Some(new_bytecode),
+        };
+
+        // Reinitialize the account with updated bytecode
+        self.engine.state.init_account(
+            self.address,
+            updated_account,
+            None,
+            true, // mocked - force update
+        );
+
+        Ok(())
     }
 
     fn encode_input(&self, selector: &str, args: impl SolValue) -> Vec<u8> {
