@@ -10,16 +10,15 @@ crate-type = ["cdylib"]
 
 [dependencies]
 num-bigint = "0.4.3"
-pyo3 = { version = "0.19", features = ["num-bigint", "extension-module"] }
+pyo3 = { version = "0.19.2", features = ["num-bigint", "extension-module"] }
+pyo3-log = "0.9.0"
 tycho-simulation = { path = "../" }
-tokio = { version = "1.38.0", features = ["full"] }
-alloy = { version = "1.0.6", features = ["providers"] }
+alloy = { version = "1.0.27", features = ["providers"] }
 revm = { version = "27.0.3", features = [
-    "alloydb",
+  "alloydb",
 ] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.17", default-features = false, features = [
-    "env-filter",
-    "fmt",
+  "env-filter",
+  "fmt",
 ] }
-pyo3-log = "0.9.0"
