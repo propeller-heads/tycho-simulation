@@ -147,6 +147,7 @@ impl TryFromWithBlock<ComponentWithState, BlockHeader> for EVMPoolState<PreCache
         let mut pool_state_builder =
             EVMPoolStateBuilder::new(id.clone(), tokens.clone(), block, adapter_contract_address)
                 .balances(component_balances)
+                .trace(true)
                 .account_balances(account_balances)
                 .adapter_contract_bytecode(adapter_bytecode)
                 .involved_contracts(involved_contracts)
