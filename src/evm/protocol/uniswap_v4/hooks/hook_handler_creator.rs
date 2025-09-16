@@ -39,6 +39,7 @@ pub struct HookCreationParams<'a> {
 }
 
 impl<'a> HookCreationParams<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         block: BlockHeader,
         hook_address: Address,
