@@ -16,8 +16,10 @@ use tycho_simulation::{
         protocol::{
             ekubo::state::EkuboState,
             filters::{
-                balancer_v2_pool_filter, curve_pool_filter, uniswap_v4_pool_with_hook_filter,
+                balancer_v2_pool_filter, curve_pool_filter, uniswap_v4_pool_with_euler_hook_filter,
+                uniswap_v4_pool_with_hook_filter,
             },
+            pancakeswap_v2::state::PancakeswapV2State,
             uniswap_v2::state::UniswapV2State,
             uniswap_v3::state::UniswapV3State,
             uniswap_v4::state::UniswapV4State,
@@ -47,23 +49,45 @@ fn register_exchanges(
     match chain {
         Chain::Ethereum => {
             builder = builder
-                .exchange::<UniswapV2State>("uniswap_v2", tvl_filter.clone(), None)
-                .exchange::<UniswapV3State>("uniswap_v3", tvl_filter.clone(), None)
-                .exchange::<EVMPoolState<PreCachedDB>>(
-                    "vm:balancer_v2",
-                    tvl_filter.clone(),
-                    Some(balancer_v2_pool_filter),
-                )
-                .exchange::<EVMPoolState<PreCachedDB>>(
-                    "vm:curve",
-                    tvl_filter.clone(),
-                    Some(curve_pool_filter),
-                )
-                .exchange::<EkuboState>("ekubo_v2", tvl_filter.clone(), None)
+                // .exchange::<UniswapV2State>("uniswap_v2", tvl_filter.clone(), None)
+                // .exchange::<UniswapV2State>("sushiswap_v2", tvl_filter.clone(), None)
+                // .exchange::<PancakeswapV2State>("pancakeswap_v2", tvl_filter.clone(), None)
+                // .exchange::<UniswapV3State>("uniswap_v3", tvl_filter.clone(), None)
+                // .exchange::<UniswapV3State>("pancakeswap_v3", tvl_filter.clone(), None)
+                // .exchange::<EVMPoolState<PreCachedDB>>(
+                //     "vm:balancer_v2",
+                //     tvl_filter.clone(),
+                //     Some(balancer_v2_pool_filter),
+                // )
+                // .exchange::<EVMPoolState<PreCachedDB>>(
+                //     "vm:curve",
+                //     tvl_filter.clone(),
+                //     Some(curve_pool_filter),
+                // )
+                // .exchange::<EkuboState>("ekubo_v2", tvl_filter.clone(), None)
+                // .exchange::<UniswapV4State>(
+                //     "uniswap_v4",
+                //     tvl_filter.clone(),
+                //     Some(uniswap_v4_pool_with_hook_filter),
+                // )
                 .exchange::<UniswapV4State>(
-                    "uniswap_v4",
-                    tvl_filter.clone(),
-                    Some(uniswap_v4_pool_with_hook_filter),
+                    "uniswap_v4_hooks",
+                    ComponentFilter::Ids(vec![
+                        "0x30b01d228e974afa5bca97e01ea7db4e33ce454ced913c481bae041eb8cf508b"
+                            .to_string(),
+                        "0xc70d7fbd7fcccdf726e02fed78548b40dc52502b097c7a1ee7d995f4d4396134"
+                            .to_string(),
+                        "0x9863f2f85909d4bd2bd7138d5adbf9e608b922d598fdc91fcaeefdc826cd61a3"
+                            .to_string(),
+                        "0x28889ec4e57513f3828b373745a0d2180b4ef22263d7537eece0c017330b86c1"
+                            .to_string(),
+                        "0x30b01d228e974afa5bca97e01ea7db4e33ce454ced913c481bae041eb8cf508b"
+                            .to_string(),
+                        "0x29c2e00db1733af35c793dd3975ff8b5e4c29a71f4112f2b3835a01c4de64167"
+                            .to_string(),
+                    ]),
+                    // tvl_filter.clone(),
+                    Some(uniswap_v4_pool_with_euler_hook_filter),
                 );
             // COMING SOON!
             // .exchange::<UniswapV4State>("uniswap_v4_hooks", tvl_filter.clone(),
@@ -122,10 +146,10 @@ async fn main() {
     let tycho_message_processor: JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
         let all_tokens = load_all_tokens(
             tycho_url.as_str(),
-            false,
+            true,
             Some(tycho_api_key.as_str()),
             chain,
-            None,
+            Some(0),
             None,
         )
         .await;
@@ -134,6 +158,7 @@ async fn main() {
             register_exchanges(ProtocolStreamBuilder::new(&tycho_url, chain), &chain, tvl_filter)
                 .auth_key(Some(tycho_api_key.clone()))
                 .skip_state_decode_failures(true)
+                .no_tls(true)
                 .set_tokens(all_tokens)
                 .await
                 .build()

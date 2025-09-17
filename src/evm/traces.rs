@@ -54,6 +54,8 @@ pub async fn print_traces(
     result: &mut TraceResult,
     decoder: &CallTraceDecoder,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
     let traces = result
         .traces
         .as_mut()
@@ -64,18 +66,24 @@ pub async fn print_traces(
         decode_trace_arena(arena, decoder).await;
         traces_strings.push(render_trace_arena(arena));
     }
-    println!("Traces:");
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("traces.log")?;
+
+    writeln!(file, "Traces:")?;
     for t in traces_strings {
-        println!("{t}");
+        writeln!(file, "{t}")?;
     }
-    println!();
+    writeln!(file)?;
 
     if result.success {
-        println!("Transaction successfully executed.");
+        writeln!(file, "Transaction successfully executed.")?;
     } else {
-        println!("Transaction failed.");
+        writeln!(file, "Transaction failed.")?;
     }
 
-    println!("Gas used: {gas}", gas = result.gas_used);
+    writeln!(file, "Gas used: {gas}", gas = result.gas_used)?;
     Ok(())
 }
