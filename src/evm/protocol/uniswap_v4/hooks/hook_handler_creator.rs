@@ -34,9 +34,12 @@ pub struct HookCreationParams<'a> {
     pub(crate) attributes: &'a HashMap<String, Bytes>,
     /// Mapping from token address to big-endian encoded balance for this component.
     balances: &'a HashMap<Bytes, Bytes>,
+    /// Show vm traces in simulations or not
+    vm_traces: Option<bool>,
 }
 
 impl<'a> HookCreationParams<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         block: BlockHeader,
         hook_address: Address,
@@ -45,8 +48,18 @@ impl<'a> HookCreationParams<'a> {
         state: UniswapV4State,
         attributes: &'a HashMap<String, Bytes>,
         balances: &'a HashMap<Bytes, Bytes>,
+        vm_traces: Option<bool>,
     ) -> Self {
-        Self { block, hook_address, account_balances, all_tokens, state, attributes, balances }
+        Self {
+            block,
+            hook_address,
+            account_balances,
+            all_tokens,
+            state,
+            attributes,
+            balances,
+            vm_traces,
+        }
     }
 }
 
@@ -78,7 +91,12 @@ impl HookHandlerCreator for GenericVMHookHandlerCreator {
             .get("limits_entrypoint")
             .and_then(|bytes| String::from_utf8(bytes.0.to_vec()).ok());
 
-        let engine = create_engine(SHARED_TYCHO_DB.clone(), false).map_err(|e| {
+        let mut trace = false;
+        if let Some(vm_traces) = params.vm_traces {
+            trace = vm_traces
+        }
+
+        let engine = create_engine(SHARED_TYCHO_DB.clone(), trace).map_err(|e| {
             InvalidSnapshotError::VMError(SimulationError::FatalError(format!(
                 "Failed to create engine: {e:?}"
             )))
