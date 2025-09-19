@@ -124,29 +124,46 @@ where
             .with_cfg(cfg_env)
             .with_ref_db(db_ref)
             .with_block(block_env)
-            .with_tx(tx_env.clone())
             .modify_journal_chained(|journal| {
-                if let Some(transient_storage) = params.transient_storage.clone() {
+                if let Some(transient_storage) = &params.transient_storage {
                     for (address, slots) in transient_storage {
                         for (slot, value) in slots {
-                            journal.tstore(address, slot, value);
+                            journal.tstore(*address, *slot, *value);
                         }
                     }
                 }
             });
+        let mut transient_storage = HashMap::new();
 
         let evm_result = if self.trace {
             let mut tracer = TracingInspector::new(TracingInspectorConfig::default());
 
-            let res = {
-                let mut vm = context.build_mainnet_with_inspector(&mut tracer);
+            let mut vm = context.build_mainnet_with_inspector(&mut tracer);
 
-                debug!(
-                    "Starting simulation with tx parameters: {:#?} {:#?}",
-                    vm.ctx.tx, vm.ctx.block
-                );
-                vm.inspect_tx(tx_env.clone())
-            };
+            debug!("Starting simulation with tx parameters: {:#?} {:#?}", vm.ctx.tx, vm.ctx.block);
+
+            let res = vm.inspect_one_tx(tx_env).map(|result| {
+                let ts = vm
+                    .journaled_state
+                    .transient_storage
+                    .clone();
+                println!("here:{:?}", ts.clone());
+                transient_storage =
+                    ts.into_iter()
+                        .fold(HashMap::new(), |mut acc, ((addr, slot), value)| {
+                            acc.entry(addr)
+                                .or_insert_with(HashMap::new)
+                                .insert(slot, value);
+                            acc
+                        });
+                let state = vm.finalize();
+                let ts = vm
+                    .journaled_state
+                    .transient_storage
+                    .clone();
+                dbg!(ts);
+                ResultAndState::new(result, state)
+            });
 
             Self::print_traces(tracer, res.as_ref().ok());
 
@@ -156,11 +173,26 @@ where
 
             debug!("Starting simulation with tx parameters: {:#?} {:#?}", vm.ctx.tx, vm.ctx.block);
 
-            vm.replay()
+            vm.transact_one(tx_env).map(|result| {
+                let ts = vm
+                    .journaled_state
+                    .transient_storage
+                    .clone();
+                dbg!(&ts);
+                transient_storage =
+                    ts.into_iter()
+                        .fold(HashMap::new(), |mut acc, ((addr, slot), value)| {
+                            acc.entry(addr)
+                                .or_insert_with(HashMap::new)
+                                .insert(slot, value);
+                            acc
+                        });
+                let state = vm.finalize();
+                ResultAndState::new(result, state)
+            })
         };
 
-        // TODO: update revm to 25.0.0 and get transient storage from the journaled state
-        interpret_evm_result(evm_result, HashMap::new())
+        interpret_evm_result(evm_result, transient_storage)
     }
 
     pub fn clear_temp_storage(&mut self) {
