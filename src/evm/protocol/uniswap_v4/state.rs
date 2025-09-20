@@ -88,6 +88,12 @@ impl UniswapV4Fees {
 }
 
 impl UniswapV4State {
+    /// Updates the block information for the state
+    pub fn update_block(&mut self, block_number: u64, block_timestamp: u64) {
+        self.block.number = block_number;
+        self.block.timestamp = block_timestamp;
+    }
+
     /// Creates a new `UniswapV4State` with specified values.
     pub fn new(
         liquidity: u128,
@@ -700,19 +706,8 @@ impl ProtocolSim for UniswapV4State {
         tokens: &HashMap<Bytes, Token>,
         balances: &Balances,
     ) -> Result<(), TransitionError<String>> {
-        if let Some(mut hook) = self.hook.clone() {
-            match hook.delta_transition(delta.clone(), tokens, balances) {
-                Ok(()) => self.set_hook_handler(hook),
-                Err(TransitionError::SimulationError(SimulationError::RecoverableError(msg)))
-                    if msg.contains("not implemented") =>
-                {
-                    // Fall back to default implementation
-                }
-                Err(e) => return Err(e),
-            }
-        }
 
-        // Update block information if provided in the delta attributes
+        // Update block information FIRST before calling hook delta_transition
         let block_number_bytes = delta
             .updated_attributes
             .get("block_number")
@@ -744,6 +739,20 @@ impl ProtocolSim for UniswapV4State {
                     TransitionError::DecodeError("Invalid block_timestamp bytes".to_string())
                 })?,
         );
+
+
+        // Now call hook delta_transition with updated block information available
+        if let Some(mut hook) = self.hook.clone() {
+            match hook.delta_transition(delta.clone(), tokens, balances) {
+                Ok(()) => self.set_hook_handler(hook),
+                Err(TransitionError::SimulationError(SimulationError::RecoverableError(msg)))
+                if msg.contains("not implemented") =>
+                    {
+                        // Fall back to default implementation
+                    }
+                Err(e) => return Err(e),
+            }
+        }
 
         // Apply attribute changes
         if let Some(liquidity) = delta

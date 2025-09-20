@@ -18,7 +18,10 @@ use ratatui::{
 use tokio::{select, sync::mpsc::Receiver};
 use tracing::warn;
 use tycho_common::{simulation::protocol_sim::ProtocolSim, Bytes};
-use tycho_simulation::protocol::models::{ProtocolComponent, Update};
+use tycho_simulation::{
+    evm::protocol::uniswap_v4::state::UniswapV4State,
+    protocol::models::{ProtocolComponent, Update},
+};
 
 const INFO_TEXT: [&str; 2] = [
     "(Esc) quit | (↑) move up | (↓) move down | (↵) Toggle Quote | (+) Increase Quote Amount",
@@ -82,6 +85,8 @@ pub struct App {
     colors: TableColors,
     input_mode: bool,
     input_buffer: String,
+    current_block_number: u64,
+    current_block_timestamp: u64,
 }
 
 impl App {
@@ -98,6 +103,8 @@ impl App {
             items: data_vec,
             input_mode: false,
             input_buffer: String::new(),
+            current_block_number: 0,
+            current_block_timestamp: 0,
         }
     }
 
@@ -143,6 +150,14 @@ impl App {
     }
 
     pub fn update_data(&mut self, update: Update) {
+        // Update block information
+        self.current_block_number = update.block_number_or_timestamp;
+        // For simplicity, we'll assume block_number_or_timestamp is block number
+        // and use current timestamp as block timestamp (in practice this would come from the blockchain)
+        self.current_block_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         for (id, comp) in update.new_pairs.iter() {
             let name = format!("{comp_id:#042x}", comp_id = comp.id);
             let tokens = comp
@@ -437,29 +452,62 @@ impl App {
                 };
 
                 let start = Instant::now();
-                let res = state.get_amount_out(self.quote_amount.clone(), token_in, token_out);
-                let duration = start.elapsed();
 
-                let text = res
-                    .map(|data| {
-                        format!(
-                            "Swap Direction: {token_in_symbol} → {token_out_symbol}\nQuote amount: {quote_amount}\nReceived amount: {amount}\nGas: {gas}\nDuration: {duration:?}",
-                            token_in_symbol = token_in.symbol,
-                            token_out_symbol = token_out.symbol,
-                            quote_amount = self.quote_amount,
-                            amount = data.amount,
-                            gas = data.gas
-                        )
-                    })
-                    .unwrap_or_else(|err| format!("{err:?}"));
+                // Try to downcast to UniswapV4State and call update_block if successful
+                if let Some(uniswap_v4_state) = state.as_any().downcast_ref::<UniswapV4State>() {
+                    // We need a mutable reference to call update_block, but we only have an immutable one
+                    // For now, we'll create a clone, update it, and use that for the quote
+                    let mut updated_state = uniswap_v4_state.clone();
+                    updated_state.update_block(self.current_block_number, self.current_block_timestamp);
+                    let res = updated_state.get_amount_out(self.quote_amount.clone(), token_in, token_out);
+                    let duration = start.elapsed();
 
-                let block = Block::bordered().title("Quote:");
-                let popup = Paragraph::new(Text::from(text))
-                    .block(block)
-                    .wrap(Wrap { trim: false });
-                let area = popup_area(area, Constraint::Percentage(50), Constraint::Percentage(50));
-                frame.render_widget(Clear, area);
-                frame.render_widget(popup, area);
+                    let text = res
+                        .map(|data| {
+                            format!(
+                                "Swap Direction: {token_in_symbol} → {token_out_symbol}\nQuote amount: {quote_amount}\nReceived amount: {amount}\nGas: {gas}\nDuration: {duration:?}",
+                                token_in_symbol = token_in.symbol,
+                                token_out_symbol = token_out.symbol,
+                                quote_amount = self.quote_amount,
+                                amount = data.amount,
+                                gas = data.gas
+                            )
+                        })
+                        .unwrap_or_else(|err| format!("{err:?}"));
+
+                    let block = Block::bordered().title("Quote:");
+                    let popup = Paragraph::new(Text::from(text))
+                        .block(block)
+                        .wrap(Wrap { trim: false });
+                    let area = popup_area(area, Constraint::Percentage(50), Constraint::Percentage(50));
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(popup, area);
+                } else {
+                    // For non-UniswapV4 states, use the original logic
+                    let res = state.get_amount_out(self.quote_amount.clone(), token_in, token_out);
+                    let duration = start.elapsed();
+
+                    let text = res
+                        .map(|data| {
+                            format!(
+                                "Swap Direction: {token_in_symbol} → {token_out_symbol}\nQuote amount: {quote_amount}\nReceived amount: {amount}\nGas: {gas}\nDuration: {duration:?}",
+                                token_in_symbol = token_in.symbol,
+                                token_out_symbol = token_out.symbol,
+                                quote_amount = self.quote_amount,
+                                amount = data.amount,
+                                gas = data.gas
+                            )
+                        })
+                        .unwrap_or_else(|err| format!("{err:?}"));
+
+                    let block = Block::bordered().title("Quote:");
+                    let popup = Paragraph::new(Text::from(text))
+                        .block(block)
+                        .wrap(Wrap { trim: false });
+                    let area = popup_area(area, Constraint::Percentage(50), Constraint::Percentage(50));
+                    frame.render_widget(Clear, area);
+                    frame.render_widget(popup, area);
+                }
             }
         }
     }
