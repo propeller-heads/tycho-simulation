@@ -7,6 +7,7 @@ use tycho_client::{
     feed::{component_tracker::ComponentFilter, synchronizer::ComponentWithState, BlockHeader},
     stream::{StreamError, TychoStreamBuilder},
 };
+use tycho_client::stream::RetryConfiguration;
 use tycho_common::{
     models::{token::Token, Chain},
     simulation::protocol_sim::ProtocolSim,
@@ -108,6 +109,21 @@ impl ProtocolStreamBuilder {
         self
     }
 
+    pub fn max_missed_blocks(mut self, n: u64) -> Self {
+        self.stream_builder = self.stream_builder.max_missed_blocks(n);
+        self
+    }
+
+    pub fn state_synchronizer_retry_config(mut self, config: &RetryConfiguration) -> Self {
+        self.stream_builder = self.stream_builder.state_synchronizer_retry_config(config);
+        self
+    }
+
+    pub fn websocket_retry_config(mut self, config: &RetryConfiguration) -> Self {
+        self.stream_builder = self.stream_builder.websockets_retry_config(config);
+        self
+    }
+
     /// Configures the client to exclude state updates from the stream.
     pub fn no_state(mut self, no_state: bool) -> Self {
         self.stream_builder = self.stream_builder.no_state(no_state);
@@ -126,10 +142,11 @@ impl ProtocolStreamBuilder {
         self
     }
 
-    /// Sets the currently known tokens which to be considered during decoding.
+    /// Sets the initial list of known tokens used for decoding.
     ///
-    /// Protocol components containing tokens which are not included in this initial list, or
-    /// added when applying deltas, will not be decoded.
+    /// Tokens not in this list (or added later via deltas) won’t be decoded at startup.
+    /// After initialization, the list is automatically extended with new tokens
+    /// received from the server, but only for components that pass the filters.
     pub async fn set_tokens(self, tokens: HashMap<Bytes, Token>) -> Self {
         self.decoder.set_tokens(tokens).await;
         self
