@@ -48,14 +48,16 @@ mini-moka = "0.10"
 lazy_static = "1.4.0"
 
 # Tycho dependencies
-tycho-client = "0.88.0"
-tycho-common = "0.88.0"
+tycho-client = { git = "https://github.com/propeller-heads/tycho-indexer.git", package = "tycho-client", tag = "0.88.0" }
+tycho-common = { git = "https://github.com/propeller-heads/tycho-indexer.git", package = "tycho-common", tag = "0.88.0" }
+tycho-ethereum = { git = "https://github.com/propeller-heads/tycho-indexer.git", package = "tycho-ethereum", tag = "0.88.0", features = ["onchain_data"] }
 
 # EVM dependencies
 foundry-config = { git = "https://github.com/foundry-rs/foundry", rev = "5a552bb0de7126fa35170fd84532bbd3d40cd348", optional = true }
 foundry-evm = { git = "https://github.com/foundry-rs/foundry", rev = "5a552bb0de7126fa35170fd84532bbd3d40cd348", optional = true }
-solar-config = "=0.1.5"
 alloy = { version = "1.0.6", features = ["providers", "signer-local", "rpc-types-eth"], optional = true }
+solar-data-structures = "=0.1.5"
+solar-config = "=0.1.5"
 revm = { version = "27.0.3", features = ["alloydb", "serde"], optional = true }
 revm-inspectors = { version = "0.26.5", features = ["serde"], optional = true }
 num-bigint = { version = "0.4", features = ["serde"] }
@@ -75,7 +77,7 @@ async-stream = { version = "0.3.6", optional = true }
 http = { version = "1.0", optional = true }
 prost = { version = "0.13", optional = true }
 # tycho execution for quickstart
-tycho-execution = "0.125.0"
+tycho-execution = { git = "https://github.com/propeller-heads/tycho-execution.git", tag = "0.127.0" }
 
 [dev-dependencies]
 tokio-test = "0.4.4"
@@ -93,7 +95,7 @@ mockall = "0.13"
 
 # price_printer example
 clap = { version = "4.5.3", features = ["derive"] }
-anyhow = "1.0.79"
+anyhow = "1.0.76"
 ratatui = "0.29.0"
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 unicode-width = "0.1.13"
