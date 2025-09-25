@@ -8457,7 +8457,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber 0.3.19",
- "tycho-common 0.83.4 (git+https://github.com/propeller-heads/tycho-indexer?rev=658205ad124edeeedc84dcf0874c582913ade88a)",
+ "tycho-common 0.88.0 (git+https://github.com/propeller-heads/tycho-indexer)",
  "uuid 1.17.0",
 ]
 
@@ -8488,8 +8488,8 @@ dependencies = [
 
 [[package]]
 name = "tycho-common"
-version = "0.83.4"
-source = "git+https://github.com/propeller-heads/tycho-indexer?rev=658205ad124edeeedc84dcf0874c582913ade88a#658205ad124edeeedc84dcf0874c582913ade88a"
+version = "0.88.0"
+source = "git+https://github.com/propeller-heads/tycho-indexer#47ed2e3db5e6b038866c682964ca0112c27d9ae1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8529,7 +8529,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
- "tycho-common 0.83.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tycho-common 0.88.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -8581,7 +8581,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber 0.3.19",
  "tycho-client",
- "tycho-common 0.83.4 (git+https://github.com/propeller-heads/tycho-indexer?rev=658205ad124edeeedc84dcf0874c582913ade88a)",
+ "tycho-common 0.88.0 (git+https://github.com/propeller-heads/tycho-indexer)",
  "tycho-execution",
  "unicode-width 0.1.14",
  "uuid 1.17.0",
