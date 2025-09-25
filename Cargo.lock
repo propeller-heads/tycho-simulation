@@ -10490,8 +10490,7 @@ dependencies = [
 [[package]]
 name = "tycho-client"
 version = "0.88.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d30ad4ffa3cefb328f3e0ca3870c06ddfaecdd74686844cced08d3acbdc9ff81"
+source = "git+https://github.com/propeller-heads/tycho-indexer.git?tag=0.88.0#47ed2e3db5e6b038866c682964ca0112c27d9ae1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -10512,32 +10511,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber 0.3.20",
- "tycho-common 0.88.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "uuid 1.18.1",
-]
-
-[[package]]
-name = "tycho-common"
-version = "0.88.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da3d11794b59200b15d07afdb29323b99db66e757966aa0b71af885a36bbf178"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "chrono",
- "hex",
- "num-bigint",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "strum 0.25.0",
- "strum_macros 0.25.3",
- "thiserror 1.0.69",
- "tiny-keccak",
- "tracing",
- "typetag",
- "utoipa",
+ "tycho-common",
  "uuid 1.18.1",
 ]
 
@@ -10590,7 +10564,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-test",
- "tycho-common 0.88.0 (git+https://github.com/propeller-heads/tycho-indexer.git?tag=0.88.0)",
+ "tycho-common",
  "unicode-segmentation",
  "url",
  "web3",
@@ -10598,9 +10572,8 @@ dependencies = [
 
 [[package]]
 name = "tycho-execution"
-version = "0.126.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67878efa90731c37dd259e5bb184e1f39c6bc7b160aae59aa9509fe4a8bfca0a"
+version = "0.127.0"
+source = "git+https://github.com/propeller-heads/tycho-execution.git?tag=0.127.0#ae5c3778eae88a9c14878dc5cc6853df62b4ceac"
 dependencies = [
  "alloy",
  "chrono",
@@ -10615,7 +10588,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
- "tycho-common 0.88.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tycho-common",
 ]
 
 [[package]]
@@ -10668,7 +10641,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber 0.3.20",
  "tycho-client",
- "tycho-common 0.88.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tycho-common",
  "tycho-ethereum",
  "tycho-execution",
  "unicode-width 0.1.14",
