@@ -143,6 +143,14 @@ impl ProtocolStreamBuilder {
         self
     }
 
+    /// Sets the maximum number of blocks that can be missed before the stream fails.
+    pub fn max_missed_blocks(mut self, max_missed_blocks: u64) -> Self {
+        self.stream_builder = self
+            .stream_builder
+            .max_missed_blocks(max_missed_blocks);
+        self
+    }
+
     pub async fn build(
         self,
     ) -> Result<impl Stream<Item = Result<Update, StreamDecodeError>>, StreamError> {
