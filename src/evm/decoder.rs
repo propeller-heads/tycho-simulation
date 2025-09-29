@@ -2,7 +2,6 @@ use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     future::Future,
     pin::Pin,
-    str::FromStr,
     sync::Arc,
 };
 
@@ -270,19 +269,7 @@ where
                 let removed_components: Vec<(String, ProtocolComponent)> = protocol_msg
                     .removed_components
                     .iter()
-                    .flat_map(|(id, comp)| match Bytes::from_str(id) {
-                        Ok(addr) => Some(Ok((id, addr, comp))),
-                        Err(e) => {
-                            if self.skip_state_decode_failures {
-                                None
-                            } else {
-                                Some(Err(StreamDecodeError::Fatal(e.to_string())))
-                            }
-                        }
-                    })
-                    .collect::<Result<Vec<_>, StreamDecodeError>>()?
-                    .into_iter()
-                    .flat_map(|(id, _, comp)| {
+                    .flat_map(|(id, comp)| {
                         let tokens = comp
                             .tokens
                             .iter()
@@ -792,6 +779,7 @@ where
         // Remove components from persistent state
         for (id, _) in removed_pairs.iter() {
             state_guard.components.remove(id);
+            state_guard.states.remove(id);
         }
 
         for (key, values) in contracts_map {
