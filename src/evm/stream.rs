@@ -154,10 +154,22 @@ impl ProtocolStreamBuilder {
             move |msg| {
                 let decoder = decoder.clone(); // Clone again for the async block
                 async move {
-                    decoder.decode(&msg).await.map_err(|e| {
-                        debug!(msg=?msg, "Decode error: {}", e);
-                        e
-                    })
+                    match msg {
+                        Ok(feed_msg) => decoder
+                            .decode(&feed_msg)
+                            .await
+                            .map_err(|e| {
+                                debug!(msg=?feed_msg, "Decode error: {}", e);
+                                e
+                            }),
+                        Err(sync_err) => {
+                            debug!(error=?sync_err, "BlockSynchronizer error");
+                            Err(StreamDecodeError::Fatal(format!(
+                                "BlockSynchronizer error: {}",
+                                sync_err
+                            )))
+                        }
+                    }
                 }
             }
         })))
