@@ -64,6 +64,8 @@ use tycho_simulation::{
     utils::{get_default_url, load_all_tokens},
 };
 
+use revert_reason::RevertReasonFetcher;
+
 #[derive(Parser, Clone)]
 struct Cli {
     /// The tvl threshold in ETH/native token units to filter the graph by
@@ -113,6 +115,7 @@ async fn run(cli: Cli) -> miette::Result<()> {
     info!("Starting integration test");
 
     let chain = cli.chain;
+    let mut error_count = 0;
 
     // Load tokens from Tycho
     let tycho_url =
@@ -274,6 +277,7 @@ async fn run(cli: Cli) -> miette::Result<()> {
                     &solution,
                     &transaction,
                     &block,
+                    &mut error_count,
                 )
                 .await
                 {
@@ -508,6 +512,7 @@ async fn simulate_swap_transaction(
     solution: &Solution,
     transaction: &Transaction,
     block: &Block,
+    error_count: &mut usize,
 ) -> miette::Result<BigUint> {
     let user_address = Address::from_slice(&solution.sender[..20]);
     let request = swap_request(transaction, block, user_address)?;
@@ -516,8 +521,8 @@ async fn simulate_swap_transaction(
     let payload = SimulatePayload {
         block_state_calls: vec![SimBlock {
             block_overrides: None,
-            state_overrides: Some(state_overwrites),
-            calls: vec![request],
+            state_overrides: Some(state_overwrites.clone()),
+            calls: vec![request.clone()],
         }],
         trace_transfers: true,
         validation: true,
@@ -549,7 +554,36 @@ async fn simulate_swap_transaction(
     );
     if !transaction.status {
         warn!("Transaction: {transaction:?}");
-        return Err(miette!("Transaction status is false"));
+
+        // Try to fetch revert reason
+        let mut fetcher = RevertReasonFetcher::new(rpc_url.to_string(), vec![
+            "Error(string)".to_string(),
+            "Panic(uint256)".to_string(),
+            "TychoRouter__NegativeSlippage(uint256,uint256)".to_string(),
+        ]);
+
+        // Convert state_overwrites to JSON for eth_call
+        let state_overrides_json = serde_json::to_value(&state_overwrites)
+            .ok();
+
+        let revert_reason = match fetcher
+            .fetch(request.clone(), BlockNumberOrTag::Latest, state_overrides_json)
+            .await
+        {
+            Ok(reason) => reason,
+            Err(e) => {
+                warn!("failed to fetch revert reason: {e}");
+                "Unknown revert reason".to_string()
+            }
+        };
+
+        *error_count += 1;
+        if *error_count >= 2 {
+            panic!("Second error encountered. Revert reason: {revert_reason}");
+        } else {
+            warn!("First error encountered, continuing. Revert reason: {revert_reason}");
+            return Err(miette!("Transaction reverted: {}", revert_reason));
+        }
     }
     let amount_out = U256::abi_decode(&transaction.return_data)
         .map_err(|e| miette!("Failed to decode swap amount: {e:?}"))?;
@@ -567,6 +601,7 @@ fn swap_request(
         .input(transaction.data.clone().into())
         .value(U256::from_str(&transaction.value.to_string()).unwrap_or_default())
         .from(user_address)
+        .gas_limit(30_000_000)
         .max_fee_per_gas(
             max_fee_per_gas
                 .try_into()
@@ -674,7 +709,10 @@ async fn setup_user_overwrites(
             ]),
         );
     }
+
+    // Always ensure the sender has enough balance for gas and value
     overwrites.insert(user_address, AccountOverride::default().with_balance(eth_balance));
+    info!("Setting balance override for user {user_address}: {eth_balance}");
 
     Ok(overwrites)
 }

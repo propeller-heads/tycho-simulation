@@ -111,29 +111,38 @@ impl SolidityError {
 
     fn decode_args(&self, data: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
         // This is a simplified version. For full ABI decoding, you'd need alloy-sol-types
-        // For now, we'll just show hex if we can't decode properly
         let mut args = Vec::new();
+        let mut offset = 0;
 
         for typ in &self.types {
             match typ.as_str() {
                 "string" => {
-                    // Try to decode as string
-                    if let Ok(s) = std::str::from_utf8(data) {
-                        args.push(format!("\"{}\"", s));
-                    } else {
-                        args.push(format!("0x{}", hex::encode(data)));
+                    // Decode ABI-encoded string: offset (32 bytes) + length (32 bytes) + data
+                    if data.len() >= 64 {
+                        // Skip the offset (first 32 bytes) and read length
+                        let length = alloy::primitives::U256::from_be_slice(&data[32..64]).to::<usize>();
+                        if data.len() >= 64 + length {
+                            let string_data = &data[64..64 + length];
+                            if let Ok(s) = std::str::from_utf8(string_data) {
+                                args.push(format!("\"{}\"", s));
+                            } else {
+                                args.push(format!("0x{}", hex::encode(string_data)));
+                            }
+                        }
                     }
                 }
                 "uint256" | "uint" => {
-                    if data.len() >= 32 {
-                        let val = alloy::primitives::U256::from_be_slice(&data[..32]);
+                    if data.len() >= offset + 32 {
+                        let val = alloy::primitives::U256::from_be_slice(&data[offset..offset + 32]);
                         args.push(val.to_string());
+                        offset += 32;
                     }
                 }
                 "address" => {
-                    if data.len() >= 32 {
-                        let addr = alloy::primitives::Address::from_slice(&data[12..32]);
+                    if data.len() >= offset + 32 {
+                        let addr = alloy::primitives::Address::from_slice(&data[offset + 12..offset + 32]);
                         args.push(format!("{:?}", addr));
+                        offset += 32;
                     }
                 }
                 _ => {
@@ -142,7 +151,7 @@ impl SolidityError {
             }
         }
 
-        Ok(args.join(","))
+        Ok(args.join(", "))
     }
 }
 
@@ -208,8 +217,9 @@ impl RevertReasonFetcher {
         &mut self,
         tx: TransactionRequest,
         block: BlockTag,
+        state_overrides: Option<serde_json::Value>,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let reason = self.fetch_revert_reason(tx, block).await?;
+        let reason = self.fetch_revert_reason(tx, block, state_overrides).await?;
         Ok(reason)
     }
 
@@ -217,18 +227,24 @@ impl RevertReasonFetcher {
         &mut self,
         tx: TransactionRequest,
         block: BlockTag,
+        state_overrides: Option<serde_json::Value>,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let response = self.raw_eth_call(tx, block).await?;
+        let response = self.raw_eth_call(tx, block, state_overrides).await?;
 
         // Check for error in response
+        error!("About to check for reason");
         if let Some(error) = response.get("error") {
+            error!("Got error message {response:?}");
             if let Some(data) = error.get("data").and_then(|d| d.as_str()) {
+                error!("Matching error");
                 return self.match_error(data).await;
             } else if let Some(message) = error.get("message").and_then(|m| m.as_str()) {
+                error!("Returning message");
                 return Ok(message.to_string());
             }
             return Ok("EmptyMessage".to_string());
         }
+        error!("No reason found");
 
         Ok(String::new())
     }
@@ -237,10 +253,16 @@ impl RevertReasonFetcher {
         &self,
         tx: TransactionRequest,
         block: BlockTag,
+        state_overrides: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
         let tx_json = serde_json::to_value(tx)?;
         let block_json = serde_json::to_value(block)?;
-        let params = serde_json::json!([tx_json, block_json]);
+
+        let params = if let Some(overrides) = state_overrides {
+            serde_json::json!([tx_json, block_json, overrides])
+        } else {
+            serde_json::json!([tx_json, block_json])
+        };
 
         let response = raw_rpc_call(&self.rpc_url, "eth_call", params).await?;
         Ok(response)
