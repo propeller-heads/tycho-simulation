@@ -1,3 +1,5 @@
+mod revert_reason;
+
 use std::{collections::HashMap, fmt::Debug, str::FromStr};
 
 use alloy::{
