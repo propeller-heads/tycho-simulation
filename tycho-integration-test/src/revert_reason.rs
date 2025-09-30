@@ -1,11 +1,21 @@
 use alloy::{
     hex,
-    primitives::{keccak256, Bytes},
-    rpc::types::TransactionRequest,
+    primitives::{keccak256, Bytes, map::AddressHashMap},
+    providers::{ProviderBuilder, Provider},
+    rpc::types::{
+        TransactionRequest,
+        BlockId,
+        state::AccountOverride,
+    },
     sol_types::SolValue,
     transports::http::reqwest,
 };
+use alloy_rpc_types_trace::geth::{
+    GethDebugTracingCallOptions, GethDebugTracingOptions,
+    GethDebugTracerType, GethDebugBuiltInTracerType,
+};
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use tracing::{error, info};
 
@@ -253,7 +263,7 @@ impl RevertReasonFetcher {
         &mut self,
         tx: TransactionRequest,
         block: BlockTag,
-        state_overrides: Option<serde_json::Value>,
+        state_overrides: Option<AddressHashMap<AccountOverride>>,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let reason = self.fetch_revert_reason(tx, block, state_overrides).await?;
         Ok(reason)
@@ -263,45 +273,63 @@ impl RevertReasonFetcher {
         &mut self,
         tx: TransactionRequest,
         block: BlockTag,
-        state_overrides: Option<serde_json::Value>,
+        state_overrides: Option<AddressHashMap<AccountOverride>>,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let response = self.raw_eth_call(tx, block, state_overrides).await?;
+        let response = self.debug_trace_call(tx, block, state_overrides).await?;
 
         // Check for error in response
-        error!("About to check for reason");
         if let Some(error) = response.get("error") {
-            error!("Got error message {response:?}");
             if let Some(data) = error.get("data").and_then(|d| d.as_str()) {
-                error!("Matching error");
                 return self.match_error(data).await;
             } else if let Some(message) = error.get("message").and_then(|m| m.as_str()) {
-                error!("Returning message");
                 return Ok(message.to_string());
             }
             return Ok("EmptyMessage".to_string());
         }
-        error!("No reason found");
-
         Ok(String::new())
     }
 
-    async fn raw_eth_call(
+    async fn debug_trace_call(
         &self,
         tx: TransactionRequest,
         block: BlockTag,
-        state_overrides: Option<serde_json::Value>,
-    ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-        let tx_json = serde_json::to_value(tx)?;
-        let block_json = serde_json::to_value(block)?;
+        state_overrides: Option<AddressHashMap<AccountOverride>>,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        let provider = ProviderBuilder::new().connect_http(self.rpc_url.parse()?);
 
-        let params = if let Some(overrides) = state_overrides {
-            serde_json::json!([tx_json, block_json, overrides])
-        } else {
-            serde_json::json!([tx_json, block_json])
+        // Configure tracing options - use callTracer for better formatted results
+        let tracing_options = GethDebugTracingOptions {
+            tracer: Some(GethDebugTracerType::BuiltInTracer(
+                GethDebugBuiltInTracerType::CallTracer,
+            )),
+            config: Default::default(),
+            tracer_config: Default::default(),
+            timeout: None,
         };
 
-        let response = raw_rpc_call(&self.rpc_url, "eth_call", params).await?;
-        Ok(response)
+        let trace_options = GethDebugTracingCallOptions {
+            tracing_options,
+            state_overrides: state_overrides,
+            block_overrides: None,
+        };
+
+        let block_id = match block {
+            BlockTag::Latest => BlockId::latest(),
+            BlockTag::Number(n) => BlockId::from(n),
+            _ => BlockId::latest(),
+        };
+
+        let result: Value = provider
+            .client()
+            .request("debug_traceCall", (tx, block_id, trace_options))
+            .await?;
+
+        // Print the full trace using foundry-style formatting
+        error!("=== Transaction Trace ===");
+        crate::traces::print_call_trace(&result, 0).await;
+        error!("=== End Trace ===");
+
+        Ok(result)
     }
 
     async fn match_error(&mut self, data: &str) -> Result<String, Box<dyn std::error::Error>> {

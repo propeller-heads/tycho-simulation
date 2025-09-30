@@ -1,4 +1,5 @@
 mod revert_reason;
+mod traces;
 
 use std::{collections::HashMap, fmt::Debug, str::FromStr};
 
@@ -26,7 +27,7 @@ use tokio_retry2::{
     strategy::{jitter, ExponentialFactorBackoff},
     Retry, RetryError,
 };
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::EnvFilter;
 use tycho_ethereum::entrypoint_tracer::{
     allowance_slot_detector::{AllowanceSlotDetectorConfig, EVMAllowanceSlotDetector},
@@ -562,12 +563,8 @@ async fn simulate_swap_transaction(
             "TychoRouter__NegativeSlippage(uint256,uint256)".to_string(),
         ]);
 
-        // Convert state_overwrites to JSON for eth_call
-        let state_overrides_json = serde_json::to_value(&state_overwrites)
-            .ok();
-
         let revert_reason = match fetcher
-            .fetch(request.clone(), BlockNumberOrTag::Latest, state_overrides_json)
+            .fetch(request.clone(), BlockNumberOrTag::Latest, Some(state_overwrites.clone()))
             .await
         {
             Ok(reason) => reason,
@@ -578,10 +575,10 @@ async fn simulate_swap_transaction(
         };
 
         *error_count += 1;
-        if *error_count >= 2 {
-            panic!("Second error encountered. Revert reason: {revert_reason}");
+        if *error_count >= 10 {
+            panic!("{error_count} error encountered. Revert reason: {revert_reason}");
         } else {
-            warn!("First error encountered, continuing. Revert reason: {revert_reason}");
+            error!("{error_count} error encountered, continuing. Revert reason: {revert_reason}");
             return Err(miette!("Transaction reverted: {}", revert_reason));
         }
     }
@@ -676,6 +673,7 @@ async fn setup_user_overwrites(
         })
         .into_diagnostic()?;
 
+        error!("Approving tycho router address for allowance {}", transaction.to);
         let results = detector
             .detect_allowance_slots(
                 std::slice::from_ref(&solution.given_token),
@@ -688,14 +686,27 @@ async fn setup_user_overwrites(
         let allowance_slot = if let Some(Ok((_storage_addr, slot))) =
             results.get(&solution.given_token.clone())
         {
+            error!("Detected allowance slot: 0x{}", hex::encode(slot));
             slot
         } else {
             return Err(miette!("Couldn't find allowance storage slot for token {token_address}"));
         };
 
+        let balance_slot_hex = hex::encode(balance_slot);
+        error!("Detected balance slot: 0x{}", balance_slot_hex);
+
         // Use a safe allowance value that works with tokens that have bit limits (like UNI with 96-bit limit)
         // 2^96 - 1 is the max value for 96-bit tokens, which is still a huge amount
         let safe_allowance = U256::from_str("79228162514264337593543950335").unwrap(); // 2^96 - 1
+
+        // Add 10% buffer to the balance to handle any rounding or fee issues
+        let balance_with_buffer = biguint_to_u256(&solution.given_amount)
+            .saturating_mul(U256::from(110)) / U256::from(100);
+
+        error!(
+            "Setting token override for {token_address}: balance={}, allowance={}",
+            balance_with_buffer, safe_allowance
+        );
 
         overwrites.insert(
             token_address,
@@ -706,9 +717,7 @@ async fn setup_user_overwrites(
                 ),
                 (
                     alloy::primitives::B256::from_slice(balance_slot),
-                    alloy::primitives::B256::from_slice(
-                        &biguint_to_u256(&solution.given_amount).to_be_bytes::<32>(),
-                    ),
+                    alloy::primitives::B256::from_slice(&balance_with_buffer.to_be_bytes::<32>()),
                 ),
             ]),
         );
