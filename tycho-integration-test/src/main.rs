@@ -693,12 +693,16 @@ async fn setup_user_overwrites(
             return Err(miette!("Couldn't find allowance storage slot for token {token_address}"));
         };
 
+        // Use a safe allowance value that works with tokens that have bit limits (like UNI with 96-bit limit)
+        // 2^96 - 1 is the max value for 96-bit tokens, which is still a huge amount
+        let safe_allowance = U256::from_str("79228162514264337593543950335").unwrap(); // 2^96 - 1
+
         overwrites.insert(
             token_address,
             AccountOverride::default().with_state_diff(vec![
                 (
                     alloy::primitives::B256::from_slice(allowance_slot),
-                    alloy::primitives::B256::from_slice(&U256::MAX.to_be_bytes::<32>()),
+                    alloy::primitives::B256::from_slice(&safe_allowance.to_be_bytes::<32>()),
                 ),
                 (
                     alloy::primitives::B256::from_slice(balance_slot),

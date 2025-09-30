@@ -126,7 +126,13 @@ impl SolidityError {
                             if let Ok(s) = std::str::from_utf8(string_data) {
                                 args.push(format!("\"{}\"", s));
                             } else {
-                                args.push(format!("0x{}", hex::encode(string_data)));
+                                // The string data is not UTF-8, it might be nested error bytes
+                                // Recursively decode until we get the actual string
+                                if let Ok(nested) = Self::decode_nested_error_recursive(string_data) {
+                                    args.push(format!("\"{}\"", nested));
+                                } else {
+                                    args.push(format!("0x{}", hex::encode(string_data)));
+                                }
                             }
                         }
                     }
@@ -152,6 +158,36 @@ impl SolidityError {
         }
 
         Ok(args.join(", "))
+    }
+
+    fn decode_nested_error_recursive(data: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
+        // Check if it starts with Error(string) signature (0x08c379a0)
+        if data.len() >= 4 {
+            let mut sig = [0u8; 4];
+            sig.copy_from_slice(&data[..4]);
+
+            if sig == [0x08, 0xc3, 0x79, 0xa0] {
+                // Decode nested Error(string): selector (4 bytes) + offset (32 bytes) + length (32 bytes) + string data
+                if data.len() >= 68 {
+                    let length = alloy::primitives::U256::from_be_slice(&data[36..68]).to::<usize>();
+                    if data.len() >= 68 + length {
+                        let string_data = &data[68..68 + length];
+
+                        // Try to decode as UTF-8 string
+                        if let Ok(s) = std::str::from_utf8(string_data) {
+                            return Ok(s.to_string());
+                        }
+
+                        // If not UTF-8, it might be another nested error - recurse
+                        if let Ok(nested) = Self::decode_nested_error_recursive(string_data) {
+                            return Ok(nested);
+                        }
+                    }
+                }
+            }
+        }
+
+        Err("Failed to decode nested error".into())
     }
 }
 
