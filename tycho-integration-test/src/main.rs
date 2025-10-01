@@ -9,7 +9,6 @@ use alloy::{
     primitives::{map::AddressHashMap, Address, Keccak256, U256},
     providers::{Provider, ProviderBuilder, RootProvider},
     rpc::types::{
-        simulate::{SimBlock, SimulatePayload},
         state::AccountOverride,
         Block, TransactionRequest,
     },
@@ -23,10 +22,6 @@ use itertools::Itertools;
 use miette::{miette, IntoDiagnostic, WrapErr};
 use num_bigint::BigUint;
 use num_traits::{ToPrimitive, Zero};
-use tokio_retry2::{
-    strategy::{jitter, ExponentialFactorBackoff},
-    Retry, RetryError,
-};
 use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::EnvFilter;
 use tycho_ethereum::entrypoint_tracer::{
@@ -275,6 +270,7 @@ async fn run(cli: Cli) -> miette::Result<()> {
                 let simulated_amount_out = match simulate_swap_transaction(
                     provider.clone(),
                     &cli.rpc_url,
+                    &component,
                     &solution,
                     &transaction,
                     &block,
@@ -508,8 +504,9 @@ pub fn encode_input(selector: &str, mut encoded_args: Vec<u8>) -> Vec<u8> {
 }
 
 async fn simulate_swap_transaction(
-    provider: RootProvider<Ethereum>,
+    _provider: RootProvider<Ethereum>,
     rpc_url: &str,
+    component: &ProtocolComponent,
     solution: &Solution,
     transaction: &Transaction,
     block: &Block,
@@ -518,73 +515,38 @@ async fn simulate_swap_transaction(
     let user_address = Address::from_slice(&solution.sender[..20]);
     let request = swap_request(transaction, block, user_address)?;
     let state_overwrites =
-        setup_user_overwrites(rpc_url, solution, transaction, block, user_address).await?;
-    let payload = SimulatePayload {
-        block_state_calls: vec![SimBlock {
-            block_overrides: None,
-            state_overrides: Some(state_overwrites.clone()),
-            calls: vec![request.clone()],
-        }],
-        trace_transfers: true,
-        validation: true,
-        return_full_transactions: true,
-    };
-    let retry_strategy = ExponentialFactorBackoff::from_millis(1000, 2.)
-        .max_delay_millis(10000)
-        .map(jitter)
-        .take(10);
-    let output = Retry::spawn(retry_strategy, async || match provider.simulate(&payload).await {
-        Ok(res) => Ok(res),
-        Err(e) => Err(RetryError::transient(e)),
-    })
-    .await
-    .into_diagnostic()
-    .wrap_err(miette!("Failed to simulate transaction after retries"))?;
-    let block = output
-        .first()
-        .ok_or_else(|| miette!("No blocks found in simulation output"))?;
-    info!("Simulated block {}", block.inner.header.number);
-    let transaction = block
-        .calls
-        .first()
-        .ok_or_else(|| miette!("No transactions found in simulated block"))?;
-    info!(
-        "Transaction status: {status:?}, gas used: {gas_used}",
-        status = transaction.status,
-        gas_used = transaction.gas_used
-    );
-    if !transaction.status {
-        warn!("Transaction: {transaction:?}");
+        setup_user_overwrites(rpc_url, component, solution, transaction, block, user_address).await?;
 
-        // Try to fetch revert reason
-        let mut fetcher = RevertReasonFetcher::new(rpc_url.to_string(), vec![
-            "Error(string)".to_string(),
-            "Panic(uint256)".to_string(),
-            "TychoRouter__NegativeSlippage(uint256,uint256)".to_string(),
-        ]);
+    // Use debug_traceCall from the start
+    let mut fetcher = RevertReasonFetcher::new(rpc_url.to_string(), vec![
+        "Error(string)".to_string(),
+        "Panic(uint256)".to_string(),
+        "TychoRouter__NegativeSlippage(uint256,uint256)".to_string(),
+    ]);
 
-        let revert_reason = match fetcher
-            .fetch(request.clone(), BlockNumberOrTag::Latest, Some(state_overwrites.clone()))
-            .await
-        {
-            Ok(reason) => reason,
-            Err(e) => {
-                warn!("failed to fetch revert reason: {e}");
-                "Unknown revert reason".to_string()
+    let result = fetcher
+        .simulate_with_trace(request.clone(), BlockNumberOrTag::Latest, Some(state_overwrites.clone()))
+        .await
+        .map_err(|e| miette!("Failed to simulate transaction with trace: {e}"))?;
+
+    match result {
+        revert_reason::SimulationResult::Success { return_data, gas_used } => {
+            info!("Transaction succeeded, gas used: {gas_used}");
+            let amount_out = U256::abi_decode(&return_data)
+                .map_err(|e| miette!("Failed to decode swap amount: {e:?}"))?;
+            BigUint::from_str(amount_out.to_string().as_str()).into_diagnostic()
+        }
+        revert_reason::SimulationResult::Revert { reason } => {
+            warn!("Transaction reverted: {reason}");
+            *error_count += 1;
+            if *error_count >= 10 {
+                panic!("{error_count} error encountered. Revert reason: {reason}");
+            } else {
+                error!("{error_count} error encountered, continuing. Revert reason: {reason}");
+                Err(miette!("Transaction reverted: {}", reason))
             }
-        };
-
-        *error_count += 1;
-        if *error_count >= 10 {
-            panic!("{error_count} error encountered. Revert reason: {revert_reason}");
-        } else {
-            error!("{error_count} error encountered, continuing. Revert reason: {revert_reason}");
-            return Err(miette!("Transaction reverted: {}", revert_reason));
         }
     }
-    let amount_out = U256::abi_decode(&transaction.return_data)
-        .map_err(|e| miette!("Failed to decode swap amount: {e:?}"))?;
-    BigUint::from_str(amount_out.to_string().as_str()).into_diagnostic()
 }
 
 fn swap_request(
@@ -598,7 +560,7 @@ fn swap_request(
         .input(transaction.data.clone().into())
         .value(U256::from_str(&transaction.value.to_string()).unwrap_or_default())
         .from(user_address)
-        .gas_limit(30_000_000)
+        .gas_limit(100_000_000)
         .max_fee_per_gas(
             max_fee_per_gas
                 .try_into()
@@ -631,6 +593,7 @@ fn calculate_gas_fees(block: &Block) -> miette::Result<(U256, U256)> {
 /// Set up all state overrides needed for simulation
 async fn setup_user_overwrites(
     rpc_url: &str,
+    _component: &ProtocolComponent,
     solution: &Solution,
     transaction: &Transaction,
     block: &Block,
@@ -673,7 +636,6 @@ async fn setup_user_overwrites(
         })
         .into_diagnostic()?;
 
-        error!("Approving tycho router address for allowance {}", transaction.to);
         let results = detector
             .detect_allowance_slots(
                 std::slice::from_ref(&solution.given_token),
@@ -686,26 +648,24 @@ async fn setup_user_overwrites(
         let allowance_slot = if let Some(Ok((_storage_addr, slot))) =
             results.get(&solution.given_token.clone())
         {
-            error!("Detected allowance slot: 0x{}", hex::encode(slot));
             slot
         } else {
             return Err(miette!("Couldn't find allowance storage slot for token {token_address}"));
         };
 
-        let balance_slot_hex = hex::encode(balance_slot);
-        error!("Detected balance slot: 0x{}", balance_slot_hex);
-
-        // Use a safe allowance value that works with tokens that have bit limits (like UNI with 96-bit limit)
-        // 2^96 - 1 is the max value for 96-bit tokens, which is still a huge amount
-        let safe_allowance = U256::from_str("79228162514264337593543950335").unwrap(); // 2^96 - 1
-
         // Add 10% buffer to the balance to handle any rounding or fee issues
         let balance_with_buffer = biguint_to_u256(&solution.given_amount)
             .saturating_mul(U256::from(110)) / U256::from(100);
 
+        // Some tokens (like certain wrapped tokens) only support 96-bit amounts
+        // Cap both balance and allowance to 2^96 - 1 to avoid reverts
+        let max_96_bit = (U256::from(1u128) << 96) - U256::from(1u128); // 2^96 - 1
+        let safe_balance = balance_with_buffer.min(max_96_bit);
+        let max_allowance = max_96_bit;
+
         error!(
             "Setting token override for {token_address}: balance={}, allowance={}",
-            balance_with_buffer, safe_allowance
+            safe_balance, max_allowance
         );
 
         overwrites.insert(
@@ -713,11 +673,11 @@ async fn setup_user_overwrites(
             AccountOverride::default().with_state_diff(vec![
                 (
                     alloy::primitives::B256::from_slice(allowance_slot),
-                    alloy::primitives::B256::from_slice(&safe_allowance.to_be_bytes::<32>()),
+                    alloy::primitives::B256::from_slice(&max_allowance.to_be_bytes::<32>()),
                 ),
                 (
                     alloy::primitives::B256::from_slice(balance_slot),
-                    alloy::primitives::B256::from_slice(&balance_with_buffer.to_be_bytes::<32>()),
+                    alloy::primitives::B256::from_slice(&safe_balance.to_be_bytes::<32>()),
                 ),
             ]),
         );

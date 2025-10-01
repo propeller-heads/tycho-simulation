@@ -21,7 +21,20 @@ use tracing::{error, info};
 
 pub type BlockTag = alloy::eips::BlockNumberOrTag;
 
+/// Result of a simulation with trace
+#[derive(Debug)]
+pub enum SimulationResult {
+    Success {
+        return_data: Vec<u8>,
+        gas_used: u64,
+    },
+    Revert {
+        reason: String,
+    },
+}
+
 /// Raw JSON-RPC call for lower-level access
+#[allow(dead_code)]
 pub async fn raw_rpc_call(
     rpc_url: &str,
     method: &str,
@@ -259,6 +272,7 @@ impl RevertReasonFetcher {
         Ok(SolidityError::new(name, sig_array, types))
     }
 
+    #[allow(dead_code)]
     pub async fn fetch(
         &mut self,
         tx: TransactionRequest,
@@ -269,13 +283,143 @@ impl RevertReasonFetcher {
         Ok(reason)
     }
 
+    /// Decode a Panic(uint256) error code to a human-readable message
+    fn decode_panic_code(code: u64) -> String {
+        match code {
+            0x01 => "assertion failed".to_string(),
+            0x11 => "arithmetic underflow or overflow".to_string(),
+            0x12 => "division or modulo by zero".to_string(),
+            0x21 => "invalid enum value".to_string(),
+            0x22 => "storage byte array incorrectly encoded".to_string(),
+            0x31 => "pop on empty array".to_string(),
+            0x32 => "array index out of bounds".to_string(),
+            0x41 => "out of memory".to_string(),
+            0x51 => "invalid internal function".to_string(),
+            _ => format!("panic code 0x{:x}", code),
+        }
+    }
+
+    /// Recursively find the deepest revert reason in a trace
+    fn find_deepest_revert_reason(trace: &Value) -> Option<String> {
+        // Check for output field that might contain revert data
+        if let Some(output) = trace.get("output").and_then(|o| o.as_str()) {
+            if !output.is_empty() && output != "0x" {
+                // Try to decode using the recursive decoder for nested errors
+                if let Ok(data) = hex::decode(output.trim_start_matches("0x")) {
+                    if data.len() >= 4 {
+                        // Check if it's Error(string) selector (0x08c379a0)
+                        if data[0..4] == [0x08, 0xc3, 0x79, 0xa0] {
+                            // Use the recursive decoder to handle nested Error(string) wrapping
+                            if let Ok(reason) = SolidityError::decode_nested_error_recursive(&data) {
+                                return Some(reason);
+                            }
+                        }
+                        // Check if it's Panic(uint256) selector (0x4e487b71)
+                        else if data[0..4] == [0x4e, 0x48, 0x7b, 0x71] && data.len() >= 36 {
+                            // Decode the panic code (uint256)
+                            let panic_code = alloy::primitives::U256::from_be_slice(&data[4..36]).to::<u64>();
+                            return Some(Self::decode_panic_code(panic_code));
+                        }
+                    }
+                }
+                // Return raw output if we can't decode it
+                return Some(output.to_string());
+            }
+        }
+
+        // Check for revertReason field
+        if let Some(revert_reason) = trace.get("revertReason").and_then(|r| r.as_str()) {
+            if !revert_reason.is_empty() {
+                // The revertReason might contain raw bytes with error encoding
+                let bytes = revert_reason.as_bytes();
+                if bytes.len() >= 4 {
+                    // Check if it's Error(string) selector (0x08c379a0)
+                    if bytes[0..4] == [0x08, 0xc3, 0x79, 0xa0] {
+                        if let Ok(decoded) = SolidityError::decode_nested_error_recursive(bytes) {
+                            return Some(decoded);
+                        }
+                    }
+                    // Check if it's Panic(uint256) selector (0x4e487b71)
+                    else if bytes[0..4] == [0x4e, 0x48, 0x7b, 0x71] && bytes.len() >= 36 {
+                        let panic_code = alloy::primitives::U256::from_be_slice(&bytes[4..36]).to::<u64>();
+                        return Some(Self::decode_panic_code(panic_code));
+                    }
+                }
+                return Some(revert_reason.to_string());
+            }
+        }
+
+        // Recursively check nested calls
+        if let Some(calls) = trace.get("calls").and_then(|c| c.as_array()) {
+            for call in calls {
+                if let Some(reason) = Self::find_deepest_revert_reason(call) {
+                    return Some(reason);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Simulate a transaction with trace and return either success or revert reason
+    pub async fn simulate_with_trace(
+        &mut self,
+        tx: TransactionRequest,
+        block: BlockTag,
+        state_overrides: Option<AddressHashMap<AccountOverride>>,
+    ) -> Result<SimulationResult, Box<dyn std::error::Error>> {
+        let trace_result = self.debug_trace_call_internal(tx, block, state_overrides, false).await?;
+
+        // Check for error in response
+        if let Some(error) = trace_result.get("error") {
+            // Print the full trace only on failure
+            error!("=== Transaction Trace (FAILURE) ===");
+            crate::traces::print_call_trace(&trace_result, 0).await;
+            error!("=== End Trace ===");
+
+            // Try to find the deepest revert reason in the trace
+            let reason = if let Some(deepest_reason) = Self::find_deepest_revert_reason(&trace_result) {
+                // Try to decode it if it looks like hex data
+                if deepest_reason.starts_with("0x") {
+                    self.match_error(&deepest_reason).await?
+                } else {
+                    deepest_reason
+                }
+            } else if let Some(data) = error.get("data").and_then(|d| d.as_str()) {
+                self.match_error(data).await?
+            } else if let Some(message) = error.get("message").and_then(|m| m.as_str()) {
+                message.to_string()
+            } else {
+                "EmptyMessage".to_string()
+            };
+
+            return Ok(SimulationResult::Revert { reason });
+        }
+
+        // Extract return data and gas used from successful trace
+        let return_data = if let Some(output) = trace_result.get("output").and_then(|o| o.as_str()) {
+            hex::decode(output.trim_start_matches("0x"))?
+        } else {
+            Vec::new()
+        };
+
+        let gas_used = trace_result
+            .get("gasUsed")
+            .and_then(|g| g.as_str())
+            .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+            .unwrap_or(0);
+
+        Ok(SimulationResult::Success { return_data, gas_used })
+    }
+
+    #[allow(dead_code)]
     async fn fetch_revert_reason(
         &mut self,
         tx: TransactionRequest,
         block: BlockTag,
         state_overrides: Option<AddressHashMap<AccountOverride>>,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        let response = self.debug_trace_call(tx, block, state_overrides).await?;
+        let response = self.debug_trace_call_internal(tx, block, state_overrides, true).await?;
 
         // Check for error in response
         if let Some(error) = response.get("error") {
@@ -289,11 +433,12 @@ impl RevertReasonFetcher {
         Ok(String::new())
     }
 
-    async fn debug_trace_call(
+    async fn debug_trace_call_internal(
         &self,
         tx: TransactionRequest,
         block: BlockTag,
         state_overrides: Option<AddressHashMap<AccountOverride>>,
+        print_trace: bool,
     ) -> Result<Value, Box<dyn std::error::Error>> {
         let provider = ProviderBuilder::new().connect_http(self.rpc_url.parse()?);
 
@@ -309,7 +454,7 @@ impl RevertReasonFetcher {
 
         let trace_options = GethDebugTracingCallOptions {
             tracing_options,
-            state_overrides: state_overrides,
+            state_overrides,
             block_overrides: None,
         };
 
@@ -324,10 +469,12 @@ impl RevertReasonFetcher {
             .request("debug_traceCall", (tx, block_id, trace_options))
             .await?;
 
-        // Print the full trace using foundry-style formatting
-        error!("=== Transaction Trace ===");
-        crate::traces::print_call_trace(&result, 0).await;
-        error!("=== End Trace ===");
+        // Print the full trace only if requested (for legacy fetch_revert_reason path)
+        if print_trace {
+            error!("=== Transaction Trace ===");
+            crate::traces::print_call_trace(&result, 0).await;
+            error!("=== End Trace ===");
+        }
 
         Ok(result)
     }
