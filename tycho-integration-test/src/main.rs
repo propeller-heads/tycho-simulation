@@ -26,7 +26,7 @@ use tokio_retry2::{
     strategy::{jitter, ExponentialFactorBackoff},
     Retry, RetryError,
 };
-use tracing::{debug, error, info, trace, warn};
+use tracing::{error, info, trace, warn};
 use tracing_subscriber::EnvFilter;
 use tycho_ethereum::entrypoint_tracer::{
     allowance_slot_detector::{AllowanceSlotDetectorConfig, EVMAllowanceSlotDetector},
@@ -165,6 +165,11 @@ async fn run(cli: Cli) -> miette::Result<()> {
     let mut first_message_skipped = false;
 
     while let Some(res) = protocol_stream.next().await {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
         let message = match res {
             Ok(msg) => msg,
             Err(e) => {
@@ -198,6 +203,12 @@ async fn run(cli: Cli) -> miette::Result<()> {
                 continue;
             }
         };
+
+        // Record block processing latency
+        let block_timestamp = block.header.timestamp;
+        let latency_seconds = (now as i64 - block_timestamp as i64).abs() as f64;
+        metrics::record_block_processing_latency(latency_seconds);
+
         // TODO why do we do this? Don't we also want to simulate on the first block?
         if !first_message_skipped {
             first_message_skipped = true;
@@ -223,6 +234,7 @@ async fn run(cli: Cli) -> miette::Result<()> {
                 .permutations(2)
                 .map(|perm| (perm[0].clone(), perm[1].clone()))
                 .collect();
+            let block_number = block.header.number;
             for (token_in, token_out) in swap_directions.iter() {
                 info!(
                     "Processing {} pool {id:?}, from {} to {}",
@@ -240,6 +252,14 @@ async fn run(cli: Cli) -> miette::Result<()> {
                     Ok(limits) => limits,
                     Err(e) => {
                         warn!("{e}");
+                        metrics::record_get_limits_failures(
+                            &component.protocol_system,
+                            id,
+                            block_number,
+                            &token_in.address,
+                            &token_out.address,
+                            e.to_string(),
+                        );
                         continue;
                     }
                 };
@@ -260,7 +280,8 @@ async fn run(cli: Cli) -> miette::Result<()> {
                 }
                 info!("Calculated amount_in: {amount_in} {}", token_in.symbol);
 
-                // Get expected amount out using tycho-simulation
+                // Get expected amount out using tycho-simulation and measure duration
+                let start_time = std::time::Instant::now();
                 let amount_out_result = match state
                     .get_amount_out(amount_in.clone(), token_in, token_out)
                     .into_diagnostic()
@@ -272,9 +293,21 @@ async fn run(cli: Cli) -> miette::Result<()> {
                         Ok(res) => res,
                         Err(e) => {
                             warn!("{e}");
+                            metrics::record_get_amount_out_failures(
+                                &component.protocol_system,
+                                id,
+                                block_number,
+                                &token_in.address,
+                                &token_out.address,
+                                &amount_in,
+                                e.to_string(),
+                            );
                             continue;
                         }
                 };
+                let duration = start_time.elapsed().as_secs_f64();
+                metrics::record_get_amount_out_duration(&component.protocol_system, duration, id);
+
                 let expected_amount_out = amount_out_result.amount;
                 info!("Calculated amount_out: {expected_amount_out} {}", token_out.symbol);
 
@@ -298,7 +331,12 @@ async fn run(cli: Cli) -> miette::Result<()> {
                         .await
                     {
                         Ok(amount) => {
-                            metrics::record_simulation_success();
+                            metrics::record_simulation_execution_success();
+                            metrics::record_simulation_execution_success_detailed(
+                                &component.protocol_system,
+                                id,
+                                block_number,
+                            );
                             amount
                         }
                         Err(e) => {
@@ -315,7 +353,17 @@ async fn run(cli: Cli) -> miette::Result<()> {
                                 &error_msg
                             };
 
-                            metrics::record_simulation_failure(revert_reason);
+                            // Extract error name (first word or function signature)
+                            let error_name = extract_error_name(revert_reason);
+
+                            metrics::record_simulation_execution_failure(revert_reason);
+                            metrics::record_simulation_execution_failure_detailed(
+                                &component.protocol_system,
+                                id,
+                                block_number,
+                                revert_reason,
+                                &error_name,
+                            );
                             continue;
                         }
                     };
@@ -324,14 +372,15 @@ async fn run(cli: Cli) -> miette::Result<()> {
                 // Calculate slippage
                 let slippage = if simulated_amount_out > expected_amount_out {
                     let diff = &simulated_amount_out - &expected_amount_out;
-                    let slippage = (diff.clone() * BigUint::from(10000u32)) / expected_amount_out;
-                    format!("+{:.2}%", slippage.to_f64().unwrap_or(0.0) / 100.0)
+                    (diff.clone() * BigUint::from(10000u32)) / expected_amount_out
                 } else {
                     let diff = &expected_amount_out - &simulated_amount_out;
-                    let slippage = (diff.clone() * BigUint::from(10000u32)) / expected_amount_out;
-                    format!("-{:.2}%", slippage.to_f64().unwrap_or(0.0) / 100.0)
+                    (diff.clone() * BigUint::from(10000u32)) / expected_amount_out
                 };
-                info!("Slippage: {slippage}");
+                let slippage = slippage.to_f64().unwrap_or(0.0) / 100.0;
+
+                metrics::record_slippage(block_number, &component.protocol_system, id, slippage);
+                info!("Slippage: {:.2}%", slippage);
 
                 info!("Pool processed {id:?} from {} to {}", token_in.symbol, token_out.symbol);
             }
@@ -743,4 +792,26 @@ async fn setup_user_overwrites(
     }
 
     Ok(overwrites)
+}
+
+/// Extract the error name from a revert reason string
+/// Examples:
+/// - "TychoRouter__NegativeSlippage(1000, 990)" -> "TychoRouter__NegativeSlippage"
+/// - "arithmetic underflow or overflow" -> "arithmetic underflow or overflow"
+/// - "Error(string): insufficient balance" -> "Error"
+fn extract_error_name(revert_reason: &str) -> String {
+    // Check if it's a function-style error (e.g., "ErrorName(...)")
+    if let Some(paren_pos) = revert_reason.find('(') {
+        revert_reason[..paren_pos]
+            .trim()
+            .to_string()
+    } else if let Some(colon_pos) = revert_reason.find(':') {
+        // Handle "Error: message" format
+        revert_reason[..colon_pos]
+            .trim()
+            .to_string()
+    } else {
+        // Return the whole message for simple errors
+        revert_reason.trim().to_string()
+    }
 }
