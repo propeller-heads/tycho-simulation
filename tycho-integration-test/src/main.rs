@@ -197,6 +197,7 @@ async fn run(cli: Cli) -> miette::Result<()> {
                     "Update block ({}) is behind the current block ({}), skipping to catch up.",
                     update.update.block_number_or_timestamp, block.header.number
                 );
+                metrics::record_skipped_update();
                 continue;
             }
 
