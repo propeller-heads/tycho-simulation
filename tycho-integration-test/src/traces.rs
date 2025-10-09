@@ -107,8 +107,8 @@ pub async fn decode_function_with_params(input: &str) -> Option<String> {
         return Some(format!("{}({})", name, input));
     }
 
-    // Return unknown if not found
-    Some(format!("{} (unknown)", &input[0..10]))
+    // Return unknown if not found, but include the full calldata
+    Some(format!("{} (unknown) calldata: {}", &input[0..10], input))
 }
 
 /// Format a parameter value for display

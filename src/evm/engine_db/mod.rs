@@ -39,7 +39,7 @@ where
     <D as EngineDatabaseInterface>::Error: Debug,
     <D as DatabaseRef>::Error: Debug,
 {
-    let engine = SimulationEngine::new(db.clone(), trace);
+    let engine = SimulationEngine::new(db.clone(), true);
 
     let zero_account_info =
         AccountInfo { balance: Default::default(), nonce: 0, code_hash: KECCAK_EMPTY, code: None };

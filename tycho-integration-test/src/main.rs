@@ -8,6 +8,7 @@ use std::{collections::HashMap, fmt::Debug, str::FromStr};
 
 use alloy::{
     eips::BlockNumberOrTag,
+    hex,
     network::Ethereum,
     primitives::{map::AddressHashMap, Address, Keccak256, U256},
     providers::{Provider, ProviderBuilder, RootProvider},
@@ -216,16 +217,13 @@ async fn run(cli: Cli) -> miette::Result<()> {
         metrics::record_block_processing_latency(latency_seconds);
 
         // TODO why do we do this? Don't we also want to simulate on the first block?
-        if !first_message_skipped {
-            first_message_skipped = true;
-            info!("Skipping simulation on first block...");
-            continue;
-        }
-        for (id, state) in message
-            .states
-            .iter()
-            .take(cli.max_n_simulations)
-        {
+        // if !first_message_skipped {
+        //     first_message_skipped = true;
+        //     info!("Skipping simulation on first block...");
+        //     continue;
+        // }
+        println!("GOT {:?} pools", message.states.len());
+        for (id, state) in message.states.iter() {
             let component = match pairs.get(id) {
                 Some(comp) => comp.clone(),
                 None => {
@@ -255,20 +253,26 @@ async fn run(cli: Cli) -> miette::Result<()> {
                 let (max_input, max_output) = match state
                     .get_limits(token_in.address.clone(), token_out.address.clone())
                     .into_diagnostic()
-                    .wrap_err(format!(
-                        "Error getting limits for Pool {id:?} for in token: {}, and out token: {}",
-                        token_in.address, token_out.address
-                    )) {
+                {
                     Ok(limits) => limits,
-                    Err(e) => {
-                        warn!("{e}");
+                    Err(original_error) => {
+                        // Log the original error first
+                        warn!("Original error from get_limits: {original_error}");
+
+                        // Then add context and log again
+                        let contextual_error = original_error.wrap_err(format!(
+                            "Error getting limits for Pool {id:?} for in token: {}, and out token: {}",
+                            token_in.address, token_out.address
+                        ));
+                        warn!("Contextual error: {contextual_error}");
+
                         metrics::record_get_limits_failures(
                             &component.protocol_system,
                             id,
                             block_number,
                             &token_in.address,
                             &token_out.address,
-                            e.to_string(),
+                            contextual_error.to_string(),
                         );
                         continue;
                     }
@@ -295,25 +299,21 @@ async fn run(cli: Cli) -> miette::Result<()> {
                 let amount_out_result = match state
                     .get_amount_out(amount_in.clone(), token_in, token_out)
                     .into_diagnostic()
-                    .wrap_err(format!(
-                        "Error calculating amount out for Pool {id:?} at {:.1}% with input of {amount_in} {}.",
-                        percentage * 100.0,
-                        token_in.symbol,
-                    )) {
-                        Ok(res) => res,
-                        Err(e) => {
-                            warn!("{e}");
-                            metrics::record_get_amount_out_failures(
-                                &component.protocol_system,
-                                id,
-                                block_number,
-                                &token_in.address,
-                                &token_out.address,
-                                &amount_in,
-                                e.to_string(),
-                            );
-                            continue;
-                        }
+                {
+                    Ok(res) => res,
+                    Err(e) => {
+                        warn!("{e}");
+                        metrics::record_get_amount_out_failures(
+                            &component.protocol_system,
+                            id,
+                            block_number,
+                            &token_in.address,
+                            &token_out.address,
+                            &amount_in,
+                            e.to_string(),
+                        );
+                        continue;
+                    }
                 };
                 let duration = start_time.elapsed().as_secs_f64();
                 metrics::record_get_amount_out_duration(&component.protocol_system, duration, id);
@@ -476,6 +476,7 @@ fn encode_swap(
         amount_in.clone(),
         expected_amount_out.clone(),
     )?;
+    info!("THIS IS THE SOLUIOTOP: {solution:?}");
     let encoded_solution = {
         let encoder = TychoRouterEncoderBuilder::new()
             .chain(chain)
@@ -491,6 +492,7 @@ fn encode_swap(
             .next()
             .ok_or_else(|| miette!("Missing solution"))?
     };
+    println!("encoded solution: {:?}", hex::encode(encoded_solution.swaps.clone()));
     let transaction =
         encoded_transaction(encoded_solution.clone(), &solution, chain.native_token().address)?;
     Ok((solution, transaction))

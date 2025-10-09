@@ -243,6 +243,11 @@ impl ExecutionSimulator {
 
             return Ok(SimulationResult::Revert { reason });
         }
+        // } else {
+        //     error!("=== Transaction Trace (PASSED) ===");
+        //     crate::traces::print_call_trace(&trace_result, 0).await;
+        //     error!("=== End Trace ===");
+        // }
 
         // Extract return data and gas used from successful trace
         let return_data = if let Some(output) = trace_result
