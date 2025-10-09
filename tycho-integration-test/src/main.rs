@@ -42,6 +42,7 @@ use tycho_simulation::{
         decoder::StreamDecodeError,
         engine_db::tycho_db::PreCachedDB,
         protocol::{
+            aerodrome_v1::state::AerodromeV1PoolState,
             ekubo::state::EkuboState,
             filters::{
                 balancer_v2_pool_filter, curve_pool_filter, uniswap_v4_pool_with_hook_filter,
@@ -452,6 +453,7 @@ async fn build_protocol_stream(
                     tvl_filter.clone(),
                     Some(uniswap_v4_pool_with_hook_filter),
                 )
+                .exchange::<AerodromeV1PoolState>("aerodrome_v1", tvl_filter.clone(), None)
         }
         Chain::Unichain => {
             protocol_stream = protocol_stream
