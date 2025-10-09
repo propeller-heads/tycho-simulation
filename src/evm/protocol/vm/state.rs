@@ -362,6 +362,12 @@ where
                             "Invalid token address in balance update: {token:?}"
                         ))
                     })?;
+                    if self
+                        .disable_overwrite_tokens
+                        .contains(&addr)
+                    {
+                        continue;
+                    }
                     self.balances
                         .insert(addr, U256::from_be_slice(bal));
                 }
@@ -383,6 +389,12 @@ where
                                 "Invalid token address in balance update: {token:?}"
                             ))
                         })?;
+                        if self
+                            .disable_overwrite_tokens
+                            .contains(&addr)
+                        {
+                            continue;
+                        }
                         contract_entry.insert(addr, U256::from_be_slice(bal));
                     }
                 }
