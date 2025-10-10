@@ -152,16 +152,16 @@ async fn run(cli: Cli) -> miette::Result<()> {
             .run_stream(&all_tokens, tx.clone())
             .await?;
     }
-    if let Ok(rfq_stream_processor) = RFQStreamProcessor::new(
-        chain,
-        cli.tvl_threshold,
-        cli.max_n_simulations,
-        Duration::from_secs(cli.skip_messages_duration),
-    ) {
-        rfq_stream_processor
-            .run_stream(&all_tokens, tx)
-            .await?;
-    }
+    // if let Ok(rfq_stream_processor) = RFQStreamProcessor::new(
+    //     chain,
+    //     cli.tvl_threshold,
+    //     cli.max_n_simulations,
+    //     Duration::from_secs(cli.skip_messages_duration),
+    // ) {
+    //     rfq_stream_processor
+    //         .run_stream(&all_tokens, tx)
+    //         .await?;
+    // }
 
     // Process streams updates
     let mut protocol_pairs: HashMap<String, ProtocolComponent> = HashMap::new();
