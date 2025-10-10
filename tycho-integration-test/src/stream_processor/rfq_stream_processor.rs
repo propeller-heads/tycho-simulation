@@ -98,7 +98,11 @@ impl RFQStreamProcessor {
                             .into_diagnostic()
                             .wrap_err("Failed to create Bebop RFQ client")?;
                     rfq_stream_builder = rfq_stream_builder
-                        .add_client::<BebopState>("bebop", Box::new(bebop_client));
+                        .add_client_with_throttle::<BebopState>(
+                            "bebop",
+                            Box::new(bebop_client),
+                            self.skip_messages_duration,
+                        );
                 }
                 RFQProtocol::Hashflow => {
                     let hashflow_client = HashflowClient::new(
@@ -123,43 +127,8 @@ impl RFQStreamProcessor {
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let _handle = tokio::spawn(rfq_stream_builder.build(tx));
         let sample_size = self.sample_size;
-        let skip_messages_duration = self.skip_messages_duration;
-        let mut next_stream_times: HashMap<String, tokio::time::Instant> = self
-            .rfq_credentials
-            .keys()
-            .map(|protocol| (protocol.to_string(), tokio::time::Instant::now()))
-            .collect();
         let handle = tokio::spawn(async move {
             while let Some(mut update) = rx.recv().await {
-                // Handle throttling for the update's protocol
-                if let Some((_, component)) = update.new_pairs.iter().next() {
-                    let next_stream_time =
-                        if let Some(t) = next_stream_times.get_mut(&component.protocol_system) {
-                            t
-                        } else {
-                            if stream_tx
-                                .send(Err(miette!(
-                                    "Protocol system not configured: {}",
-                                    component.protocol_system
-                                )))
-                                .await
-                                .is_err()
-                            {
-                                warn!("Receiver dropped, stopping stream processor");
-                                _handle.abort();
-                                break;
-                            }
-                            continue;
-                        };
-                    let now = tokio::time::Instant::now();
-                    if now < *next_stream_time {
-                        continue;
-                    } else {
-                        *next_stream_time = now + skip_messages_duration;
-                    }
-                } else {
-                    continue;
-                };
 
                 // Sample random RFQ quotes
                 update.states = update

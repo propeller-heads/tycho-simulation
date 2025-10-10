@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
 
 use futures::{stream::select_all, StreamExt};
 use tycho_client::feed::{synchronizer::ComponentWithState, FeedMessage};
@@ -32,10 +32,15 @@ use crate::{
 /// - Each `RFQClient`'s stream is expected to yield `Result<(String, StateSyncMessage), RFQError>`.
 /// - If a client's stream returns an `Err` (e.g., `RFQError::FatalError`), the client is
 ///   **removed** from the merged stream, and the system continues running without it.
-#[derive(Default)]
 pub struct RFQStreamBuilder {
-    clients: Vec<Box<dyn RFQClient>>,
+    clients: Vec<(Box<dyn RFQClient>, Option<Duration>)>,
     decoder: TychoStreamDecoder<TimestampHeader>,
+}
+
+impl Default for RFQStreamBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RFQStreamBuilder {
@@ -50,7 +55,24 @@ impl RFQStreamBuilder {
             + Send
             + 'static,
     {
-        self.clients.push(provider);
+        self.clients.push((provider, None));
+        self.decoder.register_decoder::<T>(name);
+        self
+    }
+
+    pub fn add_client_with_throttle<T>(
+        mut self,
+        name: &str,
+        provider: Box<dyn RFQClient>,
+        throttle_duration: Duration,
+    ) -> Self
+    where
+        T: ProtocolSim
+            + TryFromWithBlock<ComponentWithState, TimestampHeader, Error = InvalidSnapshotError>
+            + Send
+            + 'static,
+    {
+        self.clients.push((provider, Some(throttle_duration)));
         self.decoder.register_decoder::<T>(name);
         self
     }
@@ -59,7 +81,7 @@ impl RFQStreamBuilder {
         let streams: Vec<_> = self
             .clients
             .into_iter()
-            .map(|provider| provider.stream())
+            .map(|(provider, throttle)| provider.stream(throttle))
             .collect();
 
         let mut merged = select_all(streams);
@@ -211,6 +233,7 @@ mod tests {
     impl RFQClient for MockRFQClient {
         fn stream(
             &self,
+            _throttle_duration: Option<Duration>,
         ) -> BoxStream<'static, Result<(String, StateSyncMessage<TimestampHeader>), RFQError>>
         {
             let name = self.name.clone();

@@ -252,6 +252,7 @@ impl BebopClient {
 impl RFQClient for BebopClient {
     fn stream(
         &self,
+        throttle_duration: Option<Duration>,
     ) -> BoxStream<'static, Result<(String, StateSyncMessage<TimestampHeader>), RFQError>> {
         let tokens = self.tokens.clone();
         let url = self.price_ws.clone();
@@ -304,10 +305,31 @@ impl RFQClient for BebopClient {
 
                 let (_, mut ws_receiver) = ws_stream.split();
 
+                // Track when we last processed a message
+                let mut last_process_time = tokio::time::Instant::now();
+
                 // Message processing loop
                 while let Some(msg) = ws_receiver.next().await {
                     match msg {
                         Ok(Message::Binary(data)) => {
+                            // Check if we should skip decoding based on throttle
+                            let should_decode = if let Some(duration) = throttle_duration {
+                                let now = tokio::time::Instant::now();
+                                if now.duration_since(last_process_time) >= duration {
+                                    last_process_time = now;
+                                    true
+                                } else {
+                                    false
+                                }
+                            } else {
+                                true
+                            };
+
+                            if !should_decode {
+                                // Skip decoding, just discard the message
+                                continue;
+                            }
+
                             match BebopPricingUpdate::decode(&data[..]) {
                                 Ok(protobuf_update) => {
                                     let mut new_components = HashMap::new();
@@ -521,7 +543,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut stream = client.stream();
+        let mut stream = client.stream(None);
 
         // Test connection and message reception with timeout
         let result = timeout(Duration::from_secs(10), async {
@@ -700,7 +722,7 @@ mod tests {
         // 4. Receive second message successfully
         // Timeout if two messages are not received within 5 seconds.
         while start_time.elapsed() < Duration::from_secs(5) && successful_messages < 2 {
-            match timeout(Duration::from_millis(1000), client.stream().next()).await {
+            match timeout(Duration::from_millis(1000), client.stream(None).next()).await {
                 Ok(Some(result)) => match result {
                     Ok((_component_id, _message)) => {
                         successful_messages += 1;

@@ -195,7 +195,9 @@ async fn main() {
 
     // Start the RFQ stream in a background task
     let (tx, mut rx) = mpsc::channel::<Update>(100);
-    tokio::spawn(rfq_stream_builder.build(tx));
+    tokio::spawn(async move {
+        let _ = rfq_stream_builder.build(tx).await;
+    });
     println!("Connected to RFQs! Streaming live price levels...\n");
 
     // Stream quotes from RFQ stream
