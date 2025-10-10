@@ -6,7 +6,12 @@ mod swap_simulation;
 mod tenderly;
 mod traces;
 
-use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Duration};
+use std::{
+    fmt::Debug,
+    num::NonZeroUsize,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use alloy::{
     eips::BlockNumberOrTag,
@@ -19,9 +24,11 @@ use alloy_chains::NamedChain;
 use clap::Parser;
 use dotenv::dotenv;
 use itertools::Itertools;
+use lru::LruCache;
 use miette::{miette, IntoDiagnostic, NarratableReportHandler, WrapErr};
 use num_bigint::BigUint;
 use num_traits::{ToPrimitive, Zero};
+use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use tycho_common::simulation::protocol_sim::ProtocolSim;
@@ -61,13 +68,31 @@ struct Cli {
     #[arg(long, env = "RPC_URL")]
     rpc_url: String,
 
+    /// Disable on-chain protocols
+    #[arg(long, default_value_t = false)]
+    disable_onchain: bool,
+
+    /// Disable RFQ protocols
+    #[arg(long, default_value_t = false)]
+    disable_rfq: bool,
+
     /// Port for the Prometheus metrics server
     #[arg(long, default_value_t = 9898)]
     metrics_port: u16,
 
+    /// Maximum number of updates to process in parallel.
+    /// Set to 1 to process sequentially.
+    #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..))]
+    parallel_updates: u8,
+
+    /// Maximum number of simulations to run in parallel
+    /// Set to 1 to process sequentially.
+    #[arg(short, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..))]
+    parallel_simulations: u8,
+
     /// Maximum number of simulations to run per protocol update
-    #[arg(short, default_value_t = 10)]
-    max_n_simulations: usize,
+    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u8).range(1..))]
+    max_simulations: u8,
 
     /// The RFQ stream will skip messages for this duration (in seconds) after processing a message
     #[arg(long, default_value_t = 600)]
@@ -118,6 +143,7 @@ async fn main() -> miette::Result<()> {
 async fn run(cli: Cli) -> miette::Result<()> {
     info!("Starting integration test");
 
+    let cli = Arc::new(cli);
     let chain = cli.chain;
 
     let provider: RootProvider<Ethereum> = ProviderBuilder::default()
@@ -142,110 +168,174 @@ async fn run(cli: Cli) -> miette::Result<()> {
 
     // Run streams in background tasks
     let (tx, mut rx) = tokio::sync::mpsc::channel(64);
-    if let Ok(protocol_stream_processor) = ProtocolStreamProcessor::new(
-        chain,
-        tycho_url.clone(),
-        cli.tycho_api_key.clone(),
-        cli.tvl_threshold,
-    ) {
-        protocol_stream_processor
-            .run_stream(&all_tokens, tx.clone())
-            .await?;
+    if !cli.disable_onchain {
+        if let Ok(protocol_stream_processor) = ProtocolStreamProcessor::new(
+            chain,
+            tycho_url.clone(),
+            cli.tycho_api_key.clone(),
+            cli.tvl_threshold,
+        ) {
+            protocol_stream_processor
+                .run_stream(&all_tokens, tx.clone())
+                .await?;
+        }
     }
-    if let Ok(rfq_stream_processor) = RFQStreamProcessor::new(
-        chain,
-        cli.tvl_threshold,
-        cli.max_n_simulations,
-        Duration::from_secs(cli.skip_messages_duration),
-    ) {
-        rfq_stream_processor
-            .run_stream(&all_tokens, tx)
-            .await?;
+    if !cli.disable_rfq {
+        if let Ok(rfq_stream_processor) = RFQStreamProcessor::new(
+            chain,
+            cli.tvl_threshold,
+            cli.max_simulations as usize,
+            Duration::from_secs(cli.skip_messages_duration),
+        ) {
+            rfq_stream_processor
+                .run_stream(&all_tokens, tx)
+                .await?;
+        }
     }
+
+    // Assuming a big ProtocolComponent instance can be around 1KB,
+    // 10,000 entries would use 10MB of memory.
+    let protocol_pairs = Arc::new(RwLock::new(LruCache::new(
+        NonZeroUsize::new(10_000).ok_or_else(|| miette!("Invalid NonZeroUsize"))?,
+    )));
 
     // Process streams updates
-    let mut protocol_pairs: HashMap<String, ProtocolComponent> = HashMap::new();
+    info!("Waiting for first protocol update...");
+    let semaphore = Arc::new(Semaphore::new(cli.parallel_updates as usize));
     while let Some(update) = rx.recv().await {
-        let update = match update {
-            Ok(u) => u,
-            Err(e) => {
+        let semaphore = semaphore.clone();
+        let cli = cli.clone();
+        let provider = provider.clone();
+        let protocol_pairs = protocol_pairs.clone();
+        tokio::spawn(async move {
+            let update = match update {
+                Ok(u) => Arc::new(u),
+                Err(e) => {
+                    warn!("{e:?}");
+                    return;
+                }
+            };
+            let _permit = semaphore.acquire().await.unwrap();
+            if let Err(e) = process_update(cli, chain, provider, protocol_pairs, &update).await {
                 warn!("{e:?}");
-                continue;
             }
-        };
-        info!(
-            "Got protocol update with block/timestamp {}, {} new pairs, and {} states",
-            update.update.block_number_or_timestamp,
-            update.update.new_pairs.len(),
-            update.update.states.len()
-        );
+        });
+    }
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .into_diagnostic()?
-            .as_secs();
-        let block = match provider
-            .get_block_by_number(BlockNumberOrTag::Latest)
-            .await
-            .into_diagnostic()
-            .wrap_err("Failed to fetch latest block")
-            .ok()
-            .flatten()
-        {
-            Some(b) => {
-                // Record block processing latency
-                let latency_seconds = (now as i64 - b.header.timestamp as i64).abs() as f64;
-                metrics::record_block_processing_latency(latency_seconds);
-                b
-            }
-            None => {
-                warn!("Failed to retrieve last block, continuing to next message...");
-                continue;
-            }
-        };
+    Ok(())
+}
 
+async fn process_update(
+    cli: Arc<Cli>,
+    chain: Chain,
+    provider: RootProvider<Ethereum>,
+    protocol_pairs: Arc<RwLock<LruCache<String, ProtocolComponent>>>,
+    update: &StreamUpdate,
+) -> miette::Result<()> {
+    info!(
+        "Got protocol update with block/timestamp {}, {} new pairs, and {} states",
+        update.update.block_number_or_timestamp,
+        update.update.new_pairs.len(),
+        update.update.states.len()
+    );
+
+    {
+        let mut pairs = protocol_pairs
+            .write()
+            .map_err(|e| miette!("Failed to acquire write lock on protocol pairs: {e}"))?;
         for (id, comp) in update.update.new_pairs.iter() {
-            protocol_pairs
-                .entry(id.clone())
-                .or_insert_with(|| comp.clone());
+            pairs.get_or_insert(id.clone(), || comp.clone());
         }
+    }
 
-        if update.update_type == UpdateType::Protocol {
-            let block_delay = block
-                .header
-                .number
-                .abs_diff(update.update.block_number_or_timestamp);
-            // Consume messages that are older than the current block, to give the stream a chance
-            // to catch up
-            if update.update.block_number_or_timestamp < block.header.number {
-                warn!(
-                    "Update block ({}) is behind the current block ({}), skipping to catch up.",
-                    update.update.block_number_or_timestamp, block.header.number
-                );
-                metrics::record_skipped_update();
-                continue;
-            }
-            metrics::record_block_delay(block_delay);
-
-            if update.is_first_update {
-                info!("Skipping simulation on first protocol update...");
-                continue;
-            }
-
-            for (protocol, sync_state) in update.update.sync_states.iter() {
-                metrics::record_protocol_sync_state(protocol, sync_state);
-            }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .into_diagnostic()?
+        .as_secs();
+    let block = match provider
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .into_diagnostic()
+        .wrap_err("Failed to fetch latest block")
+        .ok()
+        .flatten()
+    {
+        Some(b) => Arc::new(b),
+        None => {
+            warn!("Failed to retrieve last block, continuing to next message...");
+            return Ok(());
         }
+    };
 
-        for (id, state) in update
-            .update
-            .states
-            .iter()
-            .take(cli.max_n_simulations)
-        {
-            process_update_state(&cli, chain, &protocol_pairs, &block, &update, id, state.as_ref())
-                .await;
+    // Record block processing latency
+    let latency_seconds = (now as i64 - block.header.timestamp as i64).abs() as f64;
+    metrics::record_block_processing_latency(latency_seconds);
+
+    if let UpdateType::Protocol = update.update_type {
+        let block_delay = block
+            .header
+            .number
+            .abs_diff(update.update.block_number_or_timestamp);
+        // Consume messages that are older than the current block, to give the stream a chance
+        // to catch up
+        if update.update.block_number_or_timestamp < block.header.number {
+            warn!(
+                "Update block ({}) is behind the current block ({}), skipping to catch up.",
+                update.update.block_number_or_timestamp, block.header.number
+            );
+            metrics::record_skipped_update();
+            return Ok(());
         }
+        metrics::record_block_delay(block_delay);
+
+        if update.is_first_update {
+            info!("Skipping simulation on first protocol update...");
+            return Ok(());
+        }
+    }
+
+    for (protocol, sync_state) in update.update.sync_states.iter() {
+        metrics::record_protocol_sync_state(protocol, sync_state);
+    }
+
+    // Process states in parallel
+    let semaphore = Arc::new(Semaphore::new(cli.parallel_simulations as usize));
+    for (id, state) in update
+        .update
+        .states
+        .iter()
+        .take(cli.max_simulations as usize)
+    {
+        let component = match update.update_type {
+            UpdateType::Protocol => {
+                let mut pairs = protocol_pairs
+                    .write()
+                    .map_err(|e| miette!("Failed to acquire read lock on protocol pairs: {e}"))?;
+                match pairs.get(id) {
+                    Some(comp) => comp.clone(),
+                    None => {
+                        warn!("Component {id:?} not found in protocol pairs");
+                        continue;
+                    }
+                }
+            }
+            UpdateType::Rfq => match update.update.new_pairs.get(id) {
+                Some(comp) => comp.clone(),
+                None => {
+                    warn!("Component not found in RFQ pairs");
+                    continue;
+                }
+            },
+        };
+        let semaphore = semaphore.clone();
+        let cli = cli.clone();
+        let block = block.clone();
+        let state_id = id.clone();
+        let state = state.clone_box();
+        tokio::spawn(async move {
+            let _permit = semaphore.acquire().await.unwrap();
+            process_update_state(&cli, chain, component, &block, state_id, state).await;
+        });
     }
 
     Ok(())
@@ -254,28 +344,11 @@ async fn run(cli: Cli) -> miette::Result<()> {
 async fn process_update_state(
     cli: &Cli,
     chain: Chain,
-    protocol_pairs: &HashMap<String, ProtocolComponent>,
+    component: ProtocolComponent,
     block: &Block,
-    update: &StreamUpdate,
-    state_id: &str,
-    state: &dyn ProtocolSim,
+    state_id: String,
+    state: Box<dyn ProtocolSim>,
 ) {
-    let component = match update.update_type {
-        UpdateType::Protocol => match protocol_pairs.get(state_id) {
-            Some(comp) => comp.clone(),
-            None => {
-                warn!("Component {state_id:?} not found in protocol pairs");
-                return;
-            }
-        },
-        UpdateType::Rfq => match update.update.new_pairs.get(state_id) {
-            Some(comp) => comp.clone(),
-            None => {
-                warn!("Component not found in RFQ pairs");
-                return;
-            }
-        },
-    };
     info!(
         "Component has tokens: {}",
         component
@@ -333,7 +406,7 @@ async fn process_update_state(
                 warn!("{e:?}");
                 metrics::record_get_limits_failures(
                     &component.protocol_system,
-                    state_id,
+                    &state_id,
                     block.header.number,
                     &token_in.address,
                     &token_out.address,
@@ -374,7 +447,7 @@ async fn process_update_state(
                 warn!("{e}");
                 metrics::record_get_amount_out_failures(
                     &component.protocol_system,
-                    state_id,
+                    &state_id,
                     block.header.number,
                     &token_in.address,
                     &token_out.address,
@@ -387,7 +460,7 @@ async fn process_update_state(
         metrics::record_get_amount_out_duration(
             &component.protocol_system,
             start_time.elapsed().as_secs_f64(),
-            state_id,
+            &state_id,
         );
         let expected_amount_out = amount_out_result.amount;
         info!("Calculated amount_out: {expected_amount_out} {}", token_out.symbol);
@@ -414,7 +487,7 @@ async fn process_update_state(
                     metrics::record_simulation_execution_success();
                     metrics::record_simulation_execution_success_detailed(
                         &component.protocol_system,
-                        state_id,
+                        &state_id,
                         block.header.number,
                     );
                     amount
@@ -452,7 +525,7 @@ async fn process_update_state(
                     metrics::record_simulation_execution_failure(revert_reason);
                     metrics::record_simulation_execution_failure_detailed(
                         &component.protocol_system,
-                        state_id,
+                        &state_id,
                         block.header.number,
                         revert_reason,
                         &error_name,
@@ -478,7 +551,7 @@ async fn process_update_state(
         metrics::record_slippage(
             block.header.number,
             &component.protocol_system,
-            state_id,
+            &state_id,
             slippage,
         );
         info!("Slippage: {:.2}%", slippage);
