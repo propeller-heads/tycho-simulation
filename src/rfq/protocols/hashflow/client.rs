@@ -261,6 +261,7 @@ impl HashflowClient {
 impl RFQClient for HashflowClient {
     fn stream(
         &self,
+        _throttle_duration: Option<Duration>,
     ) -> BoxStream<'static, Result<(String, StateSyncMessage<TimestampHeader>), RFQError>> {
         let mut client = self.clone();
 
@@ -649,7 +650,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut stream = client.stream();
+        let mut stream = client.stream(None);
 
         let result = timeout(Duration::from_secs(10), async {
             let mut message_count = 0;
