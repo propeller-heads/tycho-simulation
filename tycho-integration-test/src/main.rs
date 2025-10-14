@@ -126,8 +126,10 @@ async fn main() -> miette::Result<()> {
         .init();
     let cli = Cli::parse();
 
-    // Initialize OpenTelemetry
-    init_opentelemetry().map_err(|e| miette!("Failed to initialize OpenTelemetry: {}", e))?;
+    // Initialize OpenTelemetry (ignore failures for local development)
+    if let Err(e) = init_opentelemetry() {
+        warn!("Failed to initialize OpenTelemetry: {}. Continuing without metrics.", e);
+    }
 
     run(cli).await?;
     global::shutdown_tracer_provider();
@@ -136,16 +138,31 @@ async fn main() -> miette::Result<()> {
 
 /// Initialize OpenTelemetry with OTLP exporter
 fn init_opentelemetry() -> Result<(), Box<dyn std::error::Error>> {
-    // For now, just initialize a basic meter provider
-    // The OTLP configuration will be handled by the Helm chart's otlp setup
-    let meter_provider = opentelemetry_sdk::metrics::MeterProviderBuilder::default()
+    use opentelemetry_otlp::WithExportConfig;
+
+    // Get OTLP endpoint from environment, default to standard collector endpoint
+    let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .or_else(|_| std::env::var("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"))
+        .unwrap_or_else(|_| "http://localhost:4318/v1/metrics".to_string());
+
+    info!("Initializing OpenTelemetry with OTLP endpoint: {}", otlp_endpoint);
+
+    // Initialize OTLP pipeline
+    let _meter_provider = opentelemetry_otlp::new_pipeline()
+        .metrics(opentelemetry_sdk::runtime::Tokio)
+        .with_exporter(
+            opentelemetry_otlp::new_exporter()
+                .http()
+                .with_endpoint(&otlp_endpoint),
+        )
         .with_resource(Resource::new(vec![
             KeyValue::new("service.name", "tycho-integration-test"),
             KeyValue::new("service.version", "0.1.0"),
         ]))
-        .build();
+        .with_period(Duration::from_secs(10))
+        .build()?;
 
-    global::set_meter_provider(meter_provider);
+    info!("OpenTelemetry metrics initialized successfully");
     Ok(())
 }
 
@@ -505,6 +522,7 @@ async fn process_state(
                 continue;
             }
         };
+        let start_time = std::time::Instant::now();
         let simulated_amount_out = match simulate_swap_transaction(
             &rpc_tools,
             &simulation_id,
@@ -567,6 +585,7 @@ async fn process_state(
                 continue;
             }
         };
+        println!("Took to swap: {:?}", start_time.elapsed().as_secs_f64());
         info!(
             "[{}] Simulated amount_out: {simulated_amount_out} {}",
             simulation_id, token_out.symbol
