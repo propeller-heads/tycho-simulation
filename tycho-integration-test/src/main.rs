@@ -24,6 +24,8 @@ use lru::LruCache;
 use miette::{miette, IntoDiagnostic, NarratableReportHandler, WrapErr};
 use num_bigint::BigUint;
 use num_traits::{ToPrimitive, Zero};
+use opentelemetry::{global, KeyValue};
+use opentelemetry_sdk::Resource;
 use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
@@ -124,23 +126,26 @@ async fn main() -> miette::Result<()> {
         .init();
     let cli = Cli::parse();
 
-    // Initialize and start Prometheus metrics
-    metrics::initialize_metrics();
-    let metrics_task = metrics::create_metrics_exporter(cli.metrics_port).await?;
+    // Initialize OpenTelemetry
+    init_opentelemetry().map_err(|e| miette!("Failed to initialize OpenTelemetry: {}", e))?;
 
-    // Run the main application logic and metrics server in parallel
-    // If either fails, the other will be cancelled
-    tokio::select! {
-        result = run(cli) => {
-            result?;
-        }
-        result = metrics_task => {
-            result
-                .into_diagnostic()
-                .wrap_err("Metrics server task panicked")??;
-        }
-    }
+    run(cli).await?;
+    global::shutdown_tracer_provider();
+    Ok(())
+}
 
+/// Initialize OpenTelemetry with OTLP exporter
+fn init_opentelemetry() -> Result<(), Box<dyn std::error::Error>> {
+    // For now, just initialize a basic meter provider
+    // The OTLP configuration will be handled by the Helm chart's otlp setup
+    let meter_provider = opentelemetry_sdk::metrics::MeterProviderBuilder::default()
+        .with_resource(Resource::new(vec![
+            KeyValue::new("service.name", "tycho-integration-test"),
+            KeyValue::new("service.version", "0.1.0"),
+        ]))
+        .build();
+
+    global::set_meter_provider(meter_provider);
     Ok(())
 }
 

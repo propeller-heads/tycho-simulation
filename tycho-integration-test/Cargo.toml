@@ -23,8 +23,9 @@ rand = "0.9.2"
 tokio = { workspace = true }
 tokio-retry2 = { version = "0.6.0", features = ["jitter"] }
 tracing = { workspace = true }
-metrics = "0.24.2"
-metrics-exporter-prometheus = "0.17.2"
+opentelemetry = "0.21"
+opentelemetry-otlp = { version = "0.14", features = ["http-proto"] }
+opentelemetry_sdk = { version = "0.21", features = ["rt-tokio", "metrics"] }
 actix-web = "4.11.0"
 tycho-client = { workspace = true }
 tycho-common = { workspace = true }
