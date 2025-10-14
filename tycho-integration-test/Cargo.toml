@@ -24,7 +24,7 @@ tokio = { workspace = true }
 tokio-retry2 = { version = "0.6.0", features = ["jitter"] }
 tracing = { workspace = true }
 opentelemetry = "0.21"
-opentelemetry-otlp = { version = "0.14", features = ["http-proto"] }
+opentelemetry-otlp = { version = "0.14", features = ["http-proto", "reqwest-client"] }
 opentelemetry_sdk = { version = "0.21", features = ["rt-tokio", "metrics"] }
 actix-web = "4.11.0"
 tycho-client = { workspace = true }
