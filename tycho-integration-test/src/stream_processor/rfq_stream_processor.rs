@@ -120,7 +120,6 @@ impl RFQStreamProcessor {
         }
 
         // Start the RFQ stream
-        let mut is_first_update = true;
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let _handle = tokio::spawn(rfq_stream_builder.build(tx));
         let sample_size = self.sample_size;
@@ -130,13 +129,24 @@ impl RFQStreamProcessor {
             .keys()
             .map(|protocol| (protocol.to_string(), tokio::time::Instant::now()))
             .collect();
+
+        // Store only the latest RFQ update
+        let mut latest_rfq_update: Option<tycho_simulation::protocol::models::Update> = None;
         let handle = tokio::spawn(async move {
             info!("RFQ stream processor started");
+            let mut rfq_update_counter = 0u64;
             while let Some(mut update) = rx.recv().await {
-                // Handle throttling for the update's protocol
-                if let Some((_, component)) = update.new_pairs.iter().next() {
-                    let next_stream_time =
-                        if let Some(t) = next_stream_times.get_mut(&component.protocol_system) {
+                rfq_update_counter += 1;
+
+                // Always replace the previous update with the latest one
+                latest_rfq_update = Some(update);
+
+                // Handle throttling for sending updates
+                if let Some(ref latest_update) = latest_rfq_update {
+                    if let Some((_, component)) = latest_update.new_pairs.iter().next() {
+                        let next_stream_time = if let Some(t) =
+                            next_stream_times.get_mut(&component.protocol_system)
+                        {
                             t
                         } else {
                             if stream_tx
@@ -153,40 +163,51 @@ impl RFQStreamProcessor {
                             }
                             continue;
                         };
-                    let now = tokio::time::Instant::now();
-                    if now < *next_stream_time {
-                        continue;
+                        let now = tokio::time::Instant::now();
+                        if now < *next_stream_time {
+                            continue;
+                        } else {
+                            *next_stream_time = now + skip_messages_duration;
+                        }
                     } else {
-                        *next_stream_time = now + skip_messages_duration;
+                        continue;
+                    };
+
+                    if rfq_update_counter % 10 == 0 {
+                        warn!(
+                            "RFQ stream: received {} updates, latest has {} quotes",
+                            rfq_update_counter,
+                            latest_update.states.len()
+                        );
                     }
-                } else {
-                    continue;
-                };
 
-                // Sample random RFQ quotes
-                update.states = update
-                    .states
-                    .into_iter()
-                    .choose_multiple(&mut rand::rng(), sample_size)
-                    .into_iter()
-                    .collect();
-                update
-                    .new_pairs
-                    .retain(|key, _| update.states.contains_key(key));
+                    // Sample from the latest update
+                    let mut sampled_update = latest_update.clone();
+                    sampled_update.states = sampled_update
+                        .states
+                        .into_iter()
+                        .choose_multiple(&mut rand::rng(), sample_size)
+                        .into_iter()
+                        .collect();
+                    sampled_update
+                        .new_pairs
+                        .retain(|key, _| sampled_update.states.contains_key(key));
 
-                // Send the latest update
-                let update = StreamUpdate { update_type: UpdateType::Rfq, update, is_first_update };
-                if is_first_update {
-                    is_first_update = false;
-                }
-                if stream_tx
-                    .send(Ok(update))
-                    .await
-                    .is_err()
-                {
-                    warn!("Receiver dropped, stopping stream processor");
-                    _handle.abort();
-                    break;
+                    // Send the sampled update
+                    let stream_update = StreamUpdate {
+                        update_type: UpdateType::Rfq,
+                        update: sampled_update,
+                        is_first_update: false,
+                    };
+                    if stream_tx
+                        .send(Ok(stream_update))
+                        .await
+                        .is_err()
+                    {
+                        warn!("Receiver dropped, stopping stream processor");
+                        _handle.abort();
+                        break;
+                    }
                 }
             }
         });
