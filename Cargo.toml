@@ -37,7 +37,7 @@ itertools = "0.10.5"
 tycho-client = ">=0.91.0"
 tycho-common = ">=0.91.0"
 tycho-ethereum = { version = ">=0.91.0", features = ["onchain_data"] }
-tycho-execution = { path = "../tycho-execution" }
+tycho-execution = ">=0.129.1"
 
 # EVM dependencies
 alloy = { version = "1.0.30", features = ["providers", "signer-local", "rpc-types-eth"] }
