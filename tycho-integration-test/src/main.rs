@@ -125,8 +125,8 @@ async fn main() -> miette::Result<()> {
     let cli = Cli::parse();
 
     // Initialize and start Prometheus metrics
-    metrics::initialize_metrics();
-    let metrics_task = metrics::create_metrics_exporter(cli.metrics_port).await?;
+    // metrics::initialize_metrics();
+    // let metrics_task = metrics::create_metrics_exporter(cli.metrics_port).await?;
 
     // Run the main application logic and metrics server in parallel
     // If either fails, the other will be cancelled
