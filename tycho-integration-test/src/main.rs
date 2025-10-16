@@ -270,7 +270,7 @@ async fn process_update(
         }
         // Record block processing latency
         let latency_seconds = (now as i64 - block.header.timestamp as i64).abs() as f64;
-        metrics::record_block_processing_duration(latency_seconds);
+        // metrics::record_block_processing_duration(latency_seconds);
 
         let block_delay = block
             .header
@@ -283,10 +283,10 @@ async fn process_update(
                 "Update block ({}) is behind the current block ({}), skipping to catch up.",
                 update.update.block_number_or_timestamp, block.header.number
             );
-            metrics::record_protocol_update_skipped();
+            // metrics::record_protocol_update_skipped();
             return Ok(());
         }
-        metrics::record_protocol_update_block_delay(block_delay);
+        // metrics::record_protocol_update_block_delay(block_delay);
 
         if update.is_first_update {
             info!("Skipping simulation on first protocol update...");
@@ -295,7 +295,7 @@ async fn process_update(
     }
 
     for (protocol, sync_state) in update.update.sync_states.iter() {
-        metrics::record_protocol_sync_state(protocol, sync_state);
+        // metrics::record_protocol_sync_state(protocol, sync_state);
     }
 
     // Process states in parallel
@@ -418,7 +418,7 @@ async fn process_state(
                 token_in.symbol, token_out.symbol
             )) {
             Ok(limits) => {
-                metrics::record_get_limits_success(&component.protocol_system);
+                // metrics::record_get_limits_success(&component.protocol_system);
                 limits
             }
             Err(e) => {
@@ -429,7 +429,7 @@ async fn process_state(
                     error = %format_error_chain(&e),
                     "Get limits operation failed: {}", format_error_chain(&e)
                 );
-                metrics::record_get_limits_failure(&component.protocol_system);
+                // metrics::record_get_limits_failure(&component.protocol_system);
                 continue;
             }
         };
@@ -461,7 +461,7 @@ async fn process_state(
                 token_in.symbol,
             )) {
             Ok(res) => {
-                metrics::record_get_amount_out_success(&component.protocol_system);
+                // metrics::record_get_amount_out_success(&component.protocol_system);
                 res
             }
             Err(e) => {
@@ -473,7 +473,7 @@ async fn process_state(
                     error = %format_error_chain(&e),
                     "Get amount out operation failed: {}", format_error_chain(&e)
                 );
-                metrics::record_get_amount_out_failure(&component.protocol_system);
+                // metrics::record_get_amount_out_failure(&component.protocol_system);
                 continue;
             }
         };
@@ -486,7 +486,7 @@ async fn process_state(
             duration_seconds = duration_seconds,
             "Get amount out operation completed in {:.3}ms", duration_seconds * 1000.0
         );
-        metrics::record_get_amount_out_duration(&component.protocol_system, duration_seconds);
+        // metrics::record_get_amount_out_duration(&component.protocol_system, duration_seconds);
         let expected_amount_out = amount_out_result.amount;
         info!("Calculated amount_out: {expected_amount_out} {}", token_out.symbol);
 
@@ -513,7 +513,7 @@ async fn process_state(
                         event_type = "simulation_execution_success",
                         "Simulation execution succeeded"
                     );
-                    metrics::record_simulation_execution_success(&component.protocol_system);
+                    // metrics::record_simulation_execution_success(&component.protocol_system);
                     amount
                 }
                 Err((e, state_overwrites, metadata)) => {
@@ -553,10 +553,10 @@ async fn process_state(
                         overwrites = %overwrites_string,
                         "Failed to simulate swap: {error_msg}"
                     );
-                    metrics::record_simulation_execution_failure(
-                        &component.protocol_system,
-                        &error_name,
-                    );
+                    // metrics::record_simulation_execution_failure(
+                    //     &component.protocol_system,
+                    //     &error_name,
+                    // );
 
                     continue;
                 }
@@ -579,7 +579,7 @@ async fn process_state(
             "Execution slippage: {:.2}%",
             slippage
         );
-        metrics::record_execution_slippage(&component.protocol_system, slippage);
+        // metrics::record_execution_slippage(&component.protocol_system, slippage);
 
         info!(
             "{} pool processed {state_id} from {} to {}",
