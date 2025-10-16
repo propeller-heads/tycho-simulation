@@ -130,16 +130,16 @@ async fn main() -> miette::Result<()> {
 
     // Run the main application logic and metrics server in parallel
     // If either fails, the other will be cancelled
-    tokio::select! {
-        result = run(cli) => {
-            result?;
-        }
-        result = metrics_task => {
-            result
-                .into_diagnostic()
-                .wrap_err("Metrics server task panicked")??;
-        }
-    }
+    // tokio::select! {
+    //     result = run(cli) => {
+    //         result?;
+    //     }
+    //     result = metrics_task => {
+    //         result
+    //             .into_diagnostic()
+    //             .wrap_err("Metrics server task panicked")??;
+    //     }
+    // }
 
     Ok(())
 }
@@ -197,6 +197,7 @@ async fn run(cli: Cli) -> miette::Result<()> {
     // Process streams updates
     info!("Waiting for first protocol update...");
     let semaphore = Arc::new(Semaphore::new(cli.parallel_updates as usize));
+    let mut task_counter = 0u64;
     while let Some(update) = rx.recv().await {
         let update = match update {
             Ok(u) => Arc::new(u),
@@ -205,6 +206,11 @@ async fn run(cli: Cli) -> miette::Result<()> {
                 continue;
             }
         };
+
+        task_counter += 1;
+        if task_counter % 100 == 0 {
+            warn!("Spawned {} tasks so far", task_counter);
+        }
 
         let cli = cli.clone();
         let rpc_tools = rpc_tools.clone();
