@@ -130,16 +130,16 @@ async fn main() -> miette::Result<()> {
 
     // Run the main application logic and metrics server in parallel
     // If either fails, the other will be cancelled
-    // tokio::select! {
-    //     result = run(cli) => {
-    //         result?;
-    //     }
-    //     result = metrics_task => {
-    //         result
-    //             .into_diagnostic()
-    //             .wrap_err("Metrics server task panicked")??;
-    //     }
-    // }
+    tokio::select! {
+        result = run(cli) => {
+            result?;
+        }
+        // result = metrics_task => {
+        //     result
+        //         .into_diagnostic()
+        //         .wrap_err("Metrics server task panicked")??;
+        // }
+    }
 
     Ok(())
 }
