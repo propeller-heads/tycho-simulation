@@ -225,3 +225,25 @@ pub fn cfmm_get_limits(
 
     Ok((u256_to_biguint(amount_in_estimate), u256_to_biguint(amount_out)))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+    use super::*;
+
+    #[test]
+    fn test_cfmm_get_amount_out() {
+        assert_eq!(
+            cfmm_get_amount_out(
+                U256::from_str("2000000000000000000").unwrap(),
+                true,
+                U256::from_str("2642455102346776307825").unwrap(),
+                U256::from_str("3320301880379841502303").unwrap(),
+                5,
+                18,
+                18
+            ).unwrap(),
+            U256::from_str("2004830151166915124").unwrap()
+        )
+    }
+}
