@@ -407,13 +407,27 @@ where
             let mut new_components = HashMap::new();
             let mut count_token_skips = 0;
             let mut components_to_store = HashMap::new();
+
+            // PROCESS SNAPSHOTS
+            let total_snapshots = protocol_msg
+                .snapshots
+                .get_states()
+                .len();
+            info!(
+                "MEMORY_TRACK: Starting to decode {} snapshots for protocol {}",
+                total_snapshots, protocol
+            );
+            let decode_start_time = std::time::Instant::now();
+
             {
                 let state_guard = self.state.read().await;
-                // PROCESS SNAPSHOTS
-                'snapshot_loop: for (id, snapshot) in protocol_msg
+
+                'snapshot_loop: for (component_index, (id, snapshot)) in protocol_msg
                     .snapshots
                     .get_states()
                     .clone()
+                    .iter()
+                    .enumerate()
                 {
                     // Skip any unsupported pools
                     if self
@@ -506,10 +520,23 @@ where
                     // Store component for later batch insertion
                     components_to_store.insert(id.clone(), component);
 
+                    // Log progress every 100 components
+                    if component_index % 100 == 0 && component_index > 0 {
+                        let elapsed = decode_start_time.elapsed();
+                        info!(
+                            "MEMORY_TRACK: Decoded {}/{} snapshots in {}ms (avg: {}ms/snapshot)",
+                            component_index,
+                            total_snapshots,
+                            elapsed.as_millis(),
+                            elapsed.as_millis() / component_index as u128
+                        );
+                    }
+
                     // Construct state from snapshot
                     if let Some(state_decode_f) = self.registry.get(protocol.as_str()) {
+                        let component_decode_start = std::time::Instant::now();
                         match state_decode_f(
-                            snapshot,
+                            snapshot.clone(),
                             header.clone(),
                             account_balances.clone(),
                             self.state.clone(),
@@ -517,6 +544,14 @@ where
                         .await
                         {
                             Ok(state) => {
+                                let decode_time = component_decode_start.elapsed();
+                                if decode_time.as_millis() > 100 {
+                                    warn!(
+                                        "MEMORY_TRACK: Slow component decode: {} took {}ms",
+                                        id,
+                                        decode_time.as_millis()
+                                    );
+                                }
                                 new_components.insert(id.clone(), state);
                             }
                             Err(e) => {
@@ -554,7 +589,14 @@ where
             }
 
             if !protocol_msg.snapshots.states.is_empty() {
-                info!("Decoded {} snapshots for protocol {protocol}", new_components.len());
+                let total_decode_time = decode_start_time.elapsed();
+                info!(
+                    "MEMORY_TRACK: Completed decoding {} snapshots for protocol {} in {}ms (avg: {}ms/snapshot)",
+                    new_components.len(),
+                    protocol,
+                    total_decode_time.as_millis(),
+                    if new_components.len() > 0 { total_decode_time.as_millis() / new_components.len() as u128 } else { 0 }
+                );
             }
             if count_token_skips > 0 {
                 info!("Skipped {count_token_skips} pools due to missing tokens");
