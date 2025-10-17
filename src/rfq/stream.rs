@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use futures::{stream::select_all, StreamExt};
+use tracing::info;
 use tycho_client::feed::{synchronizer::ComponentWithState, FeedMessage};
 use tycho_common::{
     models::token::Token,
@@ -62,11 +63,23 @@ impl RFQStreamBuilder {
             .map(|provider| provider.stream())
             .collect();
 
+        info!("MEMORY_TRACK: RFQStreamBuilder started with {} client streams", streams.len());
         let mut merged = select_all(streams);
+        let mut stream_message_counter = 0u64;
 
         while let Some(next) = merged.next().await {
             match next {
                 Ok((provider, msg)) => {
+                    stream_message_counter += 1;
+
+                    info!(
+                        "MEMORY_TRACK: RFQ stream received message #{} from '{}' with {} states, {} removed_components",
+                        stream_message_counter,
+                        provider,
+                        msg.snapshots.states.len(),
+                        msg.removed_components.len()
+                    );
+
                     let update = self
                         .decoder
                         .decode(&FeedMessage {
@@ -77,6 +90,14 @@ impl RFQStreamBuilder {
                         .map_err(|e| {
                             SimulationError::RecoverableError(format!("Decoding error: {e}"))
                         })?;
+
+                    info!(
+                        "MEMORY_TRACK: RFQ decoded update has {} states, {} new_pairs, {} sync_states",
+                        update.states.len(),
+                        update.new_pairs.len(),
+                        update.sync_states.len()
+                    );
+
                     tx.send(update).await.map_err(|e| {
                         SimulationError::RecoverableError(format!(
                             "Failed to send update through channel: {e}"

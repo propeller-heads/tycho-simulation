@@ -198,7 +198,9 @@ async fn run(cli: Cli) -> miette::Result<()> {
     info!("Waiting for first protocol update...");
     let semaphore = Arc::new(Semaphore::new(cli.parallel_updates as usize));
     let mut task_counter = 0u64;
+    let mut update_counter = 0u64;
     while let Some(update) = rx.recv().await {
+        update_counter += 1;
         let update = match update {
             Ok(u) => Arc::new(u),
             Err(e) => {
@@ -210,6 +212,16 @@ async fn run(cli: Cli) -> miette::Result<()> {
         task_counter += 1;
         if task_counter % 100 == 0 {
             warn!("Spawned {} tasks so far", task_counter);
+        }
+
+        // Log queue processing stats
+        if update_counter % 10 == 0 {
+            info!(
+                "MEMORY_TRACK: Processed {} updates, spawned {} tasks, available permits: {}",
+                update_counter,
+                task_counter,
+                semaphore.available_permits()
+            );
         }
 
         let cli = cli.clone();
@@ -325,12 +337,9 @@ async fn process_update(
                     }
                 }
             }
-            UpdateType::Rfq => match update.update.new_pairs.get(id) {
-                Some(comp) => comp.clone(),
-                None => {
-                    warn!("Component not found in RFQ pairs");
-                    continue;
-                }
+            UpdateType::Rfq => {
+                info!("Skipping RFQ component processing for memory testing: {}", id);
+                continue;
             },
         };
         let rpc_tools = rpc_tools.clone();

@@ -138,6 +138,26 @@ impl RFQStreamProcessor {
             while let Some(mut update) = rx.recv().await {
                 rfq_update_counter += 1;
 
+                // Log incoming update size for memory tracking
+                info!(
+                    "MEMORY_TRACK: Received RFQ update #{} with {} states, {} new_pairs, {} sync_states",
+                    rfq_update_counter,
+                    update.states.len(),
+                    update.new_pairs.len(),
+                    update.sync_states.len()
+                );
+
+                // Calculate approximate memory size of the update
+                let states_memory_estimate = update.states.len() * 1024; // Rough estimate: 1KB per state
+                let pairs_memory_estimate = update.new_pairs.len() * 512; // Rough estimate: 512B per pair
+                info!(
+                    "MEMORY_TRACK: Update #{} estimated memory usage: states={}KB, pairs={}KB, total={}KB",
+                    rfq_update_counter,
+                    states_memory_estimate / 1024,
+                    pairs_memory_estimate / 1024,
+                    (states_memory_estimate + pairs_memory_estimate) / 1024
+                );
+
                 // Always replace the previous update with the latest one
                 latest_rfq_update = Some(update);
 
@@ -192,6 +212,13 @@ impl RFQStreamProcessor {
                     sampled_update
                         .new_pairs
                         .retain(|key, _| sampled_update.states.contains_key(key));
+                    info!(
+                        "MEMORY_TRACK: Sampled update has {} states, {} new_pairs (reduced from {}/{})",
+                        sampled_update.states.len(),
+                        sampled_update.new_pairs.len(),
+                        latest_update.states.len(),
+                        latest_update.new_pairs.len()
+                    );
 
                     // Send the sampled update
                     let stream_update = StreamUpdate {

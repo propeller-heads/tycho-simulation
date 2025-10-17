@@ -264,6 +264,9 @@ impl RFQClient for BebopClient {
             let mut current_components: HashMap<String, ComponentWithState> = HashMap::new();
             let mut reconnect_attempts = 0;
             const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+            let mut message_counter = 0u64;
+
+            info!("MEMORY_TRACK: Bebop client tracking {} tokens", tokens.len());
 
             loop {
                 let request = Request::builder()
@@ -308,9 +311,17 @@ impl RFQClient for BebopClient {
                 while let Some(msg) = ws_receiver.next().await {
                     match msg {
                         Ok(Message::Binary(data)) => {
+                            message_counter += 1;
+                            info!("MEMORY_TRACK: Bebop received binary message #{}, size: {} bytes", message_counter, data.len());
+                            
                             match BebopPricingUpdate::decode(&data[..]) {
                                 Ok(protobuf_update) => {
                                     let mut new_components = HashMap::new();
+
+                                    info!(
+                                        "MEMORY_TRACK: Bebop protobuf update has {} pairs",
+                                        protobuf_update.pairs.len()
+                                    );
 
                                     // Process all pairs directly from protobuf
                                     for price_data in &protobuf_update.pairs {
@@ -371,6 +382,20 @@ impl RFQClient for BebopClient {
                                         .filter(|&(id, _)| !new_components.contains_key(id))
                                         .map(|(k, v)| (k.clone(), v.component.clone()))
                                         .collect();
+
+                                    info!(
+                                        "MEMORY_TRACK: Bebop components: {} new, {} existing, {} removed",
+                                        new_components.len(),
+                                        current_components.len(),
+                                        removed_components.len()
+                                    );
+
+                                    // Calculate component memory estimate
+                                    let component_memory_estimate = new_components.len() * 2048; // Rough estimate: 2KB per component
+                                    info!(
+                                        "MEMORY_TRACK: Bebop estimated component memory: {}KB",
+                                        component_memory_estimate / 1024
+                                    );
 
                                     // Update our current state
                                     current_components = new_components.clone();

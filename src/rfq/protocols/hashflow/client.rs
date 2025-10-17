@@ -270,6 +270,7 @@ impl RFQClient for HashflowClient {
 
             info!("Starting Hashflow price levels polling every {} seconds", client.poll_time.as_secs());
             info!("TVL threshold: {:.2}", client.tvl);
+            info!("MEMORY_TRACK: Hashflow client tracking {} tokens", client.tokens.len());
 
             loop {
                 ticker.tick().await;
@@ -289,8 +290,9 @@ impl RFQClient for HashflowClient {
                 match client.fetch_price_levels(&market_makers).await {
                     Ok(levels_by_mm) => {
                         let mut new_components = HashMap::new();
+                        let total_levels: usize = levels_by_mm.values().map(|v| v.len()).sum();
 
-                        info!("Fetched price levels from {} market makers", levels_by_mm.len());
+                        info!("MEMORY_TRACK: Fetched price levels from {} market makers, {} total levels", levels_by_mm.len(), total_levels);
                         // Process all market maker levels
                         for (mm_name, mm_levels) in levels_by_mm.iter() {
                             for mm_level in mm_levels {
@@ -337,6 +339,20 @@ impl RFQClient for HashflowClient {
                             .filter(|&(id, _)| !new_components.contains_key(id))
                             .map(|(k, v)| (k.clone(), v.component.clone()))
                             .collect();
+
+                        info!(
+                            "MEMORY_TRACK: Hashflow components: {} new, {} existing, {} removed",
+                            new_components.len(),
+                            current_components.len(),
+                            removed_components.len()
+                        );
+
+                        // Calculate component memory estimate
+                        let component_memory_estimate = new_components.len() * 2048; // Rough estimate: 2KB per component
+                        info!(
+                            "MEMORY_TRACK: Hashflow estimated component memory: {}KB",
+                            component_memory_estimate / 1024
+                        );
 
                         // Update current state
                         current_components = new_components.clone();
