@@ -1,5 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FeeAmount {
+pub(super) enum FeeAmount {
     Lowest = 100,      // 0.01%
     Lowest2 = 200,     // 0.02%
     Lowest3 = 300,     // 0.03%

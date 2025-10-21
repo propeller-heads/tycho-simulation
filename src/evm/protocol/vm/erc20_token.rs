@@ -6,11 +6,11 @@ use lazy_static::lazy_static;
 use super::utils::get_storage_slot_index_at_key;
 use crate::evm::{ContractCompiler, SlotId};
 
-pub(crate) type Overwrites = HashMap<SlotId, U256>;
+pub(super) type Overwrites = HashMap<SlotId, U256>;
 
 // Storage slots constants for TokenProxy contract
 lazy_static! {
-    pub static ref IMPLEMENTATION_SLOT: SlotId =
+    pub(crate) static ref IMPLEMENTATION_SLOT: SlotId =
         U256::from_str("0x6677C72CDEB41ACAF2B17EC8A6E275C4205F27DBFE4DE34EBAF2E928A7E610DB")
             .unwrap();
     static ref BALANCES_MAPPING_POSITION: SlotId =

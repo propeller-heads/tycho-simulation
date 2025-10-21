@@ -1,4 +1,4 @@
 //! Uniswap V3 Decentralized Exchange
-pub mod enums;
+mod enums;
 pub mod state;
-pub mod tycho_decoder;
+mod tycho_decoder;

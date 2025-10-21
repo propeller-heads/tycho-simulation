@@ -49,7 +49,7 @@ impl UniswapV3State {
     /// - `fee`: The fee tier for the pool.
     /// - `tick`: The current tick of the pool.
     /// - `ticks`: A vector of `TickInfo` representing the tick information for the pool.
-    pub fn new(
+    pub(super) fn new(
         liquidity: u128,
         sqrt_price: U256,
         fee: FeeAmount,

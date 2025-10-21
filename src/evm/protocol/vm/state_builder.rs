@@ -144,6 +144,7 @@ where
         self
     }
 
+    #[allow(dead_code)]
     pub fn capabilities(mut self, capabilities: HashSet<Capability>) -> Self {
         self.capabilities = Some(capabilities);
         self
@@ -171,11 +172,13 @@ where
         self
     }
 
+    #[allow(dead_code)]
     pub fn engine(mut self, engine: SimulationEngine<D>) -> Self {
         self.engine = Some(engine);
         self
     }
 
+    #[allow(dead_code)]
     pub fn adapter_contract(mut self, adapter_contract: TychoSimulationContract<D>) -> Self {
         self.adapter_contract = Some(adapter_contract);
         self

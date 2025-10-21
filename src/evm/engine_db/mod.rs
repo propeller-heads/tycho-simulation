@@ -15,7 +15,7 @@ use crate::evm::{
     tycho_models::{AccountUpdate, ChangeType, ResponseAccount},
 };
 
-pub mod engine_db_interface;
+pub(crate) mod engine_db_interface;
 pub mod simulation_db;
 pub mod tycho_db;
 pub mod utils;
@@ -31,7 +31,7 @@ lazy_static! {
 ///
 /// - `trace`: Whether to trace calls. Only meant for debugging purposes, might print a lot of data
 ///   to stdout.
-pub fn create_engine<D: EngineDatabaseInterface + Clone + Debug>(
+pub(crate) fn create_engine<D: EngineDatabaseInterface + Clone + Debug>(
     db: D,
     trace: bool,
 ) -> Result<SimulationEngine<D>, SimulationError>
@@ -68,7 +68,7 @@ where
     Ok(engine)
 }
 
-pub fn update_engine(
+pub(crate) fn update_engine(
     db: PreCachedDB,
     block: Option<BlockHeader>,
     vm_storage: Option<HashMap<Address, ResponseAccount>>,

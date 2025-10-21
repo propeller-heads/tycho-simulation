@@ -7,13 +7,13 @@ use foundry_evm::traces::{
 
 /// A slimmed down return from the executor used for returning minimal trace + gas metering info
 #[derive(Debug)]
-pub struct TraceResult {
+pub(super) struct TraceResult {
     pub success: bool,
     pub traces: Option<Traces>,
     pub gas_used: u64,
 }
 
-pub async fn handle_traces(
+pub(super) async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
     chain: Option<Chain>,
@@ -50,7 +50,7 @@ pub async fn handle_traces(
     Ok(())
 }
 
-pub async fn print_traces(
+async fn print_traces(
     result: &mut TraceResult,
     decoder: &CallTraceDecoder,
 ) -> Result<(), Box<dyn std::error::Error>> {

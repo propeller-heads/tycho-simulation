@@ -28,7 +28,8 @@ impl From<FileError> for SimulationError {
 }
 
 #[derive(Debug, Error)]
-pub enum FileError {
+#[allow(dead_code)]
+enum FileError {
     /// Occurs when the ABI file cannot be read
     #[error("Malformed ABI error: {0}")]
     MalformedABI(String),

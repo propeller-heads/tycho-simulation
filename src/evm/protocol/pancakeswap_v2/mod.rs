@@ -1,2 +1,2 @@
 pub mod state;
-pub mod tycho_decoder;
+mod tycho_decoder;

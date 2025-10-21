@@ -27,7 +27,7 @@ use super::{
 };
 
 /// A wrapper over an actual SimulationDB that allows overriding specific storage slots
-pub struct OverriddenSimulationDB<'a, DB: DatabaseRef> {
+pub(crate) struct OverriddenSimulationDB<'a, DB: DatabaseRef> {
     /// Wrapped database. Will be queried if a requested item is not found in the overrides.
     pub inner_db: &'a DB,
     /// A mapping from account address to storage.

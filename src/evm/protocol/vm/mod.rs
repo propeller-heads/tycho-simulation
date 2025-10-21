@@ -1,9 +1,9 @@
 mod adapter_contract;
-pub mod constants;
-pub mod erc20_token;
+pub(crate) mod constants;
+pub(crate) mod erc20_token;
 mod models;
 pub mod state;
-pub mod state_builder;
-pub mod tycho_decoder;
-pub mod tycho_simulation_contract;
-pub mod utils;
+mod state_builder;
+mod tycho_decoder;
+pub(crate) mod tycho_simulation_contract;
+pub(super) mod utils;

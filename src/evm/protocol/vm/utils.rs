@@ -14,7 +14,7 @@ use tycho_common::simulation::errors::SimulationError;
 
 use crate::evm::{simulation::SimulationEngineError, ContractCompiler, SlotId};
 
-pub(crate) fn coerce_error(
+pub fn coerce_error(
     err: &SimulationEngineError,
     pool_state: &str,
     gas_limit: Option<u64>,
@@ -217,7 +217,7 @@ fn get_solidity_panic_codes() -> HashMap<u64, String> {
 /// - Returns `RpcError::InvalidRequest` if `address` is not parsable or if no RPC URL is set.
 /// - Returns `RpcError::EmptyResponse` if the address has no associated bytecode (e.g., EOA).
 /// - Returns `RpcError::InvalidResponse` for issues with the RPC provider response.
-pub(crate) async fn get_code_for_contract(
+pub async fn get_code_for_contract(
     address: &str,
     connection_string: Option<String>,
 ) -> Result<Bytecode, SimulationError> {

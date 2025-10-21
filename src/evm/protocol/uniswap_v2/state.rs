@@ -35,7 +35,7 @@ impl UniswapV2State {
     ///
     /// * `reserve0` - Reserve of token 0.
     /// * `reserve1` - Reserve of token 1.
-    pub fn new(reserve0: U256, reserve1: U256) -> Self {
+    pub(super) fn new(reserve0: U256, reserve1: U256) -> Self {
         UniswapV2State { reserve0, reserve1 }
     }
 }

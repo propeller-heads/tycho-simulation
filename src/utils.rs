@@ -30,7 +30,7 @@ use tycho_common::{
 /// This function returns a `SimulationError::EncodingError` if:
 /// - The string contains invalid hexadecimal characters.
 /// - The string is empty or malformed.
-pub fn hexstring_to_vec(hexstring: &str) -> Result<Vec<u8>, SimulationError> {
+pub(crate) fn hexstring_to_vec(hexstring: &str) -> Result<Vec<u8>, SimulationError> {
     let hexstring_no_prefix =
         if let Some(stripped) = hexstring.strip_prefix("0x") { stripped } else { hexstring };
     let bytes = hex::decode(hexstring_no_prefix)

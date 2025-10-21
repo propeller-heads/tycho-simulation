@@ -69,37 +69,6 @@ pub struct ResponseAccount {
     pub creation_tx: Option<B256>,
 }
 
-impl ResponseAccount {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        chain: Chain,
-        address: Address,
-        title: String,
-        slots: HashMap<U256, U256>,
-        native_balance: U256,
-        token_balances: HashMap<Address, U256>,
-        code: Vec<u8>,
-        code_hash: B256,
-        balance_modify_tx: B256,
-        code_modify_tx: B256,
-        creation_tx: Option<B256>,
-    ) -> Self {
-        Self {
-            chain,
-            address,
-            title,
-            slots,
-            native_balance,
-            token_balances,
-            code,
-            code_hash,
-            balance_modify_tx,
-            code_modify_tx,
-            creation_tx,
-        }
-    }
-}
-
 /// Implement Debug for ResponseAccount manually to avoid printing the code field.
 impl std::fmt::Debug for ResponseAccount {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

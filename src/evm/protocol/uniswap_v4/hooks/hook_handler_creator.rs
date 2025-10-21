@@ -136,6 +136,7 @@ lazy_static! {
         Box::new(GenericVMHookHandlerCreator {});
 }
 
+#[allow(dead_code)]
 pub fn register_hook_handler(
     hook: Address,
     handler: Box<dyn HookHandlerCreator>,

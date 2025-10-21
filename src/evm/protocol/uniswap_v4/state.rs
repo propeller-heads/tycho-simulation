@@ -48,7 +48,7 @@ pub struct UniswapV4State {
     tick: i32,
     ticks: TickList,
     tick_spacing: i32,
-    pub hook: Option<Box<dyn HookHandler>>,
+    hook: Option<Box<dyn HookHandler>>,
 }
 
 impl PartialEq for UniswapV4State {

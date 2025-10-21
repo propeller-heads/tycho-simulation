@@ -1,7 +1,7 @@
 pub mod ekubo;
 pub mod filters;
 pub mod pancakeswap_v2;
-pub mod safe_math;
+pub(crate) mod safe_math;
 pub mod u256_num;
 pub mod uniswap_v2;
 pub mod uniswap_v3;

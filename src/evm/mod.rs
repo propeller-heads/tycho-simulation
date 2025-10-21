@@ -1,21 +1,22 @@
 use alloy::primitives::U256;
 use tycho_common::keccak256;
 
-pub mod account_storage;
+pub(crate) mod account_storage;
 pub mod decoder;
 pub mod engine_db;
 pub mod protocol;
 pub mod simulation;
 pub mod stream;
-pub mod traces;
-pub mod tycho_models;
+mod traces;
+pub(crate) mod tycho_models;
 
 pub type SlotId = U256;
 
 /// Enum representing the type of contract compiler.
 #[derive(Debug, PartialEq, Copy, Clone)]
-pub enum ContractCompiler {
+pub(crate) enum ContractCompiler {
     Solidity,
+    #[allow(dead_code)]
     Vyper,
 }
 
@@ -36,7 +37,7 @@ impl ContractCompiler {
     ///
     /// - For `Solidity`, the slot is computed as `keccak256(key + map_base_slot)`.
     /// - For `Vyper`, the slot is computed as `keccak256(map_base_slot + key)`.
-    pub fn compute_map_slot(&self, map_base_slot: &[u8], key: &[u8]) -> SlotId {
+    pub(crate) fn compute_map_slot(&self, map_base_slot: &[u8], key: &[u8]) -> SlotId {
         let concatenated = match &self {
             ContractCompiler::Solidity => [key, map_base_slot].concat(),
             ContractCompiler::Vyper => [map_base_slot, key].concat(),

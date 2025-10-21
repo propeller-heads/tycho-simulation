@@ -10,7 +10,6 @@ lazy_static! {
     pub static ref MAX_BALANCE: U256 = U256::MAX / U256::from(2);
 }
 
-pub const ERC20_BYTECODE: &[u8] = include_bytes!("assets/ERC20.bin");
 pub const ERC20_PROXY_BYTECODE: &[u8] = include_bytes!("assets/TokenProxy.bin");
 pub const BALANCER_V2: &[u8] = include_bytes!("assets/BalancerV2SwapAdapter.evm.runtime");
 pub const BALANCER_V3: &[u8] = include_bytes!("assets/BalancerV3SwapAdapter.evm.runtime");

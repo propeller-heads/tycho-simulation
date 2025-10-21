@@ -49,7 +49,7 @@ pub enum PreCachedDBError {
 impl DBErrorMarker for PreCachedDBError {}
 
 #[derive(Clone, Debug)]
-pub struct PreCachedDBInner {
+struct PreCachedDBInner {
     /// Storage for accounts
     accounts: AccountStorage,
     /// Current block
@@ -63,7 +63,7 @@ pub struct PreCachedDB {
     /// `inner` encapsulates `PreCachedDBInner` using `RwLock` for safe concurrent read or
     /// exclusive write access to the data and `Arc` for shared ownership of the lock across
     /// threads.
-    pub inner: Arc<RwLock<PreCachedDBInner>>,
+    inner: Arc<RwLock<PreCachedDBInner>>,
 }
 
 impl PreCachedDB {
