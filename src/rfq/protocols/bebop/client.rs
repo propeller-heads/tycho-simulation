@@ -18,7 +18,7 @@ use tokio_tungstenite::{
 };
 use tracing::{error, info, warn};
 use tycho_common::{
-    models::{protocol::GetAmountOutParams, Chain},
+    models::{protocol::GetAmountOutParams, token::Token, Chain},
     simulation::indicatively_priced::SignedQuote,
     Bytes,
 };
@@ -30,6 +30,7 @@ use crate::{
         models::TimestampHeader,
         protocols::bebop::models::{
             BebopOrderToSign, BebopPriceData, BebopPricingUpdate, BebopQuoteResponse,
+            BebopTokenInfoResponse,
         },
     },
     tycho_client::feed::synchronizer::{ComponentWithState, Snapshot, StateSyncMessage},
@@ -60,6 +61,7 @@ pub struct BebopClient {
     chain: Chain,
     price_ws: String,
     quote_endpoint: String,
+    token_info_endpoint: String,
     // Tokens that we want prices for
     tokens: HashSet<Bytes>,
     // Min tvl value in the quote token.
@@ -89,6 +91,7 @@ impl BebopClient {
         Ok(Self {
             price_ws: "wss://".to_string() + &url + "/pricing?format=protobuf",
             quote_endpoint: "https://".to_string() + &url + "/quote",
+            token_info_endpoint: "https://".to_string() + &url + "/token-info",
             tokens,
             chain,
             tvl,
@@ -97,6 +100,70 @@ impl BebopClient {
             quote_tokens,
             quote_timeout,
         })
+    }
+
+    /// Get available tokens from Bebop that are supported for execution.
+    ///
+    /// This method:
+    /// 1. Fetches all tokens available from Bebop's token-info endpoint
+    /// 2. Filters them to only include tokens that:
+    ///    - Are available on Bebop (canBuy or canSell)
+    ///    - Match our tycho tokens (provided as input)
+    ///
+    /// # Parameters
+    /// - `tycho_tokens`: HashMap of tycho tokens indexed by address
+    ///
+    /// # Returns
+    /// Vector of token addresses (as Bytes) that are available for trading
+    pub async fn get_available_tokens(
+        &self,
+        tycho_tokens: &HashMap<Bytes, Token>,
+    ) -> Result<Vec<Bytes>, RFQError> {
+        let client = Client::new();
+        let response = client
+            .get(&self.token_info_endpoint)
+            .header("accept", "application/json")
+            .header("name", &self.ws_user)
+            .header("Authorization", &self.ws_key)
+            .send()
+            .await
+            .map_err(|e| {
+                RFQError::ConnectionError(format!("Failed to fetch Bebop token info: {}", e))
+            })?;
+
+        let token_info: BebopTokenInfoResponse = response.json().await.map_err(|e| {
+            RFQError::ParsingError(format!("Failed to parse Bebop token info response: {}", e))
+        })?;
+
+        let mut available_tokens = Vec::new();
+
+        for (_ticker, bebop_token) in token_info.tokens {
+            // Only include tokens that can be bought or sold
+            if !bebop_token.availability.can_buy && !bebop_token.availability.can_sell {
+                continue;
+            }
+
+            let token_address = match Bytes::from_str(&bebop_token.contract_address) {
+                Ok(addr) => addr,
+                Err(_) => {
+                    warn!("Failed to parse Bebop token address: {}", bebop_token.contract_address);
+                    continue;
+                }
+            };
+
+            // Check if we have this token in our tycho tokens
+            if tycho_tokens.contains_key(&token_address) {
+                available_tokens.push(token_address);
+            }
+        }
+
+        info!(
+            "Found {} available tokens on Bebop for {} chain",
+            available_tokens.len(),
+            self.chain
+        );
+
+        Ok(available_tokens)
     }
 
     fn create_component_with_state(
@@ -561,6 +628,53 @@ mod tests {
 
     #[tokio::test]
     #[ignore] // Requires network access and setting proper env vars
+    async fn test_get_available_tokens() {
+        dotenv().expect("Missing .env file");
+        let auth = get_bebop_auth().expect("Failed to get Bebop authentication");
+
+        let client = BebopClient::new(
+            Chain::Ethereum,
+            HashSet::new(),
+            10.0,
+            auth.user,
+            auth.key,
+            HashSet::new(),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+
+        // Create a sample set of tycho tokens
+        let usdc = Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap();
+        let weth = Bytes::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap();
+        let wbtc = Bytes::from_str("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599").unwrap();
+        let dai = Bytes::from_str("0x6B175474E89094C44Da98b954EedeAC495271d0F").unwrap();
+
+        let tycho_tokens = HashMap::from([
+            (usdc.clone(), Token::new(&usdc, "USDC", 6, 0, &[Some(1000)], Chain::Ethereum, 100)),
+            (weth.clone(), Token::new(&weth, "WETH", 18, 0, &[Some(1000)], Chain::Ethereum, 100)),
+            (wbtc.clone(), Token::new(&wbtc, "WBTC", 8, 0, &[Some(1000)], Chain::Ethereum, 100)),
+            (dai.clone(), Token::new(&dai, "DAI", 18, 0, &[Some(1000)], Chain::Ethereum, 100)),
+        ]);
+
+        let result = client
+            .get_available_tokens(&tycho_tokens)
+            .await;
+
+        assert!(result.is_ok(), "Failed to get available pairs: {:?}", result);
+
+        let available_tokens = result.unwrap();
+
+        assert!(!available_tokens.is_empty(), "Expected some available tokens");
+        for token_addr in &available_tokens {
+            assert!(
+                tycho_tokens.contains_key(token_addr),
+                "Returned token should be in input tycho_tokens"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore] // Requires network access and setting proper env vars
     async fn test_bebop_websocket_connection() {
         // We test with quote tokens that are not USDC in order to ensure our normalization works
         // fine
@@ -751,6 +865,7 @@ mod tests {
             ws_key: "test_key".to_string(),
             quote_tokens: test_quote_tokens,
             quote_endpoint: "".to_string(),
+            token_info_endpoint: "".to_string(),
             quote_timeout: Duration::from_secs(5),
         };
 
@@ -1020,6 +1135,7 @@ mod tests {
             chain: Chain::Ethereum,
             price_ws: "ws://example.com".to_string(),
             quote_endpoint,
+            token_info_endpoint: "".to_string(),
             tokens: HashSet::from([token_in, token_out]),
             tvl: 10.0,
             ws_user: "test_user".to_string(),

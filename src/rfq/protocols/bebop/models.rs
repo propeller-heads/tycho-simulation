@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use alloy::primitives::Address;
 use prost::Message;
 use serde::{Deserialize, Serialize};
@@ -339,6 +341,35 @@ pub struct AggregateOrderToSign {
     pub taker_amounts: Vec<Vec<String>>,
     pub expiry: u64,
     pub receiver: Bytes,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BebopTokenInfoResponse {
+    pub tokens: HashMap<String, BebopTokenInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BebopTokenInfo {
+    pub name: String,
+    pub ticker: String,
+    #[serde(rename = "contractAddress")]
+    pub contract_address: String,
+    pub decimals: u32,
+    pub availability: BebopTokenAvailability,
+    #[serde(rename = "chainId")]
+    pub chain_id: u64,
+    #[serde(rename = "priceUsd")]
+    pub price_usd: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BebopTokenAvailability {
+    #[serde(rename = "isAvailable")]
+    pub is_available: bool,
+    #[serde(rename = "canBuy")]
+    pub can_buy: bool,
+    #[serde(rename = "canSell")]
+    pub can_sell: bool,
 }
 
 #[cfg(test)]
