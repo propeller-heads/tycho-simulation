@@ -61,6 +61,11 @@ impl UniswapV3State {
         Ok(UniswapV3State { liquidity, sqrt_price, fee, tick, ticks: tick_list })
     }
 
+    /// Returns the number of initialized ticks in the pool
+    pub fn tick_count(&self) -> usize {
+        self.ticks.len()
+    }
+
     fn get_spacing(fee: FeeAmount) -> u16 {
         match fee {
             FeeAmount::Lowest => 1,

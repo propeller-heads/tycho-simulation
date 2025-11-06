@@ -33,3 +33,5 @@ tycho-execution = { workspace = true }
 tycho-simulation = { path = "..", features = ["evm"] }
 urlencoding = "2.1.3"
 tracing-subscriber = { workspace = true }
+plotters = "0.3"
+lazy_static = "1.5"

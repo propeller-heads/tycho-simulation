@@ -5,7 +5,7 @@ mod stream_processor;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
 
@@ -28,11 +28,13 @@ use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use tycho_common::simulation::protocol_sim::ProtocolSim;
+use plotters::prelude::*;
 use tycho_ethereum::entrypoint_tracer::{
     allowance_slot_detector::{AllowanceSlotDetectorConfig, EVMAllowanceSlotDetector},
     balance_slot_detector::{BalanceSlotDetectorConfig, EVMBalanceSlotDetector},
 };
 use tycho_simulation::{
+    evm::protocol::uniswap_v3::state::UniswapV3State,
     protocol::models::ProtocolComponent,
     rfq::protocols::hashflow::{client::HashflowClient, state::HashflowState},
     tycho_common::models::Chain,
@@ -50,6 +52,20 @@ use crate::{
         rfq_stream_processor::RFQStreamProcessor, StreamUpdate, UpdateType,
     },
 };
+
+// Global storage for tick/duration measurements with percentage labels
+// Store tuples of (num_ticks, duration_ms)
+// Also track per-pool durations: component_id -> Vec<duration_ms>
+lazy_static::lazy_static! {
+    static ref GET_AMOUNT_OUT_DATA: Mutex<HashMap<String, Vec<(f64, f64)>>> = Mutex::new(HashMap::new());
+    static ref GET_AMOUNT_OUT_DATA_UNIQUE: Mutex<HashMap<String, Vec<(f64, f64)>>> = Mutex::new(HashMap::new());
+    static ref SEEN_COMPONENT_IDS: Mutex<HashMap<String, HashSet<String>>> = Mutex::new(HashMap::new());
+    static ref POOL_DURATIONS: Mutex<HashMap<String, Vec<f64>>> = Mutex::new(HashMap::new());
+    static ref CURRENT_PERCENTAGE_INDEX: Mutex<usize> = Mutex::new(0);
+}
+
+const MAX_GET_AMOUNT_OUT_SAMPLES: usize = 400;
+const PERCENTAGES: [f64; 1] = [0.001];
 
 #[derive(Parser, Clone)]
 struct Cli {
@@ -132,6 +148,367 @@ struct TychoState {
     states: HashMap<String, Box<dyn ProtocolSim>>,
     components: HashMap<String, ProtocolComponent>,
     component_ids_by_protocol: HashMap<String, HashSet<String>>,
+}
+
+fn create_histogram_with_range(
+    data: &[f64],
+    title: &str,
+    output_path: &str,
+    x_label: &str,
+    min_val: f64,
+    max_val: f64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if data.is_empty() {
+        warn!("No data to plot for {}", title);
+        return Ok(());
+    }
+
+    info!("Creating histogram for {} with {} data points", title, data.len());
+
+    let root = BitMapBackend::new(output_path, (800, 600)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    // Create bins
+    let num_bins = 50;
+    let bin_width = (max_val - min_val) / num_bins as f64;
+    let mut bins = vec![0u32; num_bins];
+
+    for &value in data {
+        if value >= min_val && value <= max_val {
+            let bin_index = ((value - min_val) / bin_width).floor() as usize;
+            let bin_index = bin_index.min(num_bins - 1);
+            bins[bin_index] += 1;
+        }
+    }
+
+    let max_count = *bins.iter().max().unwrap_or(&1);
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption(title, ("sans-serif", 30).into_font())
+        .margin(10)
+        .x_label_area_size(40)
+        .y_label_area_size(50)
+        .build_cartesian_2d(min_val..max_val, 0u32..max_count)?;
+
+    chart
+        .configure_mesh()
+        .x_desc(x_label)
+        .y_desc("Count")
+        .draw()?;
+
+    chart.draw_series(
+        bins.iter().enumerate().map(|(i, &count)| {
+            let x0 = min_val + i as f64 * bin_width;
+            let x1 = x0 + bin_width;
+            Rectangle::new([(x0, 0), (x1, count)], BLUE.mix(0.5).filled())
+        }),
+    )?;
+
+    root.present()?;
+    info!("Histogram saved to {}", output_path);
+    Ok(())
+}
+
+fn generate_histograms() -> Result<(), Box<dyn std::error::Error>> {
+    info!("Generating histograms...");
+
+    // Get all data (num_ticks, duration) tuples - both regular and unique
+    let get_amount_out_data = GET_AMOUNT_OUT_DATA
+        .lock()
+        .map_err(|e| format!("Failed to lock GET_AMOUNT_OUT_DATA: {}", e))?
+        .clone();
+
+    let get_amount_out_data_unique = GET_AMOUNT_OUT_DATA_UNIQUE
+        .lock()
+        .map_err(|e| format!("Failed to lock GET_AMOUNT_OUT_DATA_UNIQUE: {}", e))?
+        .clone();
+
+    // Find global min/max ticks for consistent x-axis across all histograms
+    let all_tick_values: Vec<f64> = get_amount_out_data
+        .values()
+        .flatten()
+        .map(|(ticks, _)| *ticks)
+        .collect();
+    let ticks_min = all_tick_values.iter().cloned().fold(f64::INFINITY, f64::min);
+    let ticks_max = all_tick_values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+    info!("Ticks range: {:.0} - {:.0}", ticks_min, ticks_max);
+
+    // Create histograms for each percentage
+    let output_dir = "/Users/tamaralipowski/Code/tycho-simulation";
+    info!("Saving histograms to: {}", output_dir);
+
+    for percentage in PERCENTAGES {
+        let key = format!("{}", percentage);
+
+        // Regular histograms (with duplicates)
+        if let Some(data) = get_amount_out_data.get(&key) {
+            info!("Creating regular histograms for percentage {}", percentage);
+
+            create_count_histogram(
+                data,
+                &format!("Number of Pools by Tick Count (percentage={:.6})", percentage),
+                &format!("{}/get_amount_out_histogram_ticks_count_{}.png", output_dir, percentage),
+                "Number of Ticks",
+                "Count",
+                ticks_min,
+                ticks_max,
+            )?;
+
+            create_duration_histogram(
+                data,
+                &format!("Average Duration by Tick Count (percentage={:.6})", percentage),
+                &format!("{}/get_amount_out_histogram_ticks_average_duration_{}.png", output_dir, percentage),
+                "Number of Ticks",
+                "Average Duration (ms)",
+                ticks_min,
+                ticks_max,
+                DurationAggregation::Average,
+            )?;
+
+            create_duration_histogram(
+                data,
+                &format!("Median Duration by Tick Count (percentage={:.6})", percentage),
+                &format!("{}/get_amount_out_histogram_ticks_median_duration_{}.png", output_dir, percentage),
+                "Number of Ticks",
+                "Median Duration (ms)",
+                ticks_min,
+                ticks_max,
+                DurationAggregation::Median,
+            )?;
+        }
+
+        // Unique histograms (only unique component IDs)
+        if let Some(data_unique) = get_amount_out_data_unique.get(&key) {
+            info!("Creating unique histograms for percentage {} ({} unique pools)", percentage, data_unique.len());
+
+            create_count_histogram(
+                data_unique,
+                &format!("Number of Unique Pools by Tick Count (percentage={:.6})", percentage),
+                &format!("{}/get_amount_out_histogram_ticks_count_unique_{}.png", output_dir, percentage),
+                "Number of Ticks",
+                "Count",
+                ticks_min,
+                ticks_max,
+            )?;
+
+            create_duration_histogram(
+                data_unique,
+                &format!("Average Duration by Tick Count - Unique Pools (percentage={:.6})", percentage),
+                &format!("{}/get_amount_out_histogram_ticks_average_duration_unique_{}.png", output_dir, percentage),
+                "Number of Ticks",
+                "Average Duration (ms)",
+                ticks_min,
+                ticks_max,
+                DurationAggregation::Average,
+            )?;
+
+            create_duration_histogram(
+                data_unique,
+                &format!("Median Duration by Tick Count - Unique Pools (percentage={:.6})", percentage),
+                &format!("{}/get_amount_out_histogram_ticks_median_duration_unique_{}.png", output_dir, percentage),
+                "Number of Ticks",
+                "Median Duration (ms)",
+                ticks_min,
+                ticks_max,
+                DurationAggregation::Median,
+            )?;
+        }
+    }
+
+    info!("Histograms generated successfully");
+
+    // Log pools with average duration > 15ms
+    let pool_durations = POOL_DURATIONS
+        .lock()
+        .map_err(|e| format!("Failed to lock POOL_DURATIONS: {}", e))?
+        .clone();
+
+    let mut slow_pools: Vec<(String, f64, usize)> = pool_durations
+        .iter()
+        .filter_map(|(pool_id, durations)| {
+            if durations.is_empty() {
+                return None;
+            }
+            let avg_duration = durations.iter().sum::<f64>() / durations.len() as f64;
+            if avg_duration > 15.0 {
+                Some((pool_id.clone(), avg_duration, durations.len()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Sort by average duration descending
+    slow_pools.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+    if slow_pools.is_empty() {
+        warn!("No pools with average duration > 15ms");
+    } else {
+        warn!("Found {} pools with average duration > 15ms:", slow_pools.len());
+        for (pool_id, avg_duration, sample_count) in slow_pools {
+            warn!(
+                "Pool ID: {} | Average: {:.2}ms | Samples: {}",
+                pool_id, avg_duration, sample_count
+            );
+        }
+    }
+
+    Ok(())
+}
+
+enum DurationAggregation {
+    Average,
+    Median,
+}
+
+fn create_count_histogram(
+    data: &[(f64, f64)],
+    title: &str,
+    output_path: &str,
+    x_label: &str,
+    y_label: &str,
+    min_ticks: f64,
+    max_ticks: f64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if data.is_empty() {
+        warn!("No data to plot for {}", title);
+        return Ok(());
+    }
+
+    info!("Creating histogram for {} with {} data points", title, data.len());
+
+    let root = BitMapBackend::new(output_path, (800, 600)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    // Create bins
+    let num_bins = 50;
+    let bin_width = (max_ticks - min_ticks) / num_bins as f64;
+    let mut bins: Vec<u32> = vec![0; num_bins];
+
+    // Count data points in each bin
+    for &(ticks, _) in data {
+        if ticks >= min_ticks && ticks <= max_ticks {
+            let bin_index = ((ticks - min_ticks) / bin_width).floor() as usize;
+            let bin_index = bin_index.min(num_bins - 1);
+            bins[bin_index] += 1;
+        }
+    }
+
+    let max_count = *bins.iter().max().unwrap_or(&1);
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption(title, ("sans-serif", 30).into_font())
+        .margin(10)
+        .x_label_area_size(40)
+        .y_label_area_size(60)
+        .build_cartesian_2d(min_ticks..max_ticks, 0u32..max_count)?;
+
+    chart
+        .configure_mesh()
+        .x_desc(x_label)
+        .y_desc(y_label)
+        .draw()?;
+
+    chart.draw_series(bins.iter().enumerate().map(|(i, &count)| {
+        let x0 = min_ticks + i as f64 * bin_width;
+        let x1 = x0 + bin_width;
+        Rectangle::new([(x0, 0), (x1, count)], BLUE.mix(0.5).filled())
+    }))?;
+
+    root.present()?;
+    info!("Histogram saved to {}", output_path);
+    Ok(())
+}
+
+fn create_duration_histogram(
+    data: &[(f64, f64)],
+    title: &str,
+    output_path: &str,
+    x_label: &str,
+    y_label: &str,
+    min_ticks: f64,
+    max_ticks: f64,
+    aggregation: DurationAggregation,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if data.is_empty() {
+        warn!("No data to plot for {}", title);
+        return Ok(());
+    }
+
+    info!("Creating histogram for {} with {} data points", title, data.len());
+
+    let root = BitMapBackend::new(output_path, (800, 600)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    // Create bins
+    let num_bins = 50;
+    let bin_width = (max_ticks - min_ticks) / num_bins as f64;
+    let mut bins: Vec<Vec<f64>> = vec![Vec::new(); num_bins];
+
+    // Assign data points to bins
+    for &(ticks, duration) in data {
+        if ticks >= min_ticks && ticks <= max_ticks {
+            let bin_index = ((ticks - min_ticks) / bin_width).floor() as usize;
+            let bin_index = bin_index.min(num_bins - 1);
+            bins[bin_index].push(duration);
+        }
+    }
+
+    // Calculate average or median for each bin
+    let bin_values: Vec<f64> = bins
+        .iter()
+        .map(|bin_durations| {
+            if bin_durations.is_empty() {
+                0.0
+            } else {
+                match aggregation {
+                    DurationAggregation::Average => {
+                        bin_durations.iter().sum::<f64>() / bin_durations.len() as f64
+                    }
+                    DurationAggregation::Median => {
+                        let mut sorted = bin_durations.clone();
+                        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                        let mid = sorted.len() / 2;
+                        if sorted.len() % 2 == 0 {
+                            (sorted[mid - 1] + sorted[mid]) / 2.0
+                        } else {
+                            sorted[mid]
+                        }
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let max_duration = bin_values
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max)
+        .max(1.0); // Ensure at least 1.0 for empty bins
+
+    let mut chart = ChartBuilder::on(&root)
+        .caption(title, ("sans-serif", 30).into_font())
+        .margin(10)
+        .x_label_area_size(40)
+        .y_label_area_size(60)
+        .build_cartesian_2d(min_ticks..max_ticks, 0.0..max_duration)?;
+
+    chart
+        .configure_mesh()
+        .x_desc(x_label)
+        .y_desc(y_label)
+        .draw()?;
+
+    chart.draw_series(bin_values.iter().enumerate().map(|(i, &duration)| {
+        let x0 = min_ticks + i as f64 * bin_width;
+        let x1 = x0 + bin_width;
+        Rectangle::new([(x0, 0.0), (x1, duration)], BLUE.mix(0.5).filled())
+    }))?;
+
+    root.present()?;
+    info!("Histogram saved to {}", output_path);
+    Ok(())
 }
 
 #[tokio::main]
@@ -358,6 +735,11 @@ async fn process_update(
                 }
             },
         };
+
+        // Filter to only test uniswap_v3
+        if component.protocol_system != "uniswap_v3" {
+            continue;
+        }
         let block = block.clone();
         let state_id = id.clone();
         let state = state.clone_box();
@@ -428,6 +810,11 @@ async fn process_update(
             }
         };
 
+        // Filter to only test uniswap_v3
+        if component.protocol_system != "uniswap_v3" {
+            continue;
+        }
+
         let block = block.clone();
         let state_id = id.clone();
         let state = state.clone_box();
@@ -468,6 +855,7 @@ async fn process_update(
         return Ok(())
     }
 
+    let execution_start_time = std::time::Instant::now();
     let results = match simulate_swap_transaction(
         &rpc_tools,
         block_execution_info.clone(),
@@ -479,6 +867,50 @@ async fn process_update(
         Ok(results) => results,
         Err((e, _, _)) => return Err(e),
     };
+    let execution_duration_seconds = execution_start_time.elapsed().as_secs_f64();
+
+    warn!(
+        event_type = "simulate_execution_duration",
+        duration_seconds = execution_duration_seconds,
+        num_simulations = block_execution_info.len(),
+        "Simulate execution completed in {:.3}ms for {} simulations",
+        execution_duration_seconds * 1000.0,
+        block_execution_info.len()
+    );
+
+    // Check if we have enough samples for the current percentage
+    let percentage = {
+        let idx = CURRENT_PERCENTAGE_INDEX.lock().unwrap();
+        PERCENTAGES[*idx]
+    };
+    let percentage_key = format!("{}", percentage);
+
+    let get_amount_out_count = GET_AMOUNT_OUT_DATA
+        .lock()
+        .ok()
+        .and_then(|d| d.get(&percentage_key).map(|v| v.len()))
+        .unwrap_or(0);
+
+    if get_amount_out_count >= MAX_GET_AMOUNT_OUT_SAMPLES {
+        info!("Collected {} get_amount_out samples for percentage {}. Moving to next percentage or generating histograms...",
+              MAX_GET_AMOUNT_OUT_SAMPLES, percentage);
+
+        // Move to next percentage
+        let mut idx = CURRENT_PERCENTAGE_INDEX.lock().unwrap();
+        *idx += 1;
+
+        if *idx >= PERCENTAGES.len() {
+            // We've completed all percentages, generate histograms and exit
+            info!("Completed all percentages. Generating histograms and exiting...");
+            drop(idx); // Release lock before generating histograms
+            if let Err(e) = generate_histograms() {
+                error!("Failed to generate histograms: {}", e);
+            }
+            std::process::exit(0);
+        } else {
+            info!("Starting collection for percentage {}", PERCENTAGES[*idx]);
+        }
+    }
 
     let mut n_reverts = 0;
     let mut n_failures = 0;
@@ -596,12 +1028,14 @@ async fn process_state(
             token_in.symbol, token_out.symbol
         );
 
-        // Calculate amount_in as 0.1% of max_input
-        // For precision, multiply by 1000 then divide by 1000
-        let percentage = 0.001;
-        let percentage_biguint = BigUint::from((percentage * 1000.0) as u32);
-        let thousand = BigUint::from(1000u32);
-        let amount_in = (&max_input * &percentage_biguint) / &thousand;
+        // Calculate amount_in based on current percentage
+        let percentage = {
+            let idx = CURRENT_PERCENTAGE_INDEX.lock().unwrap();
+            PERCENTAGES[*idx]
+        };
+        let percentage_biguint = BigUint::from((percentage * 1000000.0) as u32);
+        let ten_thousand = BigUint::from(1000000u32);
+        let amount_in = (&max_input * &percentage_biguint) / &ten_thousand;
         if amount_in.is_zero() {
             warn!("Calculated amount_in is zero, skipping...");
             continue;
@@ -637,16 +1071,78 @@ async fn process_state(
         };
         let duration_seconds = start_time.elapsed().as_secs_f64();
         let expected_amount_out = amount_out_result.amount;
-        info!(
+
+        metrics::record_get_amount_out_duration(&component.protocol_system, duration_seconds);
+
+        // Get the number of ticks from the state
+        let num_ticks = if component.protocol_system == "uniswap_v3" {
+            if let Some(uniswap_state) = state.as_any().downcast_ref::<UniswapV3State>() {
+                uniswap_state.tick_count() as f64
+            } else {
+                warn!("Failed to downcast to UniswapV3State for component {}", state_id);
+                0.0
+            }
+        } else {
+            // For non-UniswapV3 pools, we could add support for other protocols here
+            0.0
+        };
+
+        // Store tick count and duration for histogram and get sample count
+        let percentage_key = format!("{}", percentage);
+        let mut current_sample_count = 0;
+        let duration_ms = duration_seconds * 1000.0;
+
+        // Store all samples (including duplicates)
+        if let Ok(mut data) = GET_AMOUNT_OUT_DATA.lock() {
+            let vec = data.entry(percentage_key.clone()).or_insert_with(Vec::new);
+            if vec.len() < MAX_GET_AMOUNT_OUT_SAMPLES {
+                vec.push((num_ticks, duration_ms));
+                current_sample_count = vec.len();
+            } else {
+                current_sample_count = vec.len();
+            }
+        }
+
+        // Store unique samples only (check if component_id was seen for this percentage)
+        let component_id = state_id.clone();
+        let is_new_component = if let Ok(mut seen) = SEEN_COMPONENT_IDS.lock() {
+            let seen_set = seen.entry(percentage_key.clone()).or_insert_with(HashSet::new);
+            seen_set.insert(component_id.clone())
+        } else {
+            false
+        };
+
+        if is_new_component {
+            if let Ok(mut data_unique) = GET_AMOUNT_OUT_DATA_UNIQUE.lock() {
+                let vec = data_unique.entry(percentage_key.clone()).or_insert_with(Vec::new);
+                vec.push((num_ticks, duration_ms));
+            }
+        }
+
+        // Track duration per pool for logging slow pools
+        if let Ok(mut pool_durations) = POOL_DURATIONS.lock() {
+            let durations = pool_durations.entry(component_id).or_insert_with(Vec::new);
+            durations.push(duration_ms);
+        }
+
+        warn!(
             event_type = "get_amount_out_duration",
             token_in = %token_in.address,
             token_out = %token_out.address,
             amount_in = %amount_in,
             amount_out = %expected_amount_out,
             duration_seconds = duration_seconds,
-            "Get amount out operation completed in {:.3}ms", duration_seconds * 1000.0
+            num_ticks = num_ticks,
+            percentage = percentage,
+            sample_count = current_sample_count,
+            max_samples = MAX_GET_AMOUNT_OUT_SAMPLES,
+            "Get amount out operation completed in {:.3}ms (ticks: {}) [Sample {}/{} for percentage {}]",
+            duration_seconds * 1000.0,
+            num_ticks,
+            current_sample_count,
+            MAX_GET_AMOUNT_OUT_SAMPLES,
+            percentage
         );
-        metrics::record_get_amount_out_duration(&component.protocol_system, duration_seconds);
 
         // Simulate execution amount out against the RPC
         let (solution, transaction) = match encode_swap(
@@ -769,14 +1265,6 @@ fn process_execution_result(
             } else {
                 String::new()
             };
-            error!(
-                event_type = "simulation_execution_failure",
-                error_message = %revert_reason,
-                error_name = %error_name,
-                tenderly_url = %tenderly_url,
-                overwrites = %overwrites_string,
-                "Failed to simulate swap: {error_msg}"
-            );
             metrics::record_simulation_execution_failure(
                 &execution_info.protocol_system,
                 &error_name,

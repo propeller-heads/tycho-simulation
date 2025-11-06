@@ -53,6 +53,10 @@ impl TickList {
         Ok(tick_list)
     }
 
+    pub(crate) fn len(&self) -> usize {
+        self.ticks.len()
+    }
+
     // Validates that all attributes are valid. Checks for:
     // 1. Tick spacing > 0
     // 2. Tick indexes have no rest when divided by tick spacing
