@@ -159,6 +159,14 @@ impl UniswapV3State {
                 amount_out,
                 fee_amount,
             };
+
+            // Detect when we are consuming input but producing no output
+            // This happens when liquidity is too thin to produce even 1 wei of output
+            // In this case, we should stop rather than burning gas in a pointless loop
+            if amount_out == U256::ZERO && amount_in > U256::ZERO {
+                break;
+            }
+
             if exact_input {
                 state.amount_remaining -= I256::checked_from_sign_and_abs(
                     Sign::Positive,
@@ -289,10 +297,15 @@ impl ProtocolSim for UniswapV3State {
 
         // Iterate through all ticks in the direction of the swap
         // Continues until there is no more liquidity in the pool or no more ticks to process
+        let mut last_processed_tick: Option<i32> = None;
         while let Ok((tick, initialized)) = self
             .ticks
             .next_initialized_tick_within_one_word(current_tick, zero_for_one)
         {
+            // If we have no liquidity left, stop iterating
+            if current_liquidity == 0 {
+                break;
+            }
             // Clamp the tick value to ensure it's within valid range
             let next_tick = tick.clamp(MIN_TICK, MAX_TICK);
 
@@ -364,6 +377,17 @@ impl ProtocolSim for UniswapV3State {
             // Move to the next tick position
             current_tick = if zero_for_one { next_tick - 1 } else { next_tick };
             current_sqrt_price = sqrt_price_next;
+
+            // Detect if we're stuck on the same tick (beyond all available ticks)
+            // This happens when next_initialized_tick_within_one_word returns the same boundary
+            // tick repeatedly
+            if let Some(last_tick) = last_processed_tick {
+                if next_tick == last_tick {
+                    // We've processed this tick before, we're in an infinite loop
+                    break;
+                }
+            }
+            last_processed_tick = Some(next_tick);
         }
 
         Ok((u256_to_biguint(total_amount_in), u256_to_biguint(total_amount_out)))
