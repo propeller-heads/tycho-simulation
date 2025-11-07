@@ -146,20 +146,8 @@ impl TickList {
         tick < self.ticks[0].index
     }
 
-    fn is_below_safe_tick(&self, tick: i32) -> bool {
-        let smallest = self.ticks[0].index;
-        let minimum = smallest - self.tick_spacing as i32;
-        tick < minimum || tick < MIN_TICK
-    }
-
     fn is_at_or_above_largest(&self, tick: i32) -> bool {
         tick >= self.ticks[self.ticks.len() - 1].index
-    }
-
-    fn is_at_or_above_safe_tick(&self, tick: i32) -> bool {
-        let largest = self.ticks[self.ticks.len() - 1].index;
-        let maximum = largest + self.tick_spacing as i32;
-        tick >= maximum || tick >= MAX_TICK
     }
 
     pub(crate) fn get_tick(&self, index: i32) -> Result<&TickInfo, TickListError> {
@@ -235,13 +223,15 @@ impl TickList {
             let word_pos = compressed >> 8;
             let min_in_word = (word_pos << 8) * spacing;
 
-            if self.is_below_safe_tick(tick) {
-                return Err(TickListError { kind: TickListErrorKind::TicksExeeded });
-            }
-
             if self.is_below_smallest(tick) {
-                let minimum = cmp::max(self.ticks[0].index - spacing, min_in_word);
-                return Ok((minimum, false));
+                // Match Solidity behavior: return boundary based on current tick position within
+                // the word Reference: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/TickBitmap.sol#L16-19
+                // Solidity: bitPos = uint8(tick % 256)
+                // For negative tick: -31 % 256 = -31, then uint8(-31) wraps to 225
+                // next = (compressed - int24(bitPos)) * tickSpacing
+                let bit_pos = ((compressed % 256) as u8) as i32; // Matches Solidity's uint8 cast behavior
+                let next = (compressed - bit_pos) * spacing;
+                return Ok((next, false));
             }
 
             let idx = self
@@ -253,14 +243,14 @@ impl TickList {
             let word_pos = (compressed + 1) >> 8;
             let max_in_word = (((word_pos + 1) << 8) - 1) * spacing;
 
-            if self.is_at_or_above_safe_tick(tick) {
-                return Err(TickListError { kind: TickListErrorKind::TicksExeeded });
-            }
-
             if self.is_at_or_above_largest(tick) {
-                let maximum =
-                    cmp::min(self.ticks[self.ticks.len() - 1].index + spacing, max_in_word);
-                return Ok((maximum, false));
+                // Match Solidity behavior: return boundary based on current tick position within
+                // the word Reference: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/TickBitmap.sol#L16-19
+                // Solidity: bitPos = uint8((compressed + 1) % 256)
+                // next = (compressed + 1 + int24(type(uint8).max - bitPos)) * tickSpacing
+                let bit_pos = (((compressed + 1) % 256) as u8) as i32; // Matches Solidity's uint8 cast
+                let next = (compressed + 1 + (255 - bit_pos)) * spacing;
+                return Ok((next, false));
             }
             let idx = self
                 .next_initialized_tick(tick, lte)?
