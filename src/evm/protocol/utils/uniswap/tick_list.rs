@@ -211,6 +211,24 @@ impl TickList {
         }
     }
 
+    /// Returns the next initialized tick contained in the same word (or adjacent word)
+    /// as the tick that is either to the left (less than or equal to) or right (greater than) of
+    /// the given tick.
+    ///
+    /// Based on https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/TickBitmap.sol#L16-19
+    ///
+    /// # Arguments
+    ///
+    /// * `tick` - The starting tick
+    /// * `lte` - Whether to search for the next initialized tick to the left (less than or equal
+    ///   to the starting tick)
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple `(next, initialized)` where:
+    /// * `next` - The next initialized or uninitialized tick up to 256 ticks away from the current tick
+    /// * `initialized` - Whether the next tick is initialized, as the function only searches within
+    ///   up to 256 ticks
     pub(crate) fn next_initialized_tick_within_one_word(
         &self,
         tick: i32,
@@ -224,11 +242,6 @@ impl TickList {
             let min_in_word = (word_pos << 8) * spacing;
 
             if self.is_below_smallest(tick) {
-                // Match Solidity behavior: return boundary based on current tick position within
-                // the word Reference: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/TickBitmap.sol#L16-19
-                // Solidity: bitPos = uint8(tick % 256)
-                // For negative tick: -31 % 256 = -31, then uint8(-31) wraps to 225
-                // next = (compressed - int24(bitPos)) * tickSpacing
                 let bit_pos = ((compressed % 256) as u8) as i32; // Matches Solidity's uint8 cast behavior
                 let next = (compressed - bit_pos) * spacing;
                 return Ok((next, false));
@@ -244,10 +257,6 @@ impl TickList {
             let max_in_word = (((word_pos + 1) << 8) - 1) * spacing;
 
             if self.is_at_or_above_largest(tick) {
-                // Match Solidity behavior: return boundary based on current tick position within
-                // the word Reference: https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/TickBitmap.sol#L16-19
-                // Solidity: bitPos = uint8((compressed + 1) % 256)
-                // next = (compressed + 1 + int24(type(uint8).max - bitPos)) * tickSpacing
                 let bit_pos = (((compressed + 1) % 256) as u8) as i32; // Matches Solidity's uint8 cast
                 let next = (compressed + 1 + (255 - bit_pos)) * spacing;
                 return Ok((next, false));
