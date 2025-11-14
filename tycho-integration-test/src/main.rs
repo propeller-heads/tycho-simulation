@@ -3,6 +3,7 @@ mod metrics;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
+    str::FromStr,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -35,6 +36,7 @@ use tycho_test::{
         protocol_stream_processor::ProtocolStreamProcessor,
         rfq_stream_processor::RFQStreamProcessor, StreamUpdate, UpdateType,
     },
+    validation::{batch_validate_components, get_validator, Validator},
 };
 
 #[derive(Parser, Clone)]
@@ -320,10 +322,11 @@ async fn process_update(
         metrics::record_protocol_sync_state(protocol, sync_state);
     }
 
-    // Process updated states in parallel
-    let semaphore = Arc::new(Semaphore::new(cli.parallel_simulations as usize));
-    let mut tasks = Vec::new();
+    // Collect all components to process (both updated and stale) for batch validation
+    let mut components_to_process: Vec<(String, ProtocolComponent, Box<dyn ProtocolSim>)> =
+        Vec::new();
 
+    // Collect updated components
     for (id, state) in update
         .update
         .states
@@ -355,27 +358,10 @@ async fn process_update(
                 }
             },
         };
-        let block = block.clone();
-        let state_id = id.clone();
-        let state = state.clone_box();
-        let permit = semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .into_diagnostic()
-            .wrap_err("Failed to acquire permit")?;
-
-        let task = tokio::spawn(async move {
-            let simulation_id = generate_simulation_id(&component.protocol_system, &state_id);
-            let result =
-                process_state(&simulation_id, chain, component, &block, state_id, state).await;
-            drop(permit);
-            result
-        });
-        tasks.push(task);
+        components_to_process.push((id.clone(), component, state.clone_box()));
     }
 
-    // Select states that were not updated in this block to test simulation and execution
+    // Collect stale components (not updated in this block)
     let selected_ids = {
         let current_state = tycho_state
             .read()
@@ -383,11 +369,15 @@ async fn process_update(
 
         let mut all_selected_ids = Vec::new();
 
-        // Add component IDs from always_test_components that are not in the current update
         for component_id in &cli.always_test_components {
-            if !update.update.states.keys().contains(component_id)
-                // Ensure that the component exists in the Tycho DB
-                && current_state.components.contains_key(component_id)
+            if !update
+                .update
+                .states
+                .keys()
+                .contains(component_id) &&
+                current_state
+                    .components
+                    .contains_key(component_id)
             {
                 all_selected_ids.push(component_id.clone());
             }
@@ -397,7 +387,6 @@ async fn process_update(
             .component_ids_by_protocol
             .values()
         {
-            // Filter out IDs that are in the current update or already in all_selected_ids
             let available_ids: Vec<_> = component_ids
                 .iter()
                 .filter(|id| {
@@ -419,13 +408,13 @@ async fn process_update(
         all_selected_ids
     };
 
-    for id in selected_ids {
+    for id in &selected_ids {
         let (component, state) = {
             let current_state = tycho_state
                 .read()
                 .map_err(|e| miette!("Failed to acquire read lock on Tycho state: {e}"))?;
 
-            match (current_state.components.get(&id), current_state.states.get(&id)) {
+            match (current_state.components.get(id), current_state.states.get(id)) {
                 (Some(comp), Some(state)) => (comp.clone(), state.clone()),
                 (None, _) => {
                     error!(id=%id, "Component not found in saved protocol components.");
@@ -437,10 +426,72 @@ async fn process_update(
                 }
             }
         };
+        components_to_process.push((id.clone(), component, state.clone_box()));
+    }
 
+    // Collect components that implement Validator for batch validation
+    let mut validator_components: Vec<(
+        &dyn Validator,
+        tycho_common::Bytes,
+        String, // protocol_system
+    )> = Vec::new();
+
+    for (id, component, state) in &components_to_process {
+        let component_id = tycho_common::Bytes::from_str(id)
+            .unwrap_or_else(|_| tycho_common::Bytes::from(id.as_bytes()));
+
+        if let Some(validator) = get_validator(&component.protocol_system, state.as_ref()) {
+            validator_components.push((validator, component_id, component.protocol_system.clone()));
+        }
+    }
+
+    // Batch validate all components of this block in a single call
+    if !validator_components.is_empty() {
+        // Extract just the validator data (without protocol_system) for batch_validate_components
+        let validator_data: Vec<_> = validator_components
+            .iter()
+            .map(|(validator, id, _protocol)| (*validator, id.clone()))
+            .collect();
+
+        let results =
+            batch_validate_components(&cli.rpc_url, &validator_data, block.header.number).await;
+
+        for (i, result) in results.iter().enumerate() {
+            let component_id = &validator_components[i].1;
+            let protocol = &validator_components[i].2;
+            match result {
+                Ok(passed) => {
+                    if *passed {
+                        info!(
+                            component_id = %component_id,
+                            "State validation passed"
+                        );
+                    } else {
+                        error!(
+                            component_id = %component_id,
+                            "State validation failed"
+                        );
+                        metrics::record_validation_failure(protocol);
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        component_id = %component_id,
+                        error = %e,
+                        "Error validating component"
+                    );
+                    metrics::record_validation_failure(protocol);
+                }
+            }
+        }
+    }
+
+    // Process all components (updated and stale) in parallel
+    let semaphore = Arc::new(Semaphore::new(cli.parallel_simulations as usize));
+    let mut tasks = Vec::new();
+
+    for (id, component, state) in components_to_process {
         let block = block.clone();
-        let state_id = id.clone();
-        let state = state.clone_box();
         let permit = semaphore
             .clone()
             .acquire_owned()
@@ -449,9 +500,8 @@ async fn process_update(
             .wrap_err("Failed to acquire permit")?;
 
         let task = tokio::spawn(async move {
-            let simulation_id = generate_simulation_id(&component.protocol_system, &state_id);
-            let result =
-                process_state(&simulation_id, chain, component, &block, state_id, state).await;
+            let simulation_id = generate_simulation_id(&component.protocol_system, &id);
+            let result = process_state(&simulation_id, chain, component, &block, id, state).await;
             drop(permit);
             result
         });
