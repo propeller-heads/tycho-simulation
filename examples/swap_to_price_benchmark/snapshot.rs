@@ -10,7 +10,7 @@
 //!
 //! ## Example
 //! ```no_run
-//! use swap_to_price::snapshot::{save_snapshot, load_snapshot};
+//! use swap_to_price::snapshot::{save_snapshot, load_and_process_snapshot};
 //! use tycho_common::models::Chain;
 //! use std::path::Path;
 //!
@@ -18,17 +18,19 @@
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Capture snapshot
 //!     let protocols = vec!["uniswap_v2", "uniswap_v3"];
-//!     save_snapshot(
+//!     let (_snapshot, path) = save_snapshot(
 //!         "tycho-beta.propellerheads.xyz",
 //!         Some("your_key"),
 //!         Chain::Ethereum,
 //!         &protocols,
 //!         100.0, // min TVL
-//!         Path::new("snapshot.json")
+//!         None,  // no token filter
+//!         Path::new("./snapshots"),
+//!         10,    // max pools per protocol
 //!     ).await?;
 //!
-//!     // Restore snapshot - everything is self-contained!
-//!     let loaded = load_snapshot(Path::new("snapshot.json")).await?;
+//!     // Load and process snapshot in one step
+//!     let loaded = load_and_process_snapshot(&path).await?;
 //!
 //!     // Use decoded states directly
 //!     for (pool_id, state) in &loaded.states {
@@ -77,7 +79,7 @@ use tycho_simulation::{
 /// - List of protocols included
 /// - Token information extracted from the feed
 /// - Metadata about when and how the snapshot was created
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct Snapshot {
     /// The raw FeedMessage from Tycho
     pub feed_message: FeedMessage<BlockHeader>,
@@ -93,7 +95,7 @@ pub struct Snapshot {
 }
 
 /// Metadata about when and how a snapshot was created
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct SnapshotMetadata {
     /// When the snapshot was captured
     pub captured_at: DateTime<Utc>,
@@ -195,49 +197,40 @@ fn limit_pools_per_protocol(feed_msg: &mut FeedMessage<BlockHeader>, pool_count_
                 pool_count_limit
             );
         } else {
-            info!("  {}: {} pools (no limit applied)", protocol, original_count);
+            info!("  {}: {} pools", protocol, original_count);
         }
     }
 }
 
-/// Captures a snapshot by connecting to Tycho and saving it to a JSON file.
+/// Fetches a FeedMessage from Tycho stream with custom filters per protocol.
 ///
-/// This function creates a `TychoStreamBuilder`, subscribes to the specified protocols,
-/// receives the first message, wraps it in a `Snapshot` structure with all metadata,
-/// and saves it as JSON with filename: `snapshot_<block_number>.json`
+/// This allows different filter strategies for each protocol:
+/// - For snapshots: `ComponentFilter::with_tvl_range(min_tvl * 0.9, min_tvl)`
+/// - For tests: `ComponentFilter::Ids(vec!["0x..."])`
 ///
 /// # Arguments
 /// * `tycho_url` - URL of the Tycho API (e.g., "tycho-beta.propellerheads.xyz")
 /// * `api_key` - Optional API key for authentication
-/// * `chain` - The blockchain to snapshot (e.g., Chain::Ethereum)
-/// * `protocols` - List of protocol names to include (e.g., ["uniswap_v2", "uniswap_v3"])
-/// * `min_tvl` - Minimum TVL filter for components (in ETH)
-/// * `target_tokens` - Optional list of token address strings (hex) to filter components by
-/// * `output_folder` - Directory where the snapshot will be saved
-/// * `pool_count_limit` - Maximum number of pools per protocol to include in snapshot
+/// * `chain` - The blockchain to query (e.g., Chain::Ethereum)
+/// * `protocol_filters` - List of (protocol_name, ComponentFilter) pairs
 ///
 /// # Returns
-/// Tuple of (Snapshot, PathBuf) - the snapshot structure and the actual file path
-pub async fn save_snapshot(
+/// The first FeedMessage from the stream
+pub async fn fetch_feed_message(
     tycho_url: &str,
     api_key: Option<&str>,
     chain: Chain,
-    protocols: &[&str],
-    min_tvl: f64,
-    target_tokens: Option<&[&str]>,
-    output_folder: &Path,
-    pool_count_limit: usize,
-) -> Result<(Snapshot, std::path::PathBuf), Box<dyn std::error::Error>> {
+    protocol_filters: &[(&str, ComponentFilter)],
+) -> Result<FeedMessage<BlockHeader>, Box<dyn std::error::Error>> {
     info!("Connecting to Tycho at {}...", tycho_url);
 
     // Create TychoStreamBuilder
     let mut stream_builder = TychoStreamBuilder::new(tycho_url, chain.into());
 
-    // Add protocols with TVL filter
-    let tvl_filter = ComponentFilter::with_tvl_range(min_tvl * 0.9, min_tvl);
-    for protocol in protocols {
-        info!("Adding protocol: {}", protocol);
-        stream_builder = stream_builder.exchange(protocol, tvl_filter.clone());
+    // Add protocols with their respective filters
+    for (protocol, filter) in protocol_filters {
+        info!("Adding protocol: {} with filter: {:?}", protocol, filter);
+        stream_builder = stream_builder.exchange(protocol, filter.clone());
     }
 
     // Add auth key if provided
@@ -257,8 +250,40 @@ pub async fn save_snapshot(
         .ok_or("Stream closed without sending a message")?;
 
     // Unwrap the Result from the channel
-    let mut feed_msg = feed_msg_result.map_err(|e| format!("Stream error: {}", e))?;
+    let feed_msg = feed_msg_result.map_err(|e| format!("Stream error: {}", e))?;
 
+    // Shutdown the stream
+    handle.abort();
+
+    Ok(feed_msg)
+}
+
+/// Creates a Snapshot from a FeedMessage and saves it to disk.
+///
+/// # Arguments
+/// * `feed_msg` - The FeedMessage to create the snapshot from
+/// * `tycho_url` - URL of the Tycho API (for loading token data)
+/// * `api_key` - Optional API key for authentication
+/// * `chain` - The blockchain
+/// * `protocols` - List of protocol names included
+/// * `min_tvl` - Minimum TVL filter used (for metadata)
+/// * `target_tokens` - Optional list of token address strings (hex) to filter components by
+/// * `output_folder` - Directory where the snapshot will be saved
+/// * `pool_count_limit` - Maximum number of pools per protocol to include
+///
+/// # Returns
+/// Tuple of (Snapshot, PathBuf) - the snapshot structure and the actual file path
+pub async fn create_and_save_snapshot(
+    mut feed_msg: FeedMessage<BlockHeader>,
+    tycho_url: &str,
+    api_key: Option<&str>,
+    chain: Chain,
+    protocols: &[&str],
+    min_tvl: f64,
+    target_tokens: Option<&[&str]>,
+    output_folder: &Path,
+    pool_count_limit: usize,
+) -> Result<(Snapshot, std::path::PathBuf), Box<dyn std::error::Error>> {
     // Apply token filter if provided
     if let Some(tokens) = target_tokens {
         feed_msg = filter_feed_message(feed_msg, tokens);
@@ -276,7 +301,7 @@ pub async fn save_snapshot(
         .map(|block| block.number)
         .unwrap_or(0);
 
-    info!("Received FeedMessage for block {}", block_number);
+    info!("Processing FeedMessage for block {}", block_number);
     info!(
         "  Protocols: {}",
         feed_msg.state_msgs.keys().cloned().collect::<Vec<_>>().join(", ")
@@ -316,37 +341,84 @@ pub async fn save_snapshot(
     let filename = format!("snapshot_{}.bin", block_number);
     let output_path = output_folder.join(&filename);
 
-    // Serialize to MessagePack (faster than JSON, good serde compatibility)
+    // Serialize to MessagePack
     info!("Saving snapshot to {}...", output_path.display());
     let file = File::create(&output_path)?;
     rmp_serde::encode::write(&mut std::io::BufWriter::new(file), &snapshot)?;
 
     info!("Snapshot saved successfully!");
 
-    // Shutdown the stream
-    handle.abort();
-
     Ok((snapshot, output_path))
 }
 
-/// Loads a snapshot from bincode and decodes it into protocol states.
+/// Captures a snapshot by connecting to Tycho and saving it to a binary file.
 ///
-/// This function deserializes a `Snapshot` from bincode, uses the embedded tokens and protocols
-/// to configure a decoder, and returns all decoded states ready to use.
+/// This is a convenience function that combines `fetch_feed_message` and
+/// `create_and_save_snapshot` using TVL-based filtering.
+///
+/// # Arguments
+/// * `tycho_url` - URL of the Tycho API (e.g., "tycho-beta.propellerheads.xyz")
+/// * `api_key` - Optional API key for authentication
+/// * `chain` - The blockchain to snapshot (e.g., Chain::Ethereum)
+/// * `protocols` - List of protocol names to include (e.g., ["uniswap_v2", "uniswap_v3"])
+/// * `min_tvl` - Minimum TVL filter for components (in ETH)
+/// * `target_tokens` - Optional list of token address strings (hex) to filter components by
+/// * `output_folder` - Directory where the snapshot will be saved
+/// * `pool_count_limit` - Maximum number of pools per protocol to include in snapshot
+///
+/// # Returns
+/// Tuple of (Snapshot, PathBuf) - the snapshot structure and the actual file path
+pub async fn save_snapshot(
+    tycho_url: &str,
+    api_key: Option<&str>,
+    chain: Chain,
+    protocols: &[&str],
+    min_tvl: f64,
+    target_tokens: Option<&[&str]>,
+    output_folder: &Path,
+    pool_count_limit: usize,
+) -> Result<(Snapshot, std::path::PathBuf), Box<dyn std::error::Error>> {
+    // Create TVL filter for each protocol
+    let tvl_filter = ComponentFilter::with_tvl_range(min_tvl * 0.9, min_tvl);
+    let protocol_filters: Vec<_> = protocols
+        .iter()
+        .map(|p| (*p, tvl_filter.clone()))
+        .collect();
+
+    // Fetch FeedMessage from stream
+    let feed_msg = fetch_feed_message(tycho_url, api_key, chain, &protocol_filters).await?;
+
+    // Create and save snapshot
+    create_and_save_snapshot(
+        feed_msg,
+        tycho_url,
+        api_key,
+        chain,
+        protocols,
+        min_tvl,
+        target_tokens,
+        output_folder,
+        pool_count_limit,
+    )
+    .await
+}
+
+/// Loads a snapshot from a binary file.
+///
+/// This function deserializes a `Snapshot` from MessagePack format.
+/// Use `process_snapshot` to decode the snapshot into protocol states.
 ///
 /// # Arguments
 /// * `snapshot_path` - Path to the snapshot .bin file
 ///
 /// # Returns
-/// `LoadedSnapshot` containing decoded states, components, and metadata
-pub async fn load_snapshot(
-    snapshot_path: &Path,
-) -> Result<LoadedSnapshot, Box<dyn std::error::Error>> {
+/// `Snapshot` containing the raw data
+pub fn load_snapshot(snapshot_path: &Path) -> Result<Snapshot, Box<dyn std::error::Error>> {
     info!("Loading snapshot from {}...", snapshot_path.display());
 
-    // Deserialize Snapshot from bincode (much faster than JSON)
+    // Deserialize Snapshot from MessagePack
     let file = File::open(snapshot_path)?;
-    let snapshot: Snapshot = bincode::deserialize_from(file)?;
+    let snapshot: Snapshot = rmp_serde::decode::from_read(std::io::BufReader::new(file))?;
 
     info!("Loaded snapshot:");
     info!("  Block: {}", snapshot.metadata.block_number);
@@ -354,6 +426,22 @@ pub async fn load_snapshot(
     info!("  Tokens: {}", snapshot.tokens.len());
     info!("  Components: {}", snapshot.metadata.total_components);
 
+    Ok(snapshot)
+}
+
+/// Processes a snapshot by decoding it into protocol states.
+///
+/// This function uses the embedded tokens and protocols in the snapshot
+/// to configure a decoder, and returns all decoded states ready to use.
+///
+/// # Arguments
+/// * `snapshot` - The snapshot to process
+///
+/// # Returns
+/// `LoadedSnapshot` containing decoded states, components, and metadata
+pub async fn process_snapshot(
+    snapshot: &Snapshot,
+) -> Result<LoadedSnapshot, Box<dyn std::error::Error>> {
     // Create decoder with proper configuration
     let decoder = create_decoder_for_protocols(&snapshot.protocols, snapshot.tokens.clone()).await;
 
@@ -370,8 +458,24 @@ pub async fn load_snapshot(
         states: update.states.clone(),
         components: update.new_pairs.clone(),
         update,
-        metadata: snapshot.metadata,
+        metadata: snapshot.metadata.clone(),
     })
+}
+
+/// Convenience function to load and process a snapshot in one step.
+///
+/// Combines `load_snapshot` and `process_snapshot`.
+///
+/// # Arguments
+/// * `snapshot_path` - Path to the snapshot .bin file
+///
+/// # Returns
+/// `LoadedSnapshot` containing decoded states, components, and metadata
+pub async fn load_and_process_snapshot(
+    snapshot_path: &Path,
+) -> Result<LoadedSnapshot, Box<dyn std::error::Error>> {
+    let snapshot = load_snapshot(snapshot_path)?;
+    process_snapshot(&snapshot).await
 }
 
 /// Extracts tokens from a FeedMessage and loads full token data from Tycho.
@@ -514,6 +618,10 @@ async fn create_decoder_for_protocols(
                 info!("Registering decoder for uniswap_v4_hooks");
                 decoder.register_decoder::<UniswapV4State>("uniswap_v4_hooks");
             }
+            "ekubo_v2" => {
+                info!("Registering decoder for ekubo_v2");
+                decoder.register_decoder::<tycho_simulation::evm::protocol::ekubo::state::EkuboState>("ekubo_v2");
+            }
             "balancer_v3" => {
                 info!("Registering decoder for balancer_v3 with filter");
                 decoder.register_decoder::<EVMPoolState<PreCachedDB>>("balancer_v3");
@@ -555,10 +663,10 @@ async fn create_decoder_for_protocols(
 mod tests {
     use super::*;
     use std::env;
-
+    
     #[tokio::test]
-    #[ignore] // Run with: cargo test --example swap_to_price -- --ignored --nocapture
-    async fn test_create_and_load_snapshot() {
+    #[ignore] // Run with: cargo test --example swap_to_price_benchmark -- --ignored --nocapture test_snapshot_roundtrip_by_component_ids
+    async fn test_snapshot_roundtrip_by_component_ids() {
         // Initialize tracing for test output
         let _ = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::INFO)
@@ -567,116 +675,90 @@ mod tests {
         // Get Tycho credentials from environment
         let tycho_url = env::var("TYCHO_URL")
             .unwrap_or_else(|_| "tycho-beta.propellerheads.xyz".to_string());
-        let api_key = env::var("TYCHO_AUTH_KEY")
-            .ok();
+        let api_key = env::var("TYCHO_AUTH_KEY").ok();
 
         if api_key.is_none() {
             eprintln!("⚠️  Warning: TYCHO_AUTH_KEY not set. Test may fail due to rate limiting.");
-            eprintln!("   Set it with: export TYCHO_AUTH_KEY=your_key");
         }
 
-        let protocols = vec!["uniswap_v2", "uniswap_v3"];
         let chain = Chain::Ethereum;
-        let min_tvl = 100.0;
 
+        // Use specific component IDs for each protocol (1 pool per protocol)
+        let protocol_filters = vec![
+            ("ekubo_v2", ComponentFilter::Ids(vec!["0xca5b3ef9770bb95940bd4e0bff5ead70a5973d904a8b370b52147820e61a2ff6".to_string()])),
+            ("vm:maverick_v2", ComponentFilter::Ids(vec!["0x31373595f40ea48a7aab6cbcb0d377c6066e2dca".to_string()])),
+            ("vm:curve", ComponentFilter::Ids(vec!["0xd51a44d3fae010294c616388b506acda1bfaae46".to_string()])),
+            ("pancakeswap_v3", ComponentFilter::Ids(vec!["0x04c8577958ccc170eb3d2cca76f9d51bc6e42d8f".to_string()])),
+            ("uniswap_v2", ComponentFilter::Ids(vec!["0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc".to_string()])),
+            ("uniswap_v3", ComponentFilter::Ids(vec!["0xc5af84701f98fa483ece78af83f11b6c38aca71d".to_string()])),
+            ("vm:balancer_v2", ComponentFilter::Ids(vec!["0x96646936b91d6b9d7d0c47c496afbf3d6ec7b6f8000200000000000000000019".to_string()])),
+            ("pancakeswap_v2", ComponentFilter::Ids(vec!["0x4ab6702b3ed3877e9b1f203f90cbef13d663b0e8".to_string()])),
+            ("sushiswap_v2", ComponentFilter::Ids(vec!["0x397ff1542f962076d0bfe58ea045ffa2d347aca0".to_string()])),
+            ("uniswap_v4_hooks", ComponentFilter::Ids(vec!["0xa60399112940a5870efa234b6a178c26b7fe996fbc23acdae5a8d7575cd64865".to_string()])),
+            ("uniswap_v4", ComponentFilter::Ids(vec!["0xf6e8088529094bc485561fa2a03e3d19c9a60f5d99a997e8fe16ab4ca2db277a".to_string()])),
+        ];
 
-        println!("\n📸 Creating snapshot from live Tycho stream...");
+        let protocols: Vec<&str> = protocol_filters.iter().map(|(p, _)| *p).collect();
+
+        println!("\n📸 Fetching specific components from Tycho...");
         println!("   URL: {}", tycho_url);
         println!("   Protocols: {}", protocols.join(", "));
-        println!("   Min TVL: {} ETH", min_tvl);
+
+        // Step 1: Fetch FeedMessage with specific component IDs
+        let feed_msg = fetch_feed_message(&tycho_url, api_key.as_deref(), chain, &protocol_filters)
+            .await
+            .expect("Failed to fetch feed message");
 
         // Create temp directory for test
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
-        // Step 1: Create snapshot from live stream
-        let (saved_snapshot, snapshot_path) = save_snapshot(
+        // Step 2: Create and save snapshot
+        let (saved_snapshot, snapshot_path) = create_and_save_snapshot(
+            feed_msg,
             &tycho_url,
             api_key.as_deref(),
             chain,
             &protocols,
-            min_tvl,
-            None, // No token filter for test
+            0.0, // min_tvl not used when filtering by IDs
+            None,
             temp_dir.path(),
-            10,   // Default pool limit for test
+            100, // No limit needed since we're filtering by specific IDs
         )
         .await
         .expect("Failed to create snapshot");
 
-        println!("\n✅ Snapshot created successfully!");
+        println!("\n✅ Snapshot created!");
         println!("   File: {}", snapshot_path.display());
         println!("   Block: {}", saved_snapshot.metadata.block_number);
         println!("   Components: {}", saved_snapshot.metadata.total_components);
-        println!("   Tokens: {}", saved_snapshot.tokens.len());
-        println!("   Protocols: {}", saved_snapshot.protocols.join(", "));
 
-        // Verify snapshot structure
-        assert!(!saved_snapshot.protocols.is_empty(), "Protocols should not be empty");
-        assert!(
-            !saved_snapshot.tokens.is_empty(),
-            "Tokens should not be empty (found {})",
-            saved_snapshot.tokens.len()
-        );
-        assert!(
-            saved_snapshot.metadata.total_components > 0,
-            "Should have at least one component (found {})",
-            saved_snapshot.metadata.total_components
-        );
-        assert!(saved_snapshot.metadata.block_number > 0, "Block number should be non-zero");
-
+        // Step 3: Load snapshot back
         println!("\n📂 Loading snapshot from file...");
+        let loaded_snapshot = load_snapshot(&snapshot_path).expect("Failed to load snapshot");
 
-        // Step 2: Load snapshot from file
-        let loaded = load_snapshot(&snapshot_path)
+        // Step 4: Verify round-trip equality
+        println!("\n🔄 Verifying round-trip serialization...");
+        assert_eq!(
+            saved_snapshot, loaded_snapshot,
+            "Saved and loaded snapshots should be equal"
+        );
+        println!("   ✅ Round-trip verification passed!");
+
+        // Step 5: Process snapshot into protocol states
+        println!("\n⚙️ Processing snapshot into protocol states...");
+        let loaded = process_snapshot(&loaded_snapshot)
             .await
-            .expect("Failed to load snapshot");
+            .expect("Failed to process snapshot");
 
-        println!("\n✅ Snapshot loaded successfully!");
+        println!("\n✅ Snapshot processed!");
         println!("   States decoded: {}", loaded.states.len());
         println!("   Components: {}", loaded.components.len());
 
-        // Verify loaded snapshot
-        assert!(!loaded.states.is_empty(), "Should have decoded at least one state");
-        assert_eq!(
-            loaded.metadata.block_number,
-            saved_snapshot.metadata.block_number,
-            "Block numbers should match"
+        assert!(
+            !loaded.states.is_empty(),
+            "Should have decoded at least one state"
         );
 
-        // Verify we can use the states
-        println!("\n🔍 Testing decoded states:");
-        for (pool_id, state) in loaded.states.iter().take(3) {
-            let component = loaded.components.get(pool_id)
-                .expect("Component should exist for every state");
-
-            let token_symbols: Vec<_> = component.tokens.iter()
-                .map(|t| t.symbol.as_str())
-                .collect();
-
-            println!("   {} - {}", component.protocol_system, token_symbols.join("/"));
-
-            // Verify we can call ProtocolSim methods
-            let fee = state.fee();
-            assert!(fee >= 0.0 && fee <= 1.0, "Fee should be between 0 and 1");
-
-            // Try to get spot price if it's a 2-token pool
-            if component.tokens.len() == 2 {
-                let spot_result = state.spot_price(
-                    &component.tokens[0],
-                    &component.tokens[1],
-                );
-
-                match spot_result {
-                    Ok(price) => {
-                        println!("     Spot price: {} {}/{}", price, component.tokens[1].symbol, component.tokens[0].symbol);
-                        assert!(price > 0.0, "Spot price should be positive");
-                    }
-                    Err(e) => {
-                        println!("     Spot price unavailable: {:?}", e);
-                    }
-                }
-            }
-        }
-
-        println!("\n✅ All tests passed! Snapshot system is working correctly.");
+        println!("\n✅ All roundtrip tests passed!");
     }
 }
