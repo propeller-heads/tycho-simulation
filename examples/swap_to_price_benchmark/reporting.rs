@@ -89,7 +89,7 @@ pub fn print_summary(results: &[BenchmarkResult]) {
     {
         use tycho_simulation::swap_to_price::{SWAP_TO_PRICE_MAX_ITERATIONS, SWAP_TO_PRICE_TOLERANCE};
         println!("\nConfiguration:");
-        println!("  Tolerance: {:.2}%", SWAP_TO_PRICE_TOLERANCE * 100.0);
+        println!("  Tolerance: {:.8}%", SWAP_TO_PRICE_TOLERANCE * 100.0);
         println!("  Max iterations: {}", SWAP_TO_PRICE_MAX_ITERATIONS);
     }
 

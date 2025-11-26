@@ -7,8 +7,10 @@ use tycho_common::models::token::Token;
 #[cfg(feature = "swap_to_price")]
 use tycho_simulation::swap_to_price::{
     strategies::{
-        BinaryInterpolation, BoundedLinearInterpolation, InterpolationSearchStrategy,
-        LinearInterpolation,
+        BinaryInterpolation, BoundedLinearInterpolation, ExponentialProbing,
+        InterpolationSearchStrategy, LinearInterpolation, LogAmountBinarySearch,
+        LogPriceInterpolation, LogarithmicBisection, SecantMethod, SqrtPriceInterpolation,
+        TwoPhaseSearch,
     },
     SwapToPriceStrategy, SWAP_TO_PRICE_MAX_ITERATIONS, SWAP_TO_PRICE_TOLERANCE,
 };
@@ -59,21 +61,27 @@ pub async fn run_benchmark(
 
     #[cfg(feature = "swap_to_price")]
     {
+        // Filter for specific pool (None = all pools)
+        const DEBUG_POOL_FILTER: Option<&str> = None;
+
         // Define all strategies to benchmark
+        // DEBUG: Testing new strategies
         let strategies: Vec<(&str, Box<dyn SwapToPriceStrategy>)> = vec![
             (
-                "binary",
-                Box::new(InterpolationSearchStrategy::new(BinaryInterpolation)),
+                "log_price",
+                Box::new(InterpolationSearchStrategy::new(LogPriceInterpolation)),
             ),
             (
-                "linear",
-                Box::new(InterpolationSearchStrategy::new(LinearInterpolation)),
+                "log_amount",
+                Box::new(InterpolationSearchStrategy::new(LogAmountBinarySearch)),
             ),
             (
-                "bounded_linear",
-                Box::new(InterpolationSearchStrategy::new(BoundedLinearInterpolation {
-                    max_deviation: 0.5,
-                })),
+                "secant",
+                Box::new(InterpolationSearchStrategy::new(SecantMethod)),
+            ),
+            (
+                "two_phase",
+                Box::new(InterpolationSearchStrategy::new(TwoPhaseSearch)),
             ),
         ];
 
@@ -81,6 +89,13 @@ pub async fn run_benchmark(
             strategies.iter().map(|(name, _)| *name).collect::<Vec<_>>().join(", "));
 
         for (pool_idx, (pool_id, state)) in loaded.states.iter().enumerate() {
+            // DEBUG: Skip pools not matching filter
+            if let Some(filter) = DEBUG_POOL_FILTER {
+                // dbg!(pool_id);
+                if !pool_id.contains(filter) {
+                    continue;
+                }
+            }
             let component = match loaded.components.get(pool_id) {
                 Some(c) => c,
                 None => {

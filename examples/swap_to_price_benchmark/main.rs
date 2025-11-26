@@ -119,7 +119,7 @@ enum Commands {
         min_tvl: f64,
 
         /// Maximum number of pools per protocol to include in snapshot
-        #[arg(long, default_value = "10")]
+        #[arg(long, default_value = "5")]
         pool_count_limit: usize,
     },
 
