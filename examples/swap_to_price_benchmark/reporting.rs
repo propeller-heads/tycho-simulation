@@ -57,6 +57,16 @@ pub struct IterationStats {
     pub p99: u32,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TimeStats {
+    pub min_us: u64,
+    pub max_us: u64,
+    pub mean_us: f64,
+    pub median_us: u64,
+    pub p95_us: u64,
+    pub p99_us: u64,
+}
+
 pub fn save_results(
     results: &[BenchmarkResult],
     output_dir: &Path,
@@ -100,7 +110,7 @@ pub fn print_summary(results: &[BenchmarkResult]) {
     println!("  Failed (errors): {}", summary.failed);
     println!("  Convergence rate: {:.1}%", summary.convergence_rate * 100.0);
 
-    println!("\nBy Strategy:");
+    println!("\nBy Strategy (Iterations):");
     println!(
         "  {:<16} {:>8} {:>10} {:>12} {:>8} {:>8} {:>8} {:>8} {:>8}",
         "Strategy", "Total", "Converged", "Not Conv", "Min", "Mean", "Median", "P95", "P99"
@@ -110,7 +120,7 @@ pub fn print_summary(results: &[BenchmarkResult]) {
     let mut strategies: Vec<_> = summary.by_strategy.iter().collect();
     strategies.sort_by_key(|(name, _)| name.to_string());
 
-    for (strategy, stats) in strategies {
+    for (strategy, stats) in &strategies {
         if stats.converged > 0 {
             println!(
                 "  {:<16} {:>8} {:>10} {:>12} {:>8} {:>8.1} {:>8} {:>8} {:>8}",
@@ -130,6 +140,31 @@ pub fn print_summary(results: &[BenchmarkResult]) {
                 strategy, stats.total, stats.converged, stats.not_converged, "N/A"
             );
         }
+    }
+
+    // Print elapsed time statistics by strategy
+    println!("\nBy Strategy (Elapsed Time in microseconds):");
+    println!(
+        "  {:<16} {:>10} {:>10} {:>10} {:>10} {:>10}",
+        "Strategy", "Min", "Mean", "Median", "P95", "P99"
+    );
+    println!("  {}", "-".repeat(70));
+
+    // Calculate time stats per strategy
+    let time_stats = calculate_time_stats_by_strategy(results);
+    let mut time_strategies: Vec<_> = time_stats.iter().collect();
+    time_strategies.sort_by_key(|(name, _)| name.to_string());
+
+    for (strategy, stats) in time_strategies {
+        println!(
+            "  {:<16} {:>10} {:>10.0} {:>10} {:>10} {:>10}",
+            strategy,
+            stats.min_us,
+            stats.mean_us,
+            stats.median_us,
+            stats.p95_us,
+            stats.p99_us
+        );
     }
 
     println!("\nBy Protocol:");
@@ -480,4 +515,56 @@ fn calculate_iteration_stats(results: &[&BenchmarkResult]) -> IterationStats {
         p95,
         p99,
     }
+}
+
+fn calculate_time_stats_by_strategy(results: &[BenchmarkResult]) -> HashMap<String, TimeStats> {
+    let mut by_strategy: HashMap<String, Vec<u64>> = HashMap::new();
+
+    for result in results {
+        // Only include successful converged results
+        if result.status == "success" {
+            by_strategy
+                .entry(result.strategy.clone())
+                .or_default()
+                .push(result.elapsed_micros);
+        }
+    }
+
+    by_strategy
+        .into_iter()
+        .map(|(strategy, mut times)| {
+            times.sort_unstable();
+
+            let stats = if times.is_empty() {
+                TimeStats {
+                    min_us: 0,
+                    max_us: 0,
+                    mean_us: 0.0,
+                    median_us: 0,
+                    p95_us: 0,
+                    p99_us: 0,
+                }
+            } else {
+                let min_us = times[0];
+                let max_us = times[times.len() - 1];
+                let mean_us = times.iter().sum::<u64>() as f64 / times.len() as f64;
+                let median_us = times[times.len() / 2];
+                let p95_idx = ((times.len() as f64 * 0.95) as usize).min(times.len() - 1);
+                let p99_idx = ((times.len() as f64 * 0.99) as usize).min(times.len() - 1);
+                let p95_us = times[p95_idx];
+                let p99_us = times[p99_idx];
+
+                TimeStats {
+                    min_us,
+                    max_us,
+                    mean_us,
+                    median_us,
+                    p95_us,
+                    p99_us,
+                }
+            };
+
+            (strategy, stats)
+        })
+        .collect()
 }

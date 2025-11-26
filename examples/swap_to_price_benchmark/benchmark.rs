@@ -7,10 +7,11 @@ use tycho_common::models::token::Token;
 #[cfg(feature = "swap_to_price")]
 use tycho_simulation::swap_to_price::{
     strategies::{
-        BinaryInterpolation, BoundedLinearInterpolation, ExponentialProbing,
-        InterpolationSearchStrategy, LinearInterpolation, LogAmountBinarySearch,
-        LogPriceInterpolation, LogarithmicBisection, SecantMethod, SqrtPriceInterpolation,
-        TwoPhaseSearch,
+        BinaryInterpolation, BoundedLinearInterpolation, BrentStrategy, ExponentialProbing,
+        InterpolationSearchStrategy, IqiStrategy, LinearInterpolation, LogAmountBinarySearch,
+        LogPriceInterpolation, LogarithmicBisection, NewtonCentralStrategy,
+        PiecewiseLinearStrategy, QuadraticRegressionStrategy, SecantMethod,
+        SqrtPriceInterpolation, TwoPhaseSearch, WeightedRegressionStrategy,
     },
     SwapToPriceStrategy, SWAP_TO_PRICE_MAX_ITERATIONS, SWAP_TO_PRICE_TOLERANCE,
 };
@@ -65,24 +66,38 @@ pub async fn run_benchmark(
         const DEBUG_POOL_FILTER: Option<&str> = None;
 
         // Define all strategies to benchmark
-        // DEBUG: Testing new strategies
         let strategies: Vec<(&str, Box<dyn SwapToPriceStrategy>)> = vec![
-            (
-                "log_price",
-                Box::new(InterpolationSearchStrategy::new(LogPriceInterpolation)),
-            ),
+            // Baseline: best interpolation strategy
             (
                 "log_amount",
                 Box::new(InterpolationSearchStrategy::new(LogAmountBinarySearch)),
             ),
+            // 3-point history-based strategies
             (
-                "secant",
-                Box::new(InterpolationSearchStrategy::new(SecantMethod)),
+                "iqi",
+                Box::new(IqiStrategy),
             ),
             (
-                "two_phase",
-                Box::new(InterpolationSearchStrategy::new(TwoPhaseSearch)),
+                "brent",
+                Box::new(BrentStrategy),
             ),
+            (
+                "newton_cd",
+                Box::new(NewtonCentralStrategy),
+            ),
+            // Full-history strategies
+            (
+                "quad_regr",
+                Box::new(QuadraticRegressionStrategy),
+            ),
+            (
+                "weighted_regr",
+                Box::new(WeightedRegressionStrategy::default()),
+            ),
+            // (
+            //     "piecewise",
+            //     Box::new(PiecewiseLinearStrategy),
+            // ),
         ];
 
         println!("Testing {} strategies: {}", strategies.len(),
