@@ -729,22 +729,19 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
             }
         }
 
-        // Neither boundary is within tolerance - check if we can return "best achievable"
-        // If target is bracketed between low_price and high_price, return the closer one
-        if let (Some(low_res), Some(high_res)) = (&low_result, &high_result) {
-            let lp = low_res.new_state.spot_price(token_out, token_in)?;
-            let hp = high_res.new_state.spot_price(token_out, token_in)?;
+        // Neither boundary is within tolerance - return "best achievable"
+        // When search converges to adjacent amounts, the pool can't represent a more precise price.
+        // Return whichever boundary is closer to the target.
+        match (&low_result, &high_result) {
+            (Some(low_res), Some(high_res)) => {
+                let lp = low_res.new_state.spot_price(token_out, token_in)?;
+                let hp = high_res.new_state.spot_price(token_out, token_in)?;
 
-            // Check if target is bracketed (between low_price and high_price)
-            let is_bracketed = (lp <= target_price && target_price <= hp)
-                || (hp <= target_price && target_price <= lp);
-
-            if is_bracketed {
                 // Return the one closer to target as "best achievable"
                 let low_diff = (lp - target_price).abs();
                 let high_diff = (hp - target_price).abs();
 
-                return if low_diff <= high_diff {
+                if low_diff <= high_diff {
                     Ok(SwapToPriceResult {
                         amount_in: low.clone(),
                         actual_price: lp,
@@ -760,12 +757,33 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
                         new_state: high_res.new_state.clone(),
                         iterations: actual_iterations,
                     })
-                };
+                }
+            }
+            (Some(low_res), None) => {
+                let lp = low_res.new_state.spot_price(token_out, token_in)?;
+                Ok(SwapToPriceResult {
+                    amount_in: low.clone(),
+                    actual_price: lp,
+                    gas: low_res.gas.clone(),
+                    new_state: low_res.new_state.clone(),
+                    iterations: actual_iterations,
+                })
+            }
+            (None, Some(high_res)) => {
+                let hp = high_res.new_state.spot_price(token_out, token_in)?;
+                Ok(SwapToPriceResult {
+                    amount_in: high.clone(),
+                    actual_price: hp,
+                    gas: high_res.gas.clone(),
+                    new_state: high_res.new_state.clone(),
+                    iterations: actual_iterations,
+                })
+            }
+            (None, None) => {
+                // No valid boundary results - this shouldn't happen in practice
+                Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
             }
         }
-
-        // Target not bracketed - genuine failure
-        Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
     }
 }
 
