@@ -66,7 +66,7 @@ fn find_latest_snapshot(dir: &PathBuf) -> Result<PathBuf, Box<dyn std::error::Er
         .filter(|entry| {
             entry.path().extension()
                 .and_then(|s| s.to_str())
-                .map(|s| s == "json")
+                .map(|s| s == "bin")
                 .unwrap_or(false)
                 && entry.file_name().to_str()
                     .map(|s| s.starts_with("snapshot_"))
@@ -101,7 +101,7 @@ struct Cli {
 enum Commands {
     /// Create a FeedMessage snapshot
     Snapshot {
-        /// Output folder for snapshot (will create snapshot_<block>.json)
+        /// Output folder for snapshot (will create snapshot_<block>.bin)
         #[arg(long, default_value = "examples/swap_to_price_benchmark/data")]
         output_folder: PathBuf,
 
@@ -114,7 +114,7 @@ enum Commands {
         api_key: Option<String>,
 
         /// Minimum TVL filter (ETH)
-        #[arg(long, default_value = "50")]
+        #[arg(long, default_value = "20")]
         min_tvl: f64,
 
         /// Maximum number of pools per protocol to include in snapshot

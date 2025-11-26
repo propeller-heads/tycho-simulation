@@ -313,13 +313,13 @@ pub async fn save_snapshot(
     }
 
     // Build filename with block number
-    let filename = format!("snapshot_{}.json", block_number);
+    let filename = format!("snapshot_{}.bin", block_number);
     let output_path = output_folder.join(&filename);
 
-    // Serialize to JSON
+    // Serialize to MessagePack (faster than JSON, good serde compatibility)
     info!("Saving snapshot to {}...", output_path.display());
     let file = File::create(&output_path)?;
-    serde_json::to_writer_pretty(file, &snapshot)?;
+    rmp_serde::encode::write(&mut std::io::BufWriter::new(file), &snapshot)?;
 
     info!("Snapshot saved successfully!");
 
@@ -329,13 +329,13 @@ pub async fn save_snapshot(
     Ok((snapshot, output_path))
 }
 
-/// Loads a snapshot from JSON and decodes it into protocol states.
+/// Loads a snapshot from bincode and decodes it into protocol states.
 ///
-/// This function deserializes a `Snapshot` from JSON, uses the embedded tokens and protocols
+/// This function deserializes a `Snapshot` from bincode, uses the embedded tokens and protocols
 /// to configure a decoder, and returns all decoded states ready to use.
 ///
 /// # Arguments
-/// * `snapshot_path` - Path to the snapshot JSON file
+/// * `snapshot_path` - Path to the snapshot .bin file
 ///
 /// # Returns
 /// `LoadedSnapshot` containing decoded states, components, and metadata
@@ -344,9 +344,9 @@ pub async fn load_snapshot(
 ) -> Result<LoadedSnapshot, Box<dyn std::error::Error>> {
     info!("Loading snapshot from {}...", snapshot_path.display());
 
-    // Deserialize Snapshot from JSON
+    // Deserialize Snapshot from bincode (much faster than JSON)
     let file = File::open(snapshot_path)?;
-    let snapshot: Snapshot = serde_json::from_reader(file)?;
+    let snapshot: Snapshot = bincode::deserialize_from(file)?;
 
     info!("Loaded snapshot:");
     info!("  Block: {}", snapshot.metadata.block_number);

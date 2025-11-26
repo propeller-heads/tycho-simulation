@@ -50,6 +50,7 @@ alloy = { version = "1.0.30", features = ["providers", "signer-local", "rpc-type
 # Serialization/Deserialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+rmp-serde = { version = "1.3", optional = true }
 uuid = { version = "1.4.1", features = ["serde", "v4", "fast-rng", "macro-diagnostics"] }
 hex = "0.4.3"
 chrono = { version = "0.4.26", features = ["serde"] }
@@ -136,11 +137,15 @@ tracing-appender = "0.2.3"
 [features]
 default = ["evm", "rfq"]
 network_tests = []
-swap_to_price = []
+swap_to_price = ["dep:rmp-serde"]
 evm = [
     "dep:foundry-config", "dep:foundry-evm", "dep:revm", "dep:revm-inspectors", "dep:alloy",
 ]
 rfq = ["dep:reqwest", "dep:async-trait", "dep:tokio-tungstenite", "dep:async-stream", "dep:http", "dep:prost"]
+
+[[example]]
+name = "swap_to_price_benchmark"
+required-features = ["swap_to_price", "evm"]
 
 [profile.bench]
 debug = true
