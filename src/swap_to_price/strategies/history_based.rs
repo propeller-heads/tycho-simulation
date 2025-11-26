@@ -188,7 +188,7 @@ where
             high_price = price;
         }
 
-        // Check for convergence
+        // Check for convergence to adjacent amounts
         if &high - &low <= BigUint::from(1u32) {
             break;
         }
@@ -235,19 +235,52 @@ where
         }
     }
 
-    // Neither boundary is within tolerance - return "best achievable"
-    // When search converges to adjacent amounts, the pool can't represent a more precise price.
-    // Return whichever boundary is closer to the target.
+    // Neither boundary is within tolerance.
+    // Only return "best achievable" if target is BRACKETED (low_price < target < high_price).
+    // If target is not bracketed, the algorithm converged to the wrong region - that's a failure.
+
     match (&low_result, &high_result) {
         (Some(low_res), Some(high_res)) => {
             let lp = low_res.new_state.spot_price(token_out, token_in)?;
             let hp = high_res.new_state.spot_price(token_out, token_in)?;
 
-            // Return the one closer to target as "best achievable"
-            let low_diff = (lp - target_price).abs();
-            let high_diff = (hp - target_price).abs();
+            // Check if target is bracketed between low_price and high_price
+            let is_bracketed = (lp <= target_price && target_price <= hp)
+                || (hp <= target_price && target_price <= lp);
 
-            if low_diff <= high_diff {
+            if is_bracketed {
+                // Target is bracketed - return the closer boundary as "best achievable"
+                // This is a TRUE pool precision limitation
+                let low_diff = (lp - target_price).abs();
+                let high_diff = (hp - target_price).abs();
+
+                if low_diff <= high_diff {
+                    Ok(SwapToPriceResult {
+                        amount_in: low.clone(),
+                        actual_price: lp,
+                        gas: low_res.gas.clone(),
+                        new_state: low_res.new_state.clone(),
+                        iterations: actual_iterations,
+                    })
+                } else {
+                    Ok(SwapToPriceResult {
+                        amount_in: high.clone(),
+                        actual_price: hp,
+                        gas: high_res.gas.clone(),
+                        new_state: high_res.new_state.clone(),
+                        iterations: actual_iterations,
+                    })
+                }
+            } else {
+                // Target is NOT bracketed - algorithm converged to wrong region
+                // This is a convergence failure, not a pool precision issue
+                Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
+            }
+        }
+        (Some(low_res), None) => {
+            // Only have low boundary - check if it's usable
+            let lp = low_res.new_state.spot_price(token_out, token_in)?;
+            if within_tolerance(lp, target_price) {
                 Ok(SwapToPriceResult {
                     amount_in: low.clone(),
                     actual_price: lp,
@@ -256,6 +289,13 @@ where
                     iterations: actual_iterations,
                 })
             } else {
+                Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
+            }
+        }
+        (None, Some(high_res)) => {
+            // Only have high boundary - check if it's usable
+            let hp = high_res.new_state.spot_price(token_out, token_in)?;
+            if within_tolerance(hp, target_price) {
                 Ok(SwapToPriceResult {
                     amount_in: high.clone(),
                     actual_price: hp,
@@ -263,30 +303,12 @@ where
                     new_state: high_res.new_state.clone(),
                     iterations: actual_iterations,
                 })
+            } else {
+                Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
             }
         }
-        (Some(low_res), None) => {
-            let lp = low_res.new_state.spot_price(token_out, token_in)?;
-            Ok(SwapToPriceResult {
-                amount_in: low.clone(),
-                actual_price: lp,
-                gas: low_res.gas.clone(),
-                new_state: low_res.new_state.clone(),
-                iterations: actual_iterations,
-            })
-        }
-        (None, Some(high_res)) => {
-            let hp = high_res.new_state.spot_price(token_out, token_in)?;
-            Ok(SwapToPriceResult {
-                amount_in: high.clone(),
-                actual_price: hp,
-                gas: high_res.gas.clone(),
-                new_state: high_res.new_state.clone(),
-                iterations: actual_iterations,
-            })
-        }
         (None, None) => {
-            // No valid boundary results - this shouldn't happen in practice
+            // No valid boundary results
             Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
         }
     }
