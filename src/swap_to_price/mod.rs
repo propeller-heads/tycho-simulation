@@ -11,7 +11,7 @@ use tycho_common::{
     simulation::{errors::SimulationError, protocol_sim::ProtocolSim},
 };
 
-pub const SWAP_TO_PRICE_TOLERANCE: f64 = 0.0001; // 0.01% tolerance
+pub const SWAP_TO_PRICE_TOLERANCE: f64 = 0.00001; // 0.001% tolerance
 pub const SWAP_TO_PRICE_MAX_ITERATIONS: u32 = 256;
 
 /// Check if actual price is within tolerance of target price

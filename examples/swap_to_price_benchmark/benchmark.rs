@@ -48,8 +48,8 @@ pub struct BenchmarkResult {
 pub async fn run_benchmark(
     snapshot_path: &Path,
 ) -> Result<Vec<BenchmarkResult>, Box<dyn std::error::Error>> {
-    // Load snapshot using new format
-    let loaded = snapshot::load_snapshot(snapshot_path).await?;
+    // Load and process snapshot in one step
+    let loaded = snapshot::load_and_process_snapshot(snapshot_path).await?;
 
     println!("Loaded snapshot with {} pools", loaded.states.len());
     println!("Block: {}", loaded.metadata.block_number);
@@ -121,6 +121,15 @@ pub async fn run_benchmark(
                             continue;
                         }
                     };
+
+                    // Skip if spot price is 0 (invalid/weird state)
+                    if (spot_price - 0.0).abs() < f64::EPSILON {
+                        println!(
+                            "  ⚠ Spot price is approximately 0 for {} -> {}, skipping",
+                            token_in.symbol, token_out.symbol
+                        );
+                        continue;
+                    }
 
                     // Use scientific notation for very small or very large numbers
                     let spot_display = if spot_price.abs() < 0.0001 || spot_price.abs() > 1e9 {

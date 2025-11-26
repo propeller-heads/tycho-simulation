@@ -10,35 +10,35 @@ pub const TARGET_TOKENS: &[&str] = &[
     "0xdac17f958d2ee523a2206206994597c13d831ec7", // USDT
     "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", // WETH
     "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", // WBTC
-    "0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6", // WBTC PoS
-    "0xae7ab96520de3a18e5e111b5eaab095312d7fe84", // stETH
-    "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf", // cbBTC
-    "0x4c9edd5852cd905f086c759e8383e09bff1e68b3", // USDe
-    "0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0", // wstETH
-    "0xdc035d45d973e3ec169d2276ddab16f1e407384f", // USDS
-    "0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee", // weETH
-    "0x9d39a5de30e57443bff2a8307a4256c8797a3497", // sUSDe
-    "0x6c3ea9036406852006290770bedfcaba0e23a0e8", // PYUSD
     "0x6b175474e89094c44da98b954eedeac495271d0f", // DAI
-    "0x8d0d000ee44948fc98c9b98a4fa4921476f08b0d", // USD1
-    "0x5ee5bf7ae06d1be5997a1a72006fe6c607ec6de8", // aEthWBTC
-    "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd", // sUSDS
-    "0x18084fba666a33d37592fa2633fd49a74dd93a88", // tBTC
-    "0xad55aebc9b8c03fc43cd9f62260391c13c23e7c0", // cUSDO
-    "0x40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f", // GHO
-    "0x23878914efe38d27c4d67ab83ed1b93a74d4086a", // aEthUSDT
-    "0x8292bb45bf1ee4d140127049757c2e0ff06317ed", // RLUSD
-    "0x4d5f47fa6a74757f35c14fd3a6ef8e3c9bc514e8", // aEthWETH
-    "0x4956b52ae2ff65d74ca2d61207523288e4528f96", // RLP
-    "0xda5e1988097297dcdc1f90d4dfe7909e847cbef6", // WLFI
-    "0x98c23e9d8f34fefb1b7bd6a91b7ff122f4e16f5c", // aEthUSDC
-    "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9", // AAVE
-    "0x83f20f44975d03b1b09e64809b757c47f942beea", // sDAI
-    "0xe07f9d810a48ab5c3c914ba3ca53af14e4491e8a", // GYD
-    "0xba100000625a3754423978a60c9317c58a424e3d", // BAL
-    "0x7cfadfd5645b50be87d546f42699d863648251ad", // waUSDCn
-    "0xdf7837de1f2fa4631d716cf2502f8b230f1dcc32", // TEL
-    "0x4e107a0000db66f0e9fd2039288bf811dd1f9c74", // VAL
+    // "0x1bfd67037b42cf73acf2047067bd4f2c47d9bfd6", // WBTC PoS
+    // "0xae7ab96520de3a18e5e111b5eaab095312d7fe84", // stETH
+    // "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf", // cbBTC
+    // "0x4c9edd5852cd905f086c759e8383e09bff1e68b3", // USDe
+    // "0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0", // wstETH
+    // "0xdc035d45d973e3ec169d2276ddab16f1e407384f", // USDS
+    // "0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee", // weETH
+    // "0x9d39a5de30e57443bff2a8307a4256c8797a3497", // sUSDe
+    // "0x6c3ea9036406852006290770bedfcaba0e23a0e8", // PYUSD
+    // "0x8d0d000ee44948fc98c9b98a4fa4921476f08b0d", // USD1
+    // "0x5ee5bf7ae06d1be5997a1a72006fe6c607ec6de8", // aEthWBTC
+    // "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd", // sUSDS
+    // "0x18084fba666a33d37592fa2633fd49a74dd93a88", // tBTC
+    // "0xad55aebc9b8c03fc43cd9f62260391c13c23e7c0", // cUSDO
+    // "0x40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f", // GHO
+    // "0x23878914efe38d27c4d67ab83ed1b93a74d4086a", // aEthUSDT
+    // "0x8292bb45bf1ee4d140127049757c2e0ff06317ed", // RLUSD
+    // "0x4d5f47fa6a74757f35c14fd3a6ef8e3c9bc514e8", // aEthWETH
+    // "0x4956b52ae2ff65d74ca2d61207523288e4528f96", // RLP
+    // "0xda5e1988097297dcdc1f90d4dfe7909e847cbef6", // WLFI
+    // "0x98c23e9d8f34fefb1b7bd6a91b7ff122f4e16f5c", // aEthUSDC
+    // "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9", // AAVE
+    // "0x83f20f44975d03b1b09e64809b757c47f942beea", // sDAI
+    // "0xe07f9d810a48ab5c3c914ba3ca53af14e4491e8a", // GYD
+    // "0xba100000625a3754423978a60c9317c58a424e3d", // BAL
+    // "0x7cfadfd5645b50be87d546f42699d863648251ad", // waUSDCn
+    // "0xdf7837de1f2fa4631d716cf2502f8b230f1dcc32", // TEL
+    // "0x4e107a0000db66f0e9fd2039288bf811dd1f9c74", // VAL
 ];
 
 pub const TARGET_PROTOCOLS: &[&str] = &[
@@ -48,11 +48,12 @@ pub const TARGET_PROTOCOLS: &[&str] = &[
     "pancakeswap_v2",
     "pancakeswap_v3",
     "uniswap_v4",
-    // "uniswap_v4_hooks", // Not working properly
+    "uniswap_v4_hooks",
+    "ekubo_v2",
     // "balancer_v3", // Currently throwing Unknown extractor
     "vm:balancer_v2",
     "vm:curve",
-    // "vm:maverick_v2", // not enough pools in snapshot
+    "vm:maverick_v2",
 ];
 
 /// Finds the latest snapshot file in a directory
@@ -114,7 +115,7 @@ enum Commands {
         api_key: Option<String>,
 
         /// Minimum TVL filter (ETH)
-        #[arg(long, default_value = "20")]
+        #[arg(long, default_value = "40")]
         min_tvl: f64,
 
         /// Maximum number of pools per protocol to include in snapshot
