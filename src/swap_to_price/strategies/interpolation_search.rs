@@ -625,14 +625,13 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
         let mut high_price = limit_price;
         let mut actual_iterations = 0;
 
+        // Track the best result seen during the entire search
+        let mut best_seen_amount = BigUint::from(0u32);
+        let mut best_seen_price = spot_price;
+        let mut best_seen_error = (spot_price - target_price).abs() / target_price;
+
         for iterations in 1..=max_iterations {
             actual_iterations = iterations;
-
-            // // DEBUG: Log bounds
-            // eprintln!(
-            //     "[iter {}] low={}, low_price={:.6e}, high={}, high_price={:.6e}, target={:.6e}",
-            //     iterations, &low, low_price, &high, high_price, target_price
-            // );
 
             // Calculate interpolated midpoint
             let mid = self
@@ -645,13 +644,8 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
                     target_price,
                 );
 
-            // // DEBUG: Log interpolate result
-            // eprintln!("[iter {}] mid={}", iterations, &mid);
-
             // Ensure we make progress
             if mid <= low || mid >= high {
-                // No progress possible, try boundaries
-                // eprintln!("[iter {}] NO PROGRESS: mid <= low ({}) or mid >= high ({})", iterations, mid <= low, mid >= high);
                 break;
             }
 
@@ -659,8 +653,13 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
             let result = state.get_amount_out(mid.clone(), token_in, token_out)?;
             let price = result.new_state.spot_price(token_out, token_in)?;
 
-            // // DEBUG: Log price result
-            // eprintln!("[iter {}] price={:.6e}, diff from target={:.6e}", iterations, price, price - target_price);
+            // Track the best result seen
+            let error = (price - target_price).abs() / target_price;
+            if error < best_seen_error {
+                best_seen_amount = mid.clone();
+                best_seen_price = price;
+                best_seen_error = error;
+            }
 
             // Check if we're within tolerance
             if within_tolerance(price, target_price) {
@@ -780,8 +779,25 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
                 })
             }
             (None, None) => {
-                // No valid boundary results - this shouldn't happen in practice
-                Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
+                // No valid boundary results - use best_seen from the loop
+                let low_error = (low_price - target_price).abs() / target_price;
+                let high_error = (high_price - target_price).abs() / target_price;
+                let boundary_best_error = low_error.min(high_error);
+                let (final_best_price, final_best_amount, final_error) =
+                    if best_seen_error < boundary_best_error {
+                        (best_seen_price, best_seen_amount.clone(), best_seen_error)
+                    } else if low_error <= high_error {
+                        (low_price, low.clone(), low_error)
+                    } else {
+                        (high_price, high.clone(), high_error)
+                    };
+                Err(SwapToPriceError::ConvergenceFailure {
+                    iterations: actual_iterations,
+                    target_price,
+                    best_price: final_best_price,
+                    error_bps: final_error * 10000.0,
+                    amount: final_best_amount.to_string(),
+                })
             }
         }
     }

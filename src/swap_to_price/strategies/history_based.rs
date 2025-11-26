@@ -145,6 +145,12 @@ where
 
     let mut actual_iterations = 0;
 
+    // Track the best result seen during the entire search
+    // (Some algorithms may oscillate and move away from good points)
+    let mut best_seen_amount = BigUint::from(0u32);
+    let mut best_seen_price = spot_price;
+    let mut best_seen_error = (spot_price - target_price).abs() / target_price;
+
     for iterations in 1..=max_iterations {
         actual_iterations = iterations;
 
@@ -159,6 +165,14 @@ where
         // Calculate price at mid
         let result = state.get_amount_out(mid.clone(), token_in, token_out)?;
         let price = result.new_state.spot_price(token_out, token_in)?;
+
+        // Track the best result seen
+        let error = (price - target_price).abs() / target_price;
+        if error < best_seen_error {
+            best_seen_amount = mid.clone();
+            best_seen_price = price;
+            best_seen_error = error;
+        }
 
         // Add to history
         if let Some(mid_f64) = amount_to_f64(&mid) {
@@ -274,7 +288,25 @@ where
             } else {
                 // Target is NOT bracketed - algorithm converged to wrong region
                 // This is a convergence failure, not a pool precision issue
-                Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
+                // Use best_seen if it's better than final boundaries
+                let low_diff = (lp - target_price).abs() / target_price;
+                let high_diff = (hp - target_price).abs() / target_price;
+                let boundary_best_error = low_diff.min(high_diff);
+                let (final_best_price, final_best_amount, final_error) =
+                    if best_seen_error < boundary_best_error {
+                        (best_seen_price, best_seen_amount.clone(), best_seen_error)
+                    } else if low_diff <= high_diff {
+                        (lp, low.clone(), low_diff)
+                    } else {
+                        (hp, high.clone(), high_diff)
+                    };
+                Err(SwapToPriceError::ConvergenceFailure {
+                    iterations: actual_iterations,
+                    target_price,
+                    best_price: final_best_price,
+                    error_bps: final_error * 10000.0,
+                    amount: final_best_amount.to_string(),
+                })
             }
         }
         (Some(low_res), None) => {
@@ -289,7 +321,21 @@ where
                     iterations: actual_iterations,
                 })
             } else {
-                Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
+                // Use best_seen if it's better than the boundary
+                let boundary_error = (lp - target_price).abs() / target_price;
+                let (final_best_price, final_best_amount, final_error) =
+                    if best_seen_error < boundary_error {
+                        (best_seen_price, best_seen_amount.clone(), best_seen_error)
+                    } else {
+                        (lp, low.clone(), boundary_error)
+                    };
+                Err(SwapToPriceError::ConvergenceFailure {
+                    iterations: actual_iterations,
+                    target_price,
+                    best_price: final_best_price,
+                    error_bps: final_error * 10000.0,
+                    amount: final_best_amount.to_string(),
+                })
             }
         }
         (None, Some(high_res)) => {
@@ -304,12 +350,44 @@ where
                     iterations: actual_iterations,
                 })
             } else {
-                Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
+                // Use best_seen if it's better than the boundary
+                let boundary_error = (hp - target_price).abs() / target_price;
+                let (final_best_price, final_best_amount, final_error) =
+                    if best_seen_error < boundary_error {
+                        (best_seen_price, best_seen_amount.clone(), best_seen_error)
+                    } else {
+                        (hp, high.clone(), boundary_error)
+                    };
+                Err(SwapToPriceError::ConvergenceFailure {
+                    iterations: actual_iterations,
+                    target_price,
+                    best_price: final_best_price,
+                    error_bps: final_error * 10000.0,
+                    amount: final_best_amount.to_string(),
+                })
             }
         }
         (None, None) => {
-            // No valid boundary results
-            Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
+            // No valid boundary results - use best_seen from the loop
+            // (which may be better than the final boundary prices)
+            let low_error = (low_price - target_price).abs() / target_price;
+            let high_error = (high_price - target_price).abs() / target_price;
+            let boundary_best_error = low_error.min(high_error);
+            let (final_best_price, final_best_amount, final_error) =
+                if best_seen_error < boundary_best_error {
+                    (best_seen_price, best_seen_amount.clone(), best_seen_error)
+                } else if low_error <= high_error {
+                    (low_price, low.clone(), low_error)
+                } else {
+                    (high_price, high.clone(), high_error)
+                };
+            Err(SwapToPriceError::ConvergenceFailure {
+                iterations: actual_iterations,
+                target_price,
+                best_price: final_best_price,
+                error_bps: final_error * 10000.0,
+                amount: final_best_amount.to_string(),
+            })
         }
     }
 }

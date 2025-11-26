@@ -81,7 +81,6 @@ pub async fn run_benchmark(
             ("chandrupatla", Box::new(ChandrupatlaStrategy)),
             ("newton_cd", Box::new(NewtonCentralStrategy)),
             ("newton_log", Box::new(NewtonLogStrategy)),
-            ("convex", Box::new(ConvexSearchStrategy)),
             ("quad_regr", Box::new(QuadraticRegressionStrategy)),
         ];
 

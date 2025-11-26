@@ -70,8 +70,16 @@ pub enum SwapToPriceError {
         searchable_price: f64,
         max_iterations: u32,
     },
-    #[error("Failed to converge within {0} iterations")]
-    ConvergenceFailure(u32),
+    #[error("Failed to converge within {iterations} iterations. Target: {target_price:.6e}, best: {best_price:.6e} (diff: {error_bps:.2}bps), amount: {amount}")]
+    ConvergenceFailure {
+        iterations: u32,
+        target_price: f64,
+        best_price: f64,
+        /// Difference from target in basis points
+        error_bps: f64,
+        /// The amount that produced the best_price
+        amount: String,
+    },
     #[error("Simulation error: {0}")]
     SimulationError(#[from] SimulationError),
 }
