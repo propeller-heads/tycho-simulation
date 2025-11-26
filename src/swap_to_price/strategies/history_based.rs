@@ -889,3 +889,363 @@ impl SwapToPriceStrategy for PiecewiseLinearStrategy {
         })
     }
 }
+
+// =============================================================================
+// Strategy 7: IqiV2 - Better Point Selection
+// =============================================================================
+
+/// Improved IQI strategy with better point selection
+///
+/// Instead of using the last 3 points, selects points that bracket the target:
+/// - At least one point with price below target
+/// - At least one point with price above target
+/// - Third point closest to target on the side with fewer points
+pub struct IqiV2Strategy;
+
+impl IqiV2Strategy {
+    /// Select 3 points that bracket the target well for quadratic fit
+    fn select_bracketing_points<'a>(
+        history: &'a [HistoryPoint],
+        target: f64,
+    ) -> Option<(&'a HistoryPoint, &'a HistoryPoint, &'a HistoryPoint)> {
+        // Separate points by whether price is below or above target
+        let mut below: Vec<_> = history.iter().filter(|p| p.price < target && p.amount_f64 > 0.0).collect();
+        let mut above: Vec<_> = history.iter().filter(|p| p.price >= target && p.amount_f64 > 0.0).collect();
+
+        // Need at least one on each side
+        if below.is_empty() || above.is_empty() {
+            return None;
+        }
+
+        // Sort by distance to target
+        below.sort_by(|a, b| {
+            (target - a.price).abs().partial_cmp(&(target - b.price).abs()).unwrap()
+        });
+        above.sort_by(|a, b| {
+            (a.price - target).abs().partial_cmp(&(b.price - target).abs()).unwrap()
+        });
+
+        // Pick: closest below, closest above, and one more from the larger side
+        let p_below = below[0];
+        let p_above = above[0];
+
+        let p_third = if below.len() > above.len() && below.len() > 1 {
+            below[1]
+        } else if above.len() > 1 {
+            above[1]
+        } else if below.len() > 1 {
+            below[1]
+        } else {
+            return None; // Only 2 usable points
+        };
+
+        // Return sorted by amount for consistent IQI calculation
+        let mut points = [p_below, p_above, p_third];
+        points.sort_by(|a, b| a.amount_f64.partial_cmp(&b.amount_f64).unwrap());
+
+        Some((points[0], points[1], points[2]))
+    }
+}
+
+impl SwapToPriceStrategy for IqiV2Strategy {
+    fn swap_to_price(
+        &self,
+        state: &dyn ProtocolSim,
+        target_price: f64,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<SwapToPriceResult, SwapToPriceError> {
+        run_search(state, target_price, token_in, token_out, |history, low, _low_price, high, _high_price, target| {
+            let fallback = geometric_mean(low, high);
+
+            // Need at least 3 points
+            if history.len() < 3 {
+                return fallback;
+            }
+
+            // Try to select bracketing points
+            if let Some((p1, p2, p3)) = Self::select_bracketing_points(history, target) {
+                if let Some(estimate) = IqiStrategy::iqi(
+                    p1.amount_f64, p1.price,
+                    p2.amount_f64, p2.price,
+                    p3.amount_f64, p3.price,
+                    target,
+                ) {
+                    if let Some(amount) = f64_to_amount(estimate) {
+                        if let Some(safe) = safe_next_amount(amount, low, high) {
+                            return safe;
+                        }
+                    }
+                }
+            }
+
+            fallback
+        })
+    }
+}
+
+// =============================================================================
+// Strategy 8: Chandrupatla - "Try if it looks good" policy
+// =============================================================================
+
+/// Chandrupatla's method: selective IQI with geometric criterion
+///
+/// Unlike Brent which always tries IQI then checks, Chandrupatla first
+/// checks if IQI is likely to help based on the geometry of the points.
+/// This avoids wasting iterations on bad IQI estimates.
+pub struct ChandrupatlaStrategy;
+
+impl ChandrupatlaStrategy {
+    /// Decide whether to use IQI based on Chandrupatla's criterion
+    ///
+    /// Returns true if IQI is likely to give a good estimate
+    fn should_use_iqi(low_p: f64, mid_p: f64, high_p: f64, target: f64) -> bool {
+        // Normalize to [0, 1] interval
+        let range = high_p - low_p;
+        if range.abs() < f64::EPSILON {
+            return false;
+        }
+
+        let t = (target - low_p) / range;
+        let phi = (mid_p - low_p) / range;
+
+        // Chandrupatla's criterion: use IQI if the midpoint is positioned
+        // such that interpolation won't overshoot
+        // The key insight: if phi is close to t, linear interpolation is good
+        // If phi is far from t but on the same side, IQI might overshoot
+
+        // Use bisection if:
+        // 1. phi and t are on opposite sides of 0.5 (midpoint poorly placed)
+        // 2. phi is very close to 0 or 1 (degenerate case)
+        if phi < f64::EPSILON || phi > 1.0 - f64::EPSILON {
+            return false;
+        }
+
+        // Chandrupatla's actual criterion based on quadratic vertex position
+        let xi = (t - phi) / (1.0 - phi);
+        let use_iqi = xi.abs() <= 0.5 && (1.0 - xi).abs() <= 0.5;
+
+        use_iqi
+    }
+}
+
+impl SwapToPriceStrategy for ChandrupatlaStrategy {
+    fn swap_to_price(
+        &self,
+        state: &dyn ProtocolSim,
+        target_price: f64,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<SwapToPriceResult, SwapToPriceError> {
+        run_search(state, target_price, token_in, token_out, |history, low, low_price, high, high_price, target| {
+            let fallback = geometric_mean(low, high);
+            let low_f64 = amount_to_f64(low).unwrap_or(0.0);
+            let high_f64 = amount_to_f64(high).unwrap_or(f64::MAX);
+
+            // Need at least 3 points for IQI consideration
+            if history.len() >= 3 {
+                let n = history.len();
+                let p1 = &history[n - 3];
+                let p2 = &history[n - 2];
+                let p3 = &history[n - 1];
+
+                // Check Chandrupatla's criterion before trying IQI
+                if Self::should_use_iqi(low_price, p2.price, high_price, target) {
+                    if let Some(estimate) = IqiStrategy::iqi(
+                        p1.amount_f64, p1.price,
+                        p2.amount_f64, p2.price,
+                        p3.amount_f64, p3.price,
+                        target,
+                    ) {
+                        if estimate > low_f64 && estimate < high_f64 {
+                            if let Some(amount) = f64_to_amount(estimate) {
+                                if let Some(safe) = safe_next_amount(amount, low, high) {
+                                    return safe;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Try linear interpolation (secant) as fallback before geometric mean
+            if history.len() >= 2 {
+                let n = history.len();
+                let p1 = &history[n - 2];
+                let p2 = &history[n - 1];
+
+                let dp = p2.price - p1.price;
+                if dp.abs() > f64::EPSILON {
+                    let estimate = p1.amount_f64 + (target - p1.price) * (p2.amount_f64 - p1.amount_f64) / dp;
+                    if estimate.is_finite() && estimate > low_f64 && estimate < high_f64 {
+                        if let Some(amount) = f64_to_amount(estimate) {
+                            if let Some(safe) = safe_next_amount(amount, low, high) {
+                                return safe;
+                            }
+                        }
+                    }
+                }
+            }
+
+            fallback
+        })
+    }
+}
+
+// =============================================================================
+// Strategy 9: NewtonLog - Log-space derivative for exponential curves
+// =============================================================================
+
+/// Newton's method with log-space derivative estimation
+///
+/// AMM price curves are often exponential (price = k/x² for constant product).
+/// Using d(log p)/d(log a) instead of dp/da gives better estimates.
+pub struct NewtonLogStrategy;
+
+impl SwapToPriceStrategy for NewtonLogStrategy {
+    fn swap_to_price(
+        &self,
+        state: &dyn ProtocolSim,
+        target_price: f64,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<SwapToPriceResult, SwapToPriceError> {
+        run_search(state, target_price, token_in, token_out, |history, low, _low_price, high, _high_price, target| {
+            let fallback = geometric_mean(low, high);
+
+            // Need at least 3 points
+            if history.len() < 3 {
+                return fallback;
+            }
+
+            let n = history.len();
+            let p1 = &history[n - 3];
+            let p2 = &history[n - 2]; // Middle point - apply Newton here
+            let p3 = &history[n - 1];
+
+            // All values must be positive for log
+            if p1.amount_f64 <= 0.0 || p1.price <= 0.0 ||
+               p2.amount_f64 <= 0.0 || p2.price <= 0.0 ||
+               p3.amount_f64 <= 0.0 || p3.price <= 0.0 ||
+               target <= 0.0 {
+                return fallback;
+            }
+
+            // Log-space derivative: d(ln p) / d(ln a) = (a/p) * (dp/da)
+            // Estimate using central difference in log space
+            let log_a1 = p1.amount_f64.ln();
+            let log_a3 = p3.amount_f64.ln();
+            let log_p1 = p1.price.ln();
+            let log_p3 = p3.price.ln();
+
+            let d_log_a = log_a3 - log_a1;
+            let d_log_p = log_p3 - log_p1;
+
+            if d_log_a.abs() < f64::EPSILON {
+                return fallback;
+            }
+
+            // Log-space derivative (elasticity)
+            let elasticity = d_log_p / d_log_a;
+
+            if elasticity.abs() < f64::EPSILON {
+                return fallback;
+            }
+
+            // Newton step in log space
+            let log_a2 = p2.amount_f64.ln();
+            let log_p2 = p2.price.ln();
+            let log_target = target.ln();
+            let log_error = log_p2 - log_target;
+
+            let log_estimate = log_a2 - log_error / elasticity;
+            let estimate = log_estimate.exp();
+
+            if estimate.is_finite() && estimate > 0.0 {
+                if let Some(amount) = f64_to_amount(estimate) {
+                    if let Some(safe) = safe_next_amount(amount, low, high) {
+                        return safe;
+                    }
+                }
+            }
+
+            fallback
+        })
+    }
+}
+
+// =============================================================================
+// Strategy 10: ConvexSearch - AMM-aware convex interpolation
+// =============================================================================
+
+/// AMM-aware search exploiting convexity of price curves
+///
+/// For AMMs with convex price curves (constant product x*y=k):
+/// - Linear interpolation gives a LOWER bound for the root
+/// - Geometric mean gives an UPPER bound
+/// This strategy blends them based on the observed curvature.
+pub struct ConvexSearchStrategy;
+
+impl SwapToPriceStrategy for ConvexSearchStrategy {
+    fn swap_to_price(
+        &self,
+        state: &dyn ProtocolSim,
+        target_price: f64,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<SwapToPriceResult, SwapToPriceError> {
+        run_search(state, target_price, token_in, token_out, |history, low, low_price, high, high_price, target| {
+            let low_f64 = amount_to_f64(low).unwrap_or(0.0);
+            let high_f64 = amount_to_f64(high).unwrap_or(f64::MAX);
+
+            // Need valid bounds
+            if high_f64 <= low_f64 || high_price <= low_price {
+                return geometric_mean(low, high);
+            }
+
+            // Linear interpolation (lower bound for convex function root)
+            let linear = low_f64 + (target - low_price) * (high_f64 - low_f64) / (high_price - low_price);
+
+            // Geometric mean (upper bound for convex)
+            let geometric = (low_f64 * high_f64).sqrt();
+
+            // Estimate curvature from history if available
+            let blend = if history.len() >= 3 {
+                // Measure how "curved" the function is
+                // For a truly linear function, midpoint price would be average
+                // For convex, midpoint price < average
+                let n = history.len();
+                let mid = &history[n - 1];
+
+                let expected_linear_price = low_price + (mid.amount_f64 - low_f64) / (high_f64 - low_f64) * (high_price - low_price);
+                let actual_price = mid.price;
+
+                // Curvature estimate: how much does actual deviate from linear?
+                let curvature = (expected_linear_price - actual_price) / expected_linear_price;
+
+                // Blend: 0 = pure linear, 1 = pure geometric
+                // More curvature → more geometric
+                curvature.abs().min(1.0).max(0.0)
+            } else {
+                // Default: slight preference for geometric (AMMs are usually convex)
+                0.3
+            };
+
+            // Blend linear and geometric based on curvature
+            let estimate = linear * (1.0 - blend) + geometric * blend;
+
+            // Ensure within bounds
+            let clamped = estimate.max(low_f64 + 1.0).min(high_f64 - 1.0);
+
+            if clamped.is_finite() && clamped > 0.0 {
+                if let Some(amount) = f64_to_amount(clamped) {
+                    if let Some(safe) = safe_next_amount(amount, low, high) {
+                        return safe;
+                    }
+                }
+            }
+
+            geometric_mean(low, high)
+        })
+    }
+}

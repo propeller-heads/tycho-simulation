@@ -7,11 +7,12 @@ use tycho_common::models::token::Token;
 #[cfg(feature = "swap_to_price")]
 use tycho_simulation::swap_to_price::{
     strategies::{
-        BinaryInterpolation, BoundedLinearInterpolation, BrentStrategy, ExponentialProbing,
-        InterpolationSearchStrategy, IqiStrategy, LinearInterpolation, LogAmountBinarySearch,
-        LogPriceInterpolation, LogarithmicBisection, NewtonCentralStrategy,
-        PiecewiseLinearStrategy, QuadraticRegressionStrategy, SecantMethod,
-        SqrtPriceInterpolation, TwoPhaseSearch, WeightedRegressionStrategy,
+        BinaryInterpolation, BoundedLinearInterpolation, BrentStrategy, ChandrupatlaStrategy,
+        ConvexSearchStrategy, ExponentialProbing, InterpolationSearchStrategy, IqiStrategy,
+        IqiV2Strategy, LinearInterpolation, LogAmountBinarySearch, LogPriceInterpolation,
+        LogarithmicBisection, NewtonCentralStrategy, NewtonLogStrategy, PiecewiseLinearStrategy,
+        QuadraticRegressionStrategy, SecantMethod, SqrtPriceInterpolation, TwoPhaseSearch,
+        WeightedRegressionStrategy,
     },
     SwapToPriceStrategy, SWAP_TO_PRICE_MAX_ITERATIONS, SWAP_TO_PRICE_TOLERANCE,
 };
@@ -75,10 +76,13 @@ pub async fn run_benchmark(
                 Box::new(InterpolationSearchStrategy::new(LogAmountBinarySearch)),
             ),
             ("iqi", Box::new(IqiStrategy)),
+            ("iqi_v2", Box::new(IqiV2Strategy)),
             ("brent", Box::new(BrentStrategy)),
+            ("chandrupatla", Box::new(ChandrupatlaStrategy)),
             ("newton_cd", Box::new(NewtonCentralStrategy)),
+            ("newton_log", Box::new(NewtonLogStrategy)),
+            ("convex", Box::new(ConvexSearchStrategy)),
             ("quad_regr", Box::new(QuadraticRegressionStrategy)),
-            ("weighted_regr", Box::new(WeightedRegressionStrategy { decay: 0.7 })),
         ];
 
         println!("Testing {} strategies: {}", strategies.len(),
