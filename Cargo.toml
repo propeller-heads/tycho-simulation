@@ -136,6 +136,7 @@ tracing-appender = "0.2.3"
 [features]
 default = ["evm", "rfq"]
 network_tests = []
+swap_to_price = []
 evm = [
     "dep:foundry-config", "dep:foundry-evm", "dep:revm", "dep:revm-inspectors", "dep:alloy",
 ]
