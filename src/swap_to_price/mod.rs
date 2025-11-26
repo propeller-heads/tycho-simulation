@@ -11,7 +11,7 @@ use tycho_common::{
     simulation::{errors::SimulationError, protocol_sim::ProtocolSim},
 };
 
-pub const SWAP_TO_PRICE_TOLERANCE: f64 = 0.000001; // 0.0001% tolerance
+pub const SWAP_TO_PRICE_TOLERANCE: f64 = 0.00001; // 0.001%
 pub const SWAP_TO_PRICE_MAX_ITERATIONS: u32 = 100;
 
 /// Check if actual price is within tolerance of target price
@@ -24,18 +24,36 @@ pub fn within_tolerance(actual_price: f64, target_price: f64) -> bool {
 }
 
 /// Result of a swap_to_price operation
+///
+/// This result may represent either:
+/// - **Converged**: `actual_price` is within `SWAP_TO_PRICE_TOLERANCE` of target
+/// - **Best achievable**: `actual_price` is the closest the pool can represent
+///
+/// # Best Achievable Results
+///
+/// When a pool has limited price precision (e.g., stablecoin pairs on Curve),
+/// the search may converge to adjacent integer amounts where neither achieves
+/// the exact target price. In this case, the result with the price closest to
+/// the target is returned.
+///
+/// Callers can check if the result is within tolerance using:
+/// ```ignore
+/// use tycho_simulation::swap_to_price::within_tolerance;
+/// let is_exact = within_tolerance(result.actual_price, target_price);
+/// ```
 #[derive(Debug, Clone)]
 pub struct SwapToPriceResult {
     /// The amount of input token needed to achieve the target price
     pub amount_in: BigUint,
-    /// The actual final price achieved (may differ slightly from target)
+    /// The actual final price achieved.
+    /// May differ from target if pool precision limits convergence (best achievable).
+    /// Use `within_tolerance(actual_price, target_price)` to check if exact.
     pub actual_price: f64,
     /// Gas cost of the operation
     pub gas: BigUint,
     /// The updated protocol state after the swap
     pub new_state: Box<dyn ProtocolSim>,
     /// Number of get_amount_out calls (iterations) needed
-    /// TODO: This is a temporary variable for benchmarking purposes
     pub iterations: u32,
 }
 

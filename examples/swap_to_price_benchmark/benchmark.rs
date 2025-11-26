@@ -20,7 +20,6 @@ use tycho_simulation::swap_to_price::{
 // Combined range covering both regular and stable pair scenarios
 // DEBUG: Just +1bps for now
 const PRICE_MOVEMENTS: &[f64] = &[
-    1.00001, // +0.001% = +0.1 bps
     1.00005, // +0.005% = +0.5 bps
     1.0001,  // +0.01% = +1 bps
     1.0005,  // +0.05% = +5 bps
@@ -28,6 +27,9 @@ const PRICE_MOVEMENTS: &[f64] = &[
     1.005,   // +0.5% = +50 bps
     1.01,    // +1% = +100 bps
     1.05,    // +5% = +500 bps
+    1.1,     // +10% = +1000 bps
+    1.5,     // +50% = +5000 bps
+    2.0,     // +100% = +10000 bps
 ];
 
 #[derive(Serialize, Deserialize, Clone)]

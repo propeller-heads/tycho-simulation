@@ -15,7 +15,7 @@ pub struct BenchmarkReport {
 pub struct Summary {
     pub total_scenarios: usize,
     pub converged: usize,
-    pub not_converged: usize,
+    pub best_achievable: usize,
     pub failed: usize,
     pub convergence_rate: f64,
     pub by_strategy: HashMap<String, StrategyStats>,
@@ -27,7 +27,7 @@ pub struct Summary {
 pub struct ProtocolStats {
     pub total: usize,
     pub converged: usize,
-    pub not_converged: usize,
+    pub best_achievable: usize,
     pub iterations: IterationStats,
 }
 
@@ -35,7 +35,7 @@ pub struct ProtocolStats {
 pub struct MovementStats {
     pub total: usize,
     pub converged: usize,
-    pub not_converged: usize,
+    pub best_achievable: usize,
     pub iterations: IterationStats,
 }
 
@@ -43,7 +43,7 @@ pub struct MovementStats {
 pub struct StrategyStats {
     pub total: usize,
     pub converged: usize,
-    pub not_converged: usize,
+    pub best_achievable: usize,
     pub iterations: IterationStats,
 }
 
@@ -103,17 +103,25 @@ pub fn print_summary(results: &[BenchmarkResult]) {
         println!("  Max iterations: {}", SWAP_TO_PRICE_MAX_ITERATIONS);
     }
 
+    let total = summary.total_scenarios as f64;
     println!("\nOverall:");
     println!("  Total scenarios: {}", summary.total_scenarios);
-    println!("  Converged: {}", summary.converged);
-    println!("  Not converged: {}", summary.not_converged);
-    println!("  Failed (errors): {}", summary.failed);
-    println!("  Convergence rate: {:.1}%", summary.convergence_rate * 100.0);
+    println!("  Converged: {} ({:.1}%) - within tolerance",
+        summary.converged,
+        summary.converged as f64 / total * 100.0);
+    println!("  Best achievable: {} ({:.1}%) - pool precision limit reached",
+        summary.best_achievable,
+        summary.best_achievable as f64 / total * 100.0);
+    println!("  Failed (errors): {} ({:.1}%) - simulation errors",
+        summary.failed,
+        summary.failed as f64 / total * 100.0);
+    println!("  Success rate: {:.1}% (converged + best achievable)",
+        (summary.converged + summary.best_achievable) as f64 / total * 100.0);
 
     println!("\nBy Strategy (Iterations):");
     println!(
         "  {:<16} {:>8} {:>10} {:>12} {:>8} {:>8} {:>8} {:>8} {:>8}",
-        "Strategy", "Total", "Converged", "Not Conv", "Min", "Mean", "Median", "P95", "P99"
+        "Strategy", "Total", "Converged", "Best Ach", "Min", "Mean", "Median", "P95", "P99"
     );
     println!("  {}", "-".repeat(100));
 
@@ -127,7 +135,7 @@ pub fn print_summary(results: &[BenchmarkResult]) {
                 strategy,
                 stats.total,
                 stats.converged,
-                stats.not_converged,
+                stats.best_achievable,
                 stats.iterations.min,
                 stats.iterations.mean,
                 stats.iterations.median,
@@ -137,7 +145,7 @@ pub fn print_summary(results: &[BenchmarkResult]) {
         } else {
             println!(
                 "  {:<16} {:>8} {:>10} {:>12} {:>8}",
-                strategy, stats.total, stats.converged, stats.not_converged, "N/A"
+                strategy, stats.total, stats.converged, stats.best_achievable, "N/A"
             );
         }
     }
@@ -169,7 +177,7 @@ pub fn print_summary(results: &[BenchmarkResult]) {
 
     println!("\nBy Protocol:");
     println!("  {:<20} {:>8} {:>10} {:>12} {:>8} {:>8} {:>8} {:>8} {:>8}",
-        "Protocol", "Total", "Converged", "Not Conv", "Min", "Mean", "Median", "P95", "P99");
+        "Protocol", "Total", "Converged", "Best Ach", "Min", "Mean", "Median", "P95", "P99");
     println!("  {}", "-".repeat(100));
 
     let mut protocols: Vec<_> = summary.by_protocol.iter().collect();
@@ -182,7 +190,7 @@ pub fn print_summary(results: &[BenchmarkResult]) {
                 protocol,
                 stats.total,
                 stats.converged,
-                stats.not_converged,
+                stats.best_achievable,
                 stats.iterations.min,
                 stats.iterations.mean,
                 stats.iterations.median,
@@ -192,14 +200,14 @@ pub fn print_summary(results: &[BenchmarkResult]) {
         } else {
             println!(
                 "  {:<20} {:>8} {:>10} {:>12} {:>8}",
-                protocol, stats.total, stats.converged, stats.not_converged, "N/A"
+                protocol, stats.total, stats.converged, stats.best_achievable, "N/A"
             );
         }
     }
 
     println!("\nBy Price Movement:");
     println!("  {:>8} {:>8} {:>10} {:>12} {:>8} {:>8} {:>8} {:>8} {:>8}",
-        "Bps", "Total", "Converged", "Not Conv", "Min", "Mean", "Median", "P95", "P99");
+        "Bps", "Total", "Converged", "Best Ach", "Min", "Mean", "Median", "P95", "P99");
     println!("  {}", "-".repeat(100));
 
     let mut movements: Vec<_> = summary.by_movement.iter().collect();
@@ -212,7 +220,7 @@ pub fn print_summary(results: &[BenchmarkResult]) {
                 bps,
                 stats.total,
                 stats.converged,
-                stats.not_converged,
+                stats.best_achievable,
                 stats.iterations.min,
                 stats.iterations.mean,
                 stats.iterations.median,
@@ -222,7 +230,7 @@ pub fn print_summary(results: &[BenchmarkResult]) {
         } else {
             println!(
                 "  {:>8} {:>8} {:>10} {:>12} {:>8}",
-                bps, stats.total, stats.converged, stats.not_converged, "N/A"
+                bps, stats.total, stats.converged, stats.best_achievable, "N/A"
             );
         }
     }
@@ -360,8 +368,9 @@ fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
         .collect();
     let converged = converged_results.len();
 
-    // Count not converged (status==success BUT outside tolerance)
-    let not_converged = results
+    // Count best achievable (status==success BUT outside tolerance)
+    // These are results where pool precision limited convergence
+    let best_achievable = results
         .iter()
         .filter(|r| {
             r.status == "success" &&
@@ -403,7 +412,8 @@ fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
                 .copied()
                 .collect();
             let converged = converged_results.len();
-            let not_converged = total - converged;
+            let failed = results.iter().filter(|r| r.status != "success").count();
+            let best_achievable = total - converged - failed;
 
             let iterations = if !converged_results.is_empty() {
                 calculate_iteration_stats(&converged_results)
@@ -423,7 +433,7 @@ fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
                 StrategyStats {
                     total,
                     converged,
-                    not_converged,
+                    best_achievable,
                     iterations,
                 },
             )
@@ -452,9 +462,8 @@ fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
                 .copied()
                 .collect();
             let converged = converged_results.len();
-            // Not converged includes both: scenarios that succeeded but didn't converge,
-            // and scenarios that failed with errors
-            let not_converged = total - converged;
+            let failed = results.iter().filter(|r| r.status != "success").count();
+            let best_achievable = total - converged - failed;
 
             let iterations = if !converged_results.is_empty() {
                 calculate_iteration_stats(&converged_results)
@@ -474,7 +483,7 @@ fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
                 ProtocolStats {
                     total,
                     converged,
-                    not_converged,
+                    best_achievable,
                     iterations,
                 },
             )
@@ -503,9 +512,8 @@ fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
                 .copied()
                 .collect();
             let converged = converged_results.len();
-            // Not converged includes both: scenarios that succeeded but didn't converge,
-            // and scenarios that failed with errors
-            let not_converged = total - converged;
+            let failed = results.iter().filter(|r| r.status != "success").count();
+            let best_achievable = total - converged - failed;
 
             let iterations = if !converged_results.is_empty() {
                 calculate_iteration_stats(&converged_results)
@@ -525,7 +533,7 @@ fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
                 MovementStats {
                     total,
                     converged,
-                    not_converged,
+                    best_achievable,
                     iterations,
                 },
             )
@@ -535,7 +543,7 @@ fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
     Summary {
         total_scenarios,
         converged,
-        not_converged,
+        best_achievable,
         failed,
         convergence_rate,
         by_strategy: strategy_stats,

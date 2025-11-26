@@ -53,7 +53,6 @@ fn f64_to_amount(value: f64) -> Option<BigUint> {
 /// A point in the search history
 #[derive(Clone, Debug)]
 struct HistoryPoint {
-    amount: BigUint,
     amount_f64: f64,
     price: f64,
 }
@@ -134,13 +133,11 @@ where
 
     // Add initial bounds to history
     history.push(HistoryPoint {
-        amount: low.clone(),
         amount_f64: 0.0,
         price: low_price,
     });
     if let Some(high_f64) = amount_to_f64(&high) {
         history.push(HistoryPoint {
-            amount: high.clone(),
             amount_f64: high_f64,
             price: high_price,
         });
@@ -166,7 +163,6 @@ where
         // Add to history
         if let Some(mid_f64) = amount_to_f64(&mid) {
             history.push(HistoryPoint {
-                amount: mid.clone(),
                 amount_f64: mid_f64,
                 price,
             });
@@ -239,22 +235,19 @@ where
         }
     }
 
-    // Neither boundary is within tolerance - check if we can return "best achievable"
-    // If target is bracketed between low_price and high_price, return the closer one
-    if let (Some(low_res), Some(high_res)) = (&low_result, &high_result) {
-        let lp = low_res.new_state.spot_price(token_out, token_in)?;
-        let hp = high_res.new_state.spot_price(token_out, token_in)?;
+    // Neither boundary is within tolerance - return "best achievable"
+    // When search converges to adjacent amounts, the pool can't represent a more precise price.
+    // Return whichever boundary is closer to the target.
+    match (&low_result, &high_result) {
+        (Some(low_res), Some(high_res)) => {
+            let lp = low_res.new_state.spot_price(token_out, token_in)?;
+            let hp = high_res.new_state.spot_price(token_out, token_in)?;
 
-        // Check if target is bracketed (between low_price and high_price)
-        let is_bracketed = (lp <= target_price && target_price <= hp)
-            || (hp <= target_price && target_price <= lp);
-
-        if is_bracketed {
             // Return the one closer to target as "best achievable"
             let low_diff = (lp - target_price).abs();
             let high_diff = (hp - target_price).abs();
 
-            return if low_diff <= high_diff {
+            if low_diff <= high_diff {
                 Ok(SwapToPriceResult {
                     amount_in: low.clone(),
                     actual_price: lp,
@@ -270,12 +263,33 @@ where
                     new_state: high_res.new_state.clone(),
                     iterations: actual_iterations,
                 })
-            };
+            }
+        }
+        (Some(low_res), None) => {
+            let lp = low_res.new_state.spot_price(token_out, token_in)?;
+            Ok(SwapToPriceResult {
+                amount_in: low.clone(),
+                actual_price: lp,
+                gas: low_res.gas.clone(),
+                new_state: low_res.new_state.clone(),
+                iterations: actual_iterations,
+            })
+        }
+        (None, Some(high_res)) => {
+            let hp = high_res.new_state.spot_price(token_out, token_in)?;
+            Ok(SwapToPriceResult {
+                amount_in: high.clone(),
+                actual_price: hp,
+                gas: high_res.gas.clone(),
+                new_state: high_res.new_state.clone(),
+                iterations: actual_iterations,
+            })
+        }
+        (None, None) => {
+            // No valid boundary results - this shouldn't happen in practice
+            Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
         }
     }
-
-    // Target not bracketed - genuine failure
-    Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
 }
 
 // =============================================================================
@@ -328,7 +342,7 @@ impl SwapToPriceStrategy for IqiStrategy {
         token_in: &Token,
         token_out: &Token,
     ) -> Result<SwapToPriceResult, SwapToPriceError> {
-        run_search(state, target_price, token_in, token_out, |history, low, low_price, high, high_price, target| {
+        run_search(state, target_price, token_in, token_out, |history, low, _low_price, high, _high_price, target| {
             let fallback = geometric_mean(low, high);
 
             // Need at least 3 points for IQI
@@ -337,7 +351,7 @@ impl SwapToPriceStrategy for IqiStrategy {
             }
 
             // Get the 3 most recent points with distinct prices
-            let mut points: Vec<&HistoryPoint> = history.iter()
+            let points: Vec<&HistoryPoint> = history.iter()
                 .filter(|p| p.amount_f64 > 0.0 && p.price > 0.0)
                 .collect();
 
@@ -404,7 +418,7 @@ impl SwapToPriceStrategy for BrentStrategy {
         token_in: &Token,
         token_out: &Token,
     ) -> Result<SwapToPriceResult, SwapToPriceError> {
-        run_search(state, target_price, token_in, token_out, |history, low, low_price, high, high_price, target| {
+        run_search(state, target_price, token_in, token_out, |history, low, _low_price, high, _high_price, target| {
             let fallback = geometric_mean(low, high);
             let low_f64 = amount_to_f64(low).unwrap_or(0.0);
             let high_f64 = amount_to_f64(high).unwrap_or(f64::MAX);
@@ -424,7 +438,6 @@ impl SwapToPriceStrategy for BrentStrategy {
                 ) {
                     // Brent's acceptance criterion: result must be within bounds
                     // and must reduce the bracket by at least half compared to bisection
-                    let bisection_point = (low_f64 + high_f64) / 2.0;
                     let bracket_size = high_f64 - low_f64;
 
                     if estimate > low_f64 && estimate < high_f64 {
