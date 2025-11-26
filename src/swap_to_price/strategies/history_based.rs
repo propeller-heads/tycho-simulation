@@ -198,35 +198,83 @@ where
         }
     }
 
-    // Check boundaries
-    if low > BigUint::from(0u32) {
-        let low_result = state.get_amount_out(low.clone(), token_in, token_out)?;
-        let final_low_price = low_result.new_state.spot_price(token_out, token_in)?;
-        if within_tolerance(final_low_price, target_price) {
+    // Get prices at both boundaries
+    let low_result = if low > BigUint::from(0u32) {
+        Some(state.get_amount_out(low.clone(), token_in, token_out)?)
+    } else {
+        None
+    };
+
+    let high_result = if high != low && high > BigUint::from(0u32) {
+        Some(state.get_amount_out(high.clone(), token_in, token_out)?)
+    } else {
+        None
+    };
+
+    // Check if low boundary is within tolerance
+    if let Some(ref res) = low_result {
+        let price = res.new_state.spot_price(token_out, token_in)?;
+        if within_tolerance(price, target_price) {
             return Ok(SwapToPriceResult {
-                amount_in: low,
-                actual_price: final_low_price,
-                gas: low_result.gas,
-                new_state: low_result.new_state,
+                amount_in: low.clone(),
+                actual_price: price,
+                gas: res.gas.clone(),
+                new_state: res.new_state.clone(),
                 iterations: actual_iterations,
             });
         }
     }
 
-    if high != low && high > BigUint::from(0u32) {
-        let high_result = state.get_amount_out(high.clone(), token_in, token_out)?;
-        let final_high_price = high_result.new_state.spot_price(token_out, token_in)?;
-        if within_tolerance(final_high_price, target_price) {
+    // Check if high boundary is within tolerance
+    if let Some(ref res) = high_result {
+        let price = res.new_state.spot_price(token_out, token_in)?;
+        if within_tolerance(price, target_price) {
             return Ok(SwapToPriceResult {
-                amount_in: high,
-                actual_price: final_high_price,
-                gas: high_result.gas,
-                new_state: high_result.new_state,
+                amount_in: high.clone(),
+                actual_price: price,
+                gas: res.gas.clone(),
+                new_state: res.new_state.clone(),
                 iterations: actual_iterations,
             });
         }
     }
 
+    // Neither boundary is within tolerance - check if we can return "best achievable"
+    // If target is bracketed between low_price and high_price, return the closer one
+    if let (Some(low_res), Some(high_res)) = (&low_result, &high_result) {
+        let lp = low_res.new_state.spot_price(token_out, token_in)?;
+        let hp = high_res.new_state.spot_price(token_out, token_in)?;
+
+        // Check if target is bracketed (between low_price and high_price)
+        let is_bracketed = (lp <= target_price && target_price <= hp)
+            || (hp <= target_price && target_price <= lp);
+
+        if is_bracketed {
+            // Return the one closer to target as "best achievable"
+            let low_diff = (lp - target_price).abs();
+            let high_diff = (hp - target_price).abs();
+
+            return if low_diff <= high_diff {
+                Ok(SwapToPriceResult {
+                    amount_in: low.clone(),
+                    actual_price: lp,
+                    gas: low_res.gas.clone(),
+                    new_state: low_res.new_state.clone(),
+                    iterations: actual_iterations,
+                })
+            } else {
+                Ok(SwapToPriceResult {
+                    amount_in: high.clone(),
+                    actual_price: hp,
+                    gas: high_res.gas.clone(),
+                    new_state: high_res.new_state.clone(),
+                    iterations: actual_iterations,
+                })
+            };
+        }
+    }
+
+    // Target not bracketed - genuine failure
     Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
 }
 

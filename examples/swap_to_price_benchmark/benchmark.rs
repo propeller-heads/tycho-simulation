@@ -18,6 +18,7 @@ use tycho_simulation::swap_to_price::{
 
 // Price movements to test (as multipliers)
 // Combined range covering both regular and stable pair scenarios
+// DEBUG: Just +1bps for now
 const PRICE_MOVEMENTS: &[f64] = &[
     1.00001, // +0.001% = +0.1 bps
     1.00005, // +0.005% = +0.5 bps
@@ -67,37 +68,15 @@ pub async fn run_benchmark(
 
         // Define all strategies to benchmark
         let strategies: Vec<(&str, Box<dyn SwapToPriceStrategy>)> = vec![
-            // Baseline: best interpolation strategy
             (
                 "log_amount",
                 Box::new(InterpolationSearchStrategy::new(LogAmountBinarySearch)),
             ),
-            // 3-point history-based strategies
-            (
-                "iqi",
-                Box::new(IqiStrategy),
-            ),
-            (
-                "brent",
-                Box::new(BrentStrategy),
-            ),
-            (
-                "newton_cd",
-                Box::new(NewtonCentralStrategy),
-            ),
-            // Full-history strategies
-            (
-                "quad_regr",
-                Box::new(QuadraticRegressionStrategy),
-            ),
-            (
-                "weighted_regr",
-                Box::new(WeightedRegressionStrategy::default()),
-            ),
-            // (
-            //     "piecewise",
-            //     Box::new(PiecewiseLinearStrategy),
-            // ),
+            ("iqi", Box::new(IqiStrategy)),
+            ("brent", Box::new(BrentStrategy)),
+            ("newton_cd", Box::new(NewtonCentralStrategy)),
+            ("quad_regr", Box::new(QuadraticRegressionStrategy)),
+            ("weighted_regr", Box::new(WeightedRegressionStrategy { decay: 0.7 })),
         ];
 
         println!("Testing {} strategies: {}", strategies.len(),

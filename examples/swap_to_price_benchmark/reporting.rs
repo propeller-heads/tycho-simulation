@@ -278,6 +278,65 @@ pub fn print_summary(results: &[BenchmarkResult]) {
         if failed.len() > 10 {
             println!("  ... and {} more", failed.len() - 10);
         }
+
+        // Analyze failure patterns - group by (pool, token_in, token_out, bps)
+        let mut failure_patterns: HashMap<(String, String, String, i32), Vec<(&str, &str)>> =
+            HashMap::new();
+        for result in &failed {
+            let key = (
+                result.pool_id.clone(),
+                result.token_in.clone(),
+                result.token_out.clone(),
+                result.target_movement_bps,
+            );
+            failure_patterns
+                .entry(key)
+                .or_default()
+                .push((&result.strategy, &result.status));
+        }
+
+        // Count scenarios that fail for ALL strategies
+        let num_strategies = results.iter().map(|r| &r.strategy).collect::<std::collections::HashSet<_>>().len();
+        let universal_failures: Vec<_> = failure_patterns
+            .iter()
+            .filter(|(_, strategies)| strategies.len() == num_strategies)
+            .collect();
+
+        println!(
+            "\nFailure Analysis: {} unique scenarios fail, {} fail for ALL {} strategies",
+            failure_patterns.len(),
+            universal_failures.len(),
+            num_strategies
+        );
+
+        // Show sample of universal failures by protocol
+        let mut by_protocol: HashMap<String, usize> = HashMap::new();
+        for ((pool_id, _, _, _), _) in &universal_failures {
+            if let Some(result) = results.iter().find(|r| &r.pool_id == pool_id) {
+                *by_protocol.entry(result.protocol.clone()).or_default() += 1;
+            }
+        }
+
+        println!("\n  Universal failures by protocol:");
+        for (protocol, count) in by_protocol.iter() {
+            println!("    {}: {} scenarios", protocol, count);
+        }
+
+        // Show sample universal failures with error types
+        println!("\n  Sample universal failures:");
+        for ((pool_id, token_in, token_out, bps), strategies) in universal_failures.iter().take(5) {
+            let protocol = results.iter().find(|r| &r.pool_id == pool_id).map(|r| r.protocol.as_str()).unwrap_or("?");
+            let errors: Vec<_> = strategies.iter().map(|(_, err)| *err).collect::<std::collections::HashSet<_>>().into_iter().collect();
+            println!(
+                "    {} ({}) {} -> {} +{}bps: {:?}",
+                &pool_id[..8.min(pool_id.len())],
+                protocol,
+                token_in,
+                token_out,
+                bps,
+                errors
+            );
+        }
     }
 
     println!("\n{}", "=".repeat(80));

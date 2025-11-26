@@ -628,7 +628,7 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
         for iterations in 1..=max_iterations {
             actual_iterations = iterations;
 
-            // DEBUG: Log bounds
+            // // DEBUG: Log bounds
             // eprintln!(
             //     "[iter {}] low={}, low_price={:.6e}, high={}, high_price={:.6e}, target={:.6e}",
             //     iterations, &low, low_price, &high, high_price, target_price
@@ -645,7 +645,7 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
                     target_price,
                 );
 
-            // DEBUG: Log interpolate result
+            // // DEBUG: Log interpolate result
             // eprintln!("[iter {}] mid={}", iterations, &mid);
 
             // Ensure we make progress
@@ -659,7 +659,7 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
             let result = state.get_amount_out(mid.clone(), token_in, token_out)?;
             let price = result.new_state.spot_price(token_out, token_in)?;
 
-            // DEBUG: Log price result
+            // // DEBUG: Log price result
             // eprintln!("[iter {}] price={:.6e}, diff from target={:.6e}", iterations, price, price - target_price);
 
             // Check if we're within tolerance
@@ -688,37 +688,83 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
             }
         }
 
-        // Check low boundary
-        if low > BigUint::from(0u32) {
-            let low_result = state.get_amount_out(low.clone(), token_in, token_out)?;
-            let low_price = low_result.new_state.spot_price(token_out, token_in)?;
-            if within_tolerance(low_price, target_price) {
+        // Get prices at both boundaries
+        let low_result = if low > BigUint::from(0u32) {
+            Some(state.get_amount_out(low.clone(), token_in, token_out)?)
+        } else {
+            None
+        };
+
+        let high_result = if high != low && high > BigUint::from(0u32) {
+            Some(state.get_amount_out(high.clone(), token_in, token_out)?)
+        } else {
+            None
+        };
+
+        // Check if low boundary is within tolerance
+        if let Some(ref res) = low_result {
+            let price = res.new_state.spot_price(token_out, token_in)?;
+            if within_tolerance(price, target_price) {
                 return Ok(SwapToPriceResult {
-                    amount_in: low,
-                    actual_price: low_price,
-                    gas: low_result.gas,
-                    new_state: low_result.new_state,
+                    amount_in: low.clone(),
+                    actual_price: price,
+                    gas: res.gas.clone(),
+                    new_state: res.new_state.clone(),
                     iterations: actual_iterations,
                 });
             }
         }
 
-        // Check high boundary if different from low
-        if high != low && high > BigUint::from(0u32) {
-            let high_result = state.get_amount_out(high.clone(), token_in, token_out)?;
-            let high_price = high_result.new_state.spot_price(token_out, token_in)?;
-            if within_tolerance(high_price, target_price) {
+        // Check if high boundary is within tolerance
+        if let Some(ref res) = high_result {
+            let price = res.new_state.spot_price(token_out, token_in)?;
+            if within_tolerance(price, target_price) {
                 return Ok(SwapToPriceResult {
-                    amount_in: high,
-                    actual_price: high_price,
-                    gas: high_result.gas,
-                    new_state: high_result.new_state,
+                    amount_in: high.clone(),
+                    actual_price: price,
+                    gas: res.gas.clone(),
+                    new_state: res.new_state.clone(),
                     iterations: actual_iterations,
                 });
             }
         }
 
-        // If we reach here, we failed to converge within tolerance
+        // Neither boundary is within tolerance - check if we can return "best achievable"
+        // If target is bracketed between low_price and high_price, return the closer one
+        if let (Some(low_res), Some(high_res)) = (&low_result, &high_result) {
+            let lp = low_res.new_state.spot_price(token_out, token_in)?;
+            let hp = high_res.new_state.spot_price(token_out, token_in)?;
+
+            // Check if target is bracketed (between low_price and high_price)
+            let is_bracketed = (lp <= target_price && target_price <= hp)
+                || (hp <= target_price && target_price <= lp);
+
+            if is_bracketed {
+                // Return the one closer to target as "best achievable"
+                let low_diff = (lp - target_price).abs();
+                let high_diff = (hp - target_price).abs();
+
+                return if low_diff <= high_diff {
+                    Ok(SwapToPriceResult {
+                        amount_in: low.clone(),
+                        actual_price: lp,
+                        gas: low_res.gas.clone(),
+                        new_state: low_res.new_state.clone(),
+                        iterations: actual_iterations,
+                    })
+                } else {
+                    Ok(SwapToPriceResult {
+                        amount_in: high.clone(),
+                        actual_price: hp,
+                        gas: high_res.gas.clone(),
+                        new_state: high_res.new_state.clone(),
+                        iterations: actual_iterations,
+                    })
+                };
+            }
+        }
+
+        // Target not bracketed - genuine failure
         Err(SwapToPriceError::ConvergenceFailure(actual_iterations))
     }
 }
