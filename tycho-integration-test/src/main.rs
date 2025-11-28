@@ -1010,7 +1010,7 @@ fn process_execution_result(
             } else {
                 String::new()
             };
-            let error_category = categorize_error(&revert_reason);
+            let error_category = categorize_error(revert_reason);
             error!(
                 event_type = "simulation_execution_failure",
                 error_message = %revert_reason,
