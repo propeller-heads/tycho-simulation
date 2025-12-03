@@ -1,3 +1,8 @@
 [build]
 # this flag is used to build tokio-console correctly.
 rustflags = ["--cfg", "tokio_unstable"]
+
+# Workaround for svm-rs-builds duplicate 0.8.31 issue
+# See: https://github.com/alloy-rs/svm-rs/issues/177
+[env]
+SVM_RELEASES_LIST_JSON = { value = "solc_list_fixed.json", relative = true }
