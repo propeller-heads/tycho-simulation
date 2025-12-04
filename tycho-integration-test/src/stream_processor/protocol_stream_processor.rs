@@ -4,7 +4,7 @@ use futures::{Stream, StreamExt};
 use miette::{miette, IntoDiagnostic, WrapErr};
 use tokio::{sync::mpsc::Sender, task::JoinHandle};
 use tracing::{info, warn};
-use tycho_client::feed::component_tracker::ComponentFilter;
+use tycho_client::feed::{component_tracker::ComponentFilter, synchronizer::ComponentWithState};
 use tycho_common::{
     models::{token::Token, Chain},
     Bytes,
@@ -217,8 +217,11 @@ impl ProtocolStreamProcessor {
                 );
             }
             "uniswap_v4_hooks" => {
-                stream =
-                    stream.exchange::<UniswapV4State>("uniswap_v4_hooks", tvl_filter.clone(), None);
+                stream = stream.exchange::<UniswapV4State>(
+                    "uniswap_v4_hooks",
+                    tvl_filter.clone(),
+                    Some(uniswap_v4_angstrom_hook_pool_excluded_filter),
+                );
             }
             "vm:maverick_v2" => {
                 stream = stream.exchange::<EVMPoolState<PreCachedDB>>(
@@ -247,4 +250,16 @@ impl ProtocolStreamProcessor {
         }
         Ok(stream)
     }
+}
+
+/// Filters out uniswap v4 pools with Angstrom hooks
+/// Angstrom can not be included in the integration test because it requires an API call to get
+/// attestation data for future blocks. The integration test simulates execution in the last block.
+pub fn uniswap_v4_angstrom_hook_pool_excluded_filter(component: &ComponentWithState) -> bool {
+    component
+        .component
+        .static_attributes
+        .get("hook_identifier")
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        .is_none_or(|s| s != "angstrom_v1")
 }
