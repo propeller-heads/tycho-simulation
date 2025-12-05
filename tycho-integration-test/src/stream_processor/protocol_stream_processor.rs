@@ -14,18 +14,10 @@ use tycho_simulation::{
         decoder::StreamDecodeError,
         engine_db::tycho_db::PreCachedDB,
         protocol::{
-            aerodrome_slipstreams::state::AerodromeSlipstreamsState,
-            ekubo::state::EkuboState,
-            filters::{
+            aerodrome_slipstreams::state::AerodromeSlipstreamsState, ekubo::state::EkuboState, erc4626::state::ERC4626State, filters::{
                 balancer_v2_pool_filter, curve_pool_filter, fluid_v1_paused_pools_filter,
                 uniswap_v4_euler_hook_pool_filter,
-            },
-            fluid::FluidV1,
-            pancakeswap_v2::state::PancakeswapV2State,
-            uniswap_v2::state::UniswapV2State,
-            uniswap_v3::state::UniswapV3State,
-            uniswap_v4::state::UniswapV4State,
-            vm::state::EVMPoolState,
+            }, fluid::FluidV1, pancakeswap_v2::state::PancakeswapV2State, uniswap_v2::state::UniswapV2State, uniswap_v3::state::UniswapV3State, uniswap_v4::state::UniswapV4State, vm::state::EVMPoolState
         },
         stream::ProtocolStreamBuilder,
     },
@@ -151,6 +143,11 @@ impl ProtocolStreamProcessor {
                         "fluid_v1",
                         tvl_filter.clone(),
                         Some(fluid_v1_paused_pools_filter),
+                    )
+                    .exchange::<ERC4626State>(
+                        "erc4626",
+                        tvl_filter.clone(),
+                        None,
                     );
             }
             Chain::Base => {
