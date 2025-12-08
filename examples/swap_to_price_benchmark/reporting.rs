@@ -99,7 +99,7 @@ pub fn print_summary(results: &[BenchmarkResult]) {
     {
         use tycho_simulation::swap_to_price::{SWAP_TO_PRICE_MAX_ITERATIONS, SWAP_TO_PRICE_TOLERANCE};
         println!("\nConfiguration:");
-        println!("  Tolerance: {:.8}%", SWAP_TO_PRICE_TOLERANCE * 100.0);
+        println!("  Tolerance: {:.6}%", SWAP_TO_PRICE_TOLERANCE * 100.0);
         println!("  Max iterations: {}", SWAP_TO_PRICE_MAX_ITERATIONS);
     }
 
@@ -352,9 +352,14 @@ pub fn print_summary(results: &[BenchmarkResult]) {
 
 fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
     #[cfg(feature = "swap_to_price")]
-    use tycho_simulation::swap_to_price::SWAP_TO_PRICE_TOLERANCE;
+    use tycho_simulation::swap_to_price::within_tolerance;
     #[cfg(not(feature = "swap_to_price"))]
-    const SWAP_TO_PRICE_TOLERANCE: f64 = 0.001;
+    fn within_tolerance(actual: f64, target: f64) -> bool {
+        const SWAP_TO_PRICE_TOLERANCE: f64 = 0.001;
+        let diff = (actual - target).abs();
+        let relative_diff = diff / target;
+        relative_diff <= SWAP_TO_PRICE_TOLERANCE
+    }
 
     let total_scenarios = results.len();
 
@@ -362,8 +367,7 @@ fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
     let converged_results: Vec<_> = results
         .iter()
         .filter(|r| {
-            r.status == "success" &&
-            (r.convergence_error_bps / 10000.0) <= SWAP_TO_PRICE_TOLERANCE
+            r.status == "success" && within_tolerance(r.actual_price, r.target_price)
         })
         .collect();
     let converged = converged_results.len();
@@ -373,8 +377,7 @@ fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
     let best_achievable = results
         .iter()
         .filter(|r| {
-            r.status == "success" &&
-            (r.convergence_error_bps / 10000.0) > SWAP_TO_PRICE_TOLERANCE
+            r.status == "success" && !within_tolerance(r.actual_price, r.target_price)
         })
         .count();
 
@@ -407,7 +410,7 @@ fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
                 .iter()
                 .filter(|r| {
                     r.status == "success"
-                        && (r.convergence_error_bps / 10000.0) <= SWAP_TO_PRICE_TOLERANCE
+                        && within_tolerance(r.actual_price, r.target_price)
                 })
                 .copied()
                 .collect();
@@ -456,8 +459,8 @@ fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
             let converged_results: Vec<_> = results
                 .iter()
                 .filter(|r| {
-                    r.status == "success" &&
-                    (r.convergence_error_bps / 10000.0) <= SWAP_TO_PRICE_TOLERANCE
+                    r.status == "success"
+                        && within_tolerance(r.actual_price, r.target_price)
                 })
                 .copied()
                 .collect();
@@ -506,8 +509,8 @@ fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
             let converged_results: Vec<_> = results
                 .iter()
                 .filter(|r| {
-                    r.status == "success" &&
-                    (r.convergence_error_bps / 10000.0) <= SWAP_TO_PRICE_TOLERANCE
+                    r.status == "success"
+                        && within_tolerance(r.actual_price, r.target_price)
                 })
                 .copied()
                 .collect();
@@ -571,8 +574,10 @@ fn calculate_iteration_stats(results: &[&BenchmarkResult]) -> IterationStats {
     let max = iterations[iterations.len() - 1];
     let mean = iterations.iter().sum::<u32>() as f64 / iterations.len() as f64;
     let median = iterations[iterations.len() / 2];
-    let p95 = iterations[(iterations.len() as f64 * 0.95) as usize];
-    let p99 = iterations[(iterations.len() as f64 * 0.99) as usize];
+    let p95_idx = ((iterations.len() as f64 * 0.95) as usize).min(iterations.len() - 1);
+    let p99_idx = ((iterations.len() as f64 * 0.99) as usize).min(iterations.len() - 1);
+    let p95 = iterations[p95_idx];
+    let p99 = iterations[p99_idx];
 
     IterationStats {
         min,

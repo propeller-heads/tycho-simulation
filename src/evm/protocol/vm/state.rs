@@ -632,15 +632,59 @@ where
             }
         }
 
-        // Update spot prices
-        let new_price = trade.price;
-        if new_price != 0.0f64 {
-            new_state
-                .spot_prices
-                .insert((sell_token_address, buy_token_address), new_price);
-            new_state
-                .spot_prices
-                .insert((buy_token_address, sell_token_address), 1.0f64 / new_price);
+        // Update spot prices by querying adapter for both directions
+        // We must query each direction separately because fees are applied on the sell side.
+        // Using 1/price for the inverse would put the fee in the wrong place.
+        if trade.received_amount > U256::ZERO {
+            let tokens: HashMap<Bytes, Token> = [
+                (token_in.address.clone(), token_in.clone()),
+                (token_out.address.clone(), token_out.clone()),
+            ]
+            .into_iter()
+            .collect();
+
+            for [sell_token, buy_token] in [token_in, token_out]
+                .iter()
+                .permutations(2)
+                .map(|p| [p[0], p[1]])
+            {
+                let sell_addr = bytes_to_address(&sell_token.address)?;
+                let buy_addr = bytes_to_address(&buy_token.address)?;
+
+                let overwrites = Some(new_state.get_overwrites(
+                    vec![sell_addr, buy_addr],
+                    *MAX_BALANCE / U256::from(100),
+                )?);
+
+                let (sell_limit, _) = new_state.get_amount_limits(
+                    vec![sell_addr, buy_addr],
+                    overwrites.clone(),
+                )?;
+
+                if let Ok(price_result) = new_state.adapter_contract.price(
+                    &new_state.id,
+                    sell_addr,
+                    buy_addr,
+                    vec![sell_limit / U256::from(100)],
+                    overwrites,
+                ) {
+                    let price = if new_state.capabilities.contains(&Capability::ScaledPrice) {
+                        price_result.first().cloned()
+                    } else {
+                        price_result.first().map(|p| {
+                            let sell_dec = new_state.get_decimals(&tokens, &sell_addr).unwrap_or(18);
+                            let buy_dec = new_state.get_decimals(&tokens, &buy_addr).unwrap_or(18);
+                            p * 10f64.powi(sell_dec as i32) / 10f64.powi(buy_dec as i32)
+                        })
+                    };
+
+                    if let Some(p) = price {
+                        if p != 0.0f64 && p.is_finite() {
+                            new_state.spot_prices.insert((sell_addr, buy_addr), p);
+                        }
+                    }
+                }
+            }
         }
 
         let buy_amount = trade.received_amount;
@@ -663,7 +707,7 @@ where
     }
 
     fn get_limits(
-        &self,
+        &self, 
         sell_token: Bytes,
         buy_token: Bytes,
     ) -> Result<(BigUint, BigUint), SimulationError> {
