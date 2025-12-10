@@ -4,6 +4,7 @@ mod stream_processor;
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
+    str::FromStr,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -14,10 +15,10 @@ use dotenv::dotenv;
 use itertools::Itertools;
 use miette::{miette, IntoDiagnostic, NarratableReportHandler, WrapErr};
 use num_bigint::BigUint;
-use num_traits::{ToPrimitive, Zero};
+use num_traits::{Pow, ToPrimitive, Zero};
 use rand::prelude::IndexedRandom;
-use tokio::sync::Semaphore;
-use tracing::{error, info, warn};
+use tokio::{signal, sync::Semaphore};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 use tycho_common::simulation::protocol_sim::ProtocolSim;
 use tycho_simulation::{
@@ -26,10 +27,13 @@ use tycho_simulation::{
     tycho_common::models::Chain,
     utils::load_all_tokens,
 };
-use tycho_test::execution::{
-    encoding::encode_swap,
-    models::{TychoExecutionInput, TychoExecutionResult},
-    simulate_swap_transaction, tenderly,
+use tycho_test::{
+    execution::{
+        encoding::encode_swap,
+        models::{TychoExecutionInput, TychoExecutionResult},
+        simulate_swap_transaction, tenderly,
+    },
+    validation::{batch_validate_components, get_validator, Validator},
 };
 
 use crate::stream_processor::{
@@ -98,6 +102,11 @@ struct Cli {
     /// List of component IDs to always include in tests every block if not already selected
     #[arg(long, value_delimiter = ',')]
     always_test_components: Vec<String>,
+
+    /// List of protocols to enable (e.g., uniswap_v2,curve,balancer_v2)
+    /// If not provided, defaults to chain-specific protocols
+    #[arg(long, value_delimiter = ',')]
+    protocols: Option<Vec<String>>,
 }
 
 impl Debug for Cli {
@@ -133,20 +142,57 @@ async fn main() -> miette::Result<()> {
     metrics::initialize_metrics();
     let metrics_task = metrics::create_metrics_exporter(cli.metrics_port).await?;
 
-    // Run the main application logic and metrics server in parallel
-    // If either fails, the other will be cancelled
-    tokio::select! {
-        result = run(cli) => {
-            result?;
+    // Start metrics server in background
+    let _metrics_handle = tokio::spawn(async move {
+        if let Err(e) = metrics_task
+            .await
+            .into_diagnostic()
+            .wrap_err("Metrics server task failed")
+        {
+            warn!("Metrics server error: {}", e);
         }
-        result = metrics_task => {
-            result
-                .into_diagnostic()
-                .wrap_err("Metrics server task panicked")??;
+    });
+
+    // Set up signal handling for graceful shutdown
+    let shutdown_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let shutdown_flag = shutdown_requested.clone();
+
+    tokio::spawn(async move {
+        match signal::ctrl_c().await {
+            Ok(()) => {
+                info!("Received Ctrl+C, initiating graceful shutdown");
+                shutdown_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            Err(err) => {
+                error!("Unable to listen for shutdown signal: {}", err);
+            }
+        }
+    });
+
+    // Run main application with signal support
+    let result = tokio::select! {
+        result = run(cli) => result,
+        _ = async {
+            loop {
+                if shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        } => {
+            info!("Application interrupted by signal");
+            Ok(())
+        }
+    };
+
+    // Force exit to prevent hanging on metrics server thread
+    match result {
+        Ok(_) => std::process::exit(0),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
         }
     }
-
-    Ok(())
 }
 
 async fn run(cli: Cli) -> miette::Result<()> {
@@ -174,16 +220,22 @@ async fn run(cli: Cli) -> miette::Result<()> {
 
     // Run streams in background tasks
     let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    let mut protocol_handle = None;
+    let mut rfq_handle = None;
+
     if !cli.disable_onchain {
         if let Ok(protocol_stream_processor) = ProtocolStreamProcessor::new(
             chain,
             cli.tycho_url.clone(),
             cli.tycho_api_key.clone(),
             cli.tvl_threshold,
+            cli.protocols.clone(),
         ) {
-            protocol_stream_processor
-                .run_stream(&all_tokens, tx.clone())
-                .await?;
+            protocol_handle = Some(
+                protocol_stream_processor
+                    .run_stream(&all_tokens, tx.clone())
+                    .await?,
+            );
         }
     }
     if !cli.disable_rfq {
@@ -193,9 +245,11 @@ async fn run(cli: Cli) -> miette::Result<()> {
             cli.max_simulations as usize,
             Duration::from_secs(cli.skip_messages_duration),
         ) {
-            rfq_stream_processor
-                .run_stream(&all_tokens, tx)
-                .await?;
+            rfq_handle = Some(
+                rfq_stream_processor
+                    .run_stream(&all_tokens, tx)
+                    .await?,
+            );
         }
     }
 
@@ -204,30 +258,84 @@ async fn run(cli: Cli) -> miette::Result<()> {
     // Process streams updates
     info!("Waiting for first protocol update...");
     let semaphore = Arc::new(Semaphore::new(cli.parallel_updates as usize));
-    while let Some(update) = rx.recv().await {
-        let update = match update {
-            Ok(u) => Arc::new(u),
-            Err(e) => {
-                warn!("{}", format_error_chain(&e));
-                continue;
-            }
-        };
 
-        let cli = cli.clone();
-        let rpc_tools = rpc_tools.clone();
-        let tycho_state = tycho_state.clone();
-        let permit = semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .into_diagnostic()
-            .wrap_err("Failed to acquire permit")?;
-        tokio::spawn(async move {
-            if let Err(e) = process_update(cli, chain, rpc_tools, tycho_state, &update).await {
-                warn!("{}", format_error_chain(&e));
+    loop {
+        tokio::select! {
+            // Monitor protocol stream termination
+            result = async {
+                if let Some(handle) = protocol_handle.take() {
+                    handle.await
+                } else {
+                    std::future::pending().await
+                }
+            }, if protocol_handle.is_some() => {
+                match result {
+                    Ok(()) => {
+                        error!("Protocol stream terminated unexpectedly");
+                        return Err(miette!("Protocol stream terminated, exiting application"));
+                    }
+                    Err(e) => {
+                        error!("Protocol stream panicked: {:?}", e);
+                        return Err(miette!("Protocol stream panicked, exiting application"));
+                    }
+                }
             }
-            drop(permit);
-        });
+
+            // Monitor RFQ stream termination
+            result = async {
+                if let Some(handle) = rfq_handle.take() {
+                    handle.await
+                } else {
+                    std::future::pending().await
+                }
+            }, if rfq_handle.is_some() => {
+                match result {
+                    Ok(()) => {
+                        warn!("RFQ stream terminated");
+                        // rfq_handle is already None due to take()
+                    }
+                    Err(e) => {
+                        warn!("RFQ stream panicked: {:?}", e);
+                        // rfq_handle is already None due to take()
+                    }
+                }
+            }
+
+            // Process incoming updates
+            update = rx.recv() => {
+                match update {
+                    Some(update) => {
+                        let update = match update {
+                            Ok(u) => Arc::new(u),
+                            Err(e) => {
+                                warn!("{}", format_error_chain(&e));
+                                continue;
+                            }
+                        };
+
+                        let cli = cli.clone();
+                        let rpc_tools = rpc_tools.clone();
+                        let tycho_state = tycho_state.clone();
+                        let permit = semaphore
+                            .clone()
+                            .acquire_owned()
+                            .await
+                            .into_diagnostic()
+                            .wrap_err("Failed to acquire permit")?;
+                        tokio::spawn(async move {
+                            if let Err(e) = process_update(cli, chain, rpc_tools, tycho_state, &update).await {
+                                warn!("{}", format_error_chain(&e));
+                            }
+                            drop(permit);
+                        });
+                    }
+                    None => {
+                        info!("All streams closed, exiting");
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     Ok(())
@@ -284,6 +392,16 @@ async fn process_update(
                     .states
                     .insert(id.clone(), state.clone());
             }
+            for (removed_id, removed_component) in update.update.removed_pairs.iter() {
+                current_state
+                    .components
+                    .remove(removed_id);
+                current_state.states.remove(removed_id);
+                current_state
+                    .component_ids_by_protocol
+                    .get_mut(&removed_component.protocol_system)
+                    .map(|id_set| id_set.remove(removed_id));
+            }
         }
         // Record block processing latency
         let latency_seconds =
@@ -315,45 +433,70 @@ async fn process_update(
     for (protocol, sync_state) in update.update.sync_states.iter() {
         metrics::record_protocol_sync_state(protocol, sync_state);
     }
+    let components_to_process = select_components_to_process(update, &tycho_state, &cli)?;
+    // Collect components that implement Validator for batch validation
+    let mut validator_components: Vec<(
+        &dyn Validator,
+        tycho_common::Bytes,
+        String, // protocol_system
+    )> = Vec::new();
 
-    // Process updated states in parallel
+    for (id, component, state) in &components_to_process {
+        let component_id = tycho_common::Bytes::from_str(id)
+            .unwrap_or_else(|_| tycho_common::Bytes::from(id.as_bytes()));
+
+        if let Some(validator) = get_validator(&component.protocol_system, state.as_ref()) {
+            validator_components.push((validator, component_id, component.protocol_system.clone()));
+        }
+    }
+
+    // Batch validate all components of this block in a single call
+    if !validator_components.is_empty() {
+        // Extract just the validator data (without protocol_system) for batch_validate_components
+        let validator_data: Vec<_> = validator_components
+            .iter()
+            .map(|(validator, id, _protocol)| (*validator, id.clone()))
+            .collect();
+
+        let results =
+            batch_validate_components(&cli.rpc_url, &validator_data, block.header.number).await;
+
+        for (i, result) in results.iter().enumerate() {
+            let component_id = &validator_components[i].1;
+            let protocol = &validator_components[i].2;
+            match result {
+                Ok(passed) => {
+                    if *passed {
+                        debug!(
+                            component_id = %component_id,
+                            "State validation passed"
+                        );
+                    } else {
+                        error!(
+                            component_id = %component_id,
+                            "State validation failed"
+                        );
+                        metrics::record_validation_failure(protocol);
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        component_id = %component_id,
+                        error = %e,
+                        "Error validating component"
+                    );
+                    metrics::record_validation_failure(protocol);
+                }
+            }
+        }
+    }
+
+    // Process all components (updated and stale) in parallel
     let semaphore = Arc::new(Semaphore::new(cli.parallel_simulations as usize));
     let mut tasks = Vec::new();
 
-    for (id, state) in update
-        .update
-        .states
-        .iter()
-        .take(cli.max_simulations as usize)
-    {
-        let component = match update.update_type {
-            UpdateType::Protocol => {
-                let states = &tycho_state
-                    .read()
-                    .map_err(|e| miette!("Failed to acquire read lock on Tycho state: {e}"))?
-                    .components;
-                match states.get(id) {
-                    Some(comp) => comp.clone(),
-                    None => {
-                        warn!(id=%id, "Component not found in cached protocol pairs. Potential causes: \
-                        there was an error decoding the component, the component was evicted from the cache, \
-                        or the component was never added to the cache. Skipping...");
-                        continue;
-                    }
-                }
-            }
-            UpdateType::Rfq => match update.update.new_pairs.get(id) {
-                Some(comp) => comp.clone(),
-                None => {
-                    warn!(id=%id, "Component not found in update's new pairs. Potential cause: \
-                    the `states` and `new_pairs` lists don't contain the same items. Skipping...");
-                    continue;
-                }
-            },
-        };
+    for (id, component, state) in components_to_process {
         let block = block.clone();
-        let state_id = id.clone();
-        let state = state.clone_box();
         let permit = semaphore
             .clone()
             .acquire_owned()
@@ -362,92 +505,8 @@ async fn process_update(
             .wrap_err("Failed to acquire permit")?;
 
         let task = tokio::spawn(async move {
-            let simulation_id = generate_simulation_id(&component.protocol_system, &state_id);
-            let result =
-                process_state(&simulation_id, chain, component, &block, state_id, state).await;
-            drop(permit);
-            result
-        });
-        tasks.push(task);
-    }
-
-    // Select states that were not updated in this block to test simulation and execution
-    let selected_ids = {
-        let current_state = tycho_state
-            .read()
-            .map_err(|e| miette!("Failed to acquire write lock on Tycho state: {e}"))?;
-
-        let mut all_selected_ids = Vec::new();
-
-        // Add component IDs from always_test_components that are not in the current update
-        for component_id in &cli.always_test_components {
-            if !update.update.states.keys().contains(component_id)
-                // Ensure that the component exists in the Tycho DB
-                && current_state.components.contains_key(component_id)
-            {
-                all_selected_ids.push(component_id.clone());
-            }
-        }
-
-        for component_ids in current_state
-            .component_ids_by_protocol
-            .values()
-        {
-            // Filter out IDs that are in the current update or already in all_selected_ids
-            let available_ids: Vec<_> = component_ids
-                .iter()
-                .filter(|id| {
-                    !update.update.states.keys().contains(id) && !all_selected_ids.contains(id)
-                })
-                .cloned()
-                .collect();
-
-            let protocol_selected_ids: Vec<_> = available_ids
-                .choose_multiple(
-                    &mut rand::rng(),
-                    (cli.max_simulations_stale as usize).min(available_ids.len()),
-                )
-                .cloned()
-                .collect();
-
-            all_selected_ids.extend(protocol_selected_ids);
-        }
-        all_selected_ids
-    };
-
-    for id in selected_ids {
-        let (component, state) = {
-            let current_state = tycho_state
-                .read()
-                .map_err(|e| miette!("Failed to acquire read lock on Tycho state: {e}"))?;
-
-            match (current_state.components.get(&id), current_state.states.get(&id)) {
-                (Some(comp), Some(state)) => (comp.clone(), state.clone()),
-                (None, _) => {
-                    error!(id=%id, "Component not found in saved protocol components.");
-                    continue;
-                }
-                (_, None) => {
-                    error!(id=%id, "State not found in saved protocol states");
-                    continue;
-                }
-            }
-        };
-
-        let block = block.clone();
-        let state_id = id.clone();
-        let state = state.clone_box();
-        let permit = semaphore
-            .clone()
-            .acquire_owned()
-            .await
-            .into_diagnostic()
-            .wrap_err("Failed to acquire permit")?;
-
-        let task = tokio::spawn(async move {
-            let simulation_id = generate_simulation_id(&component.protocol_system, &state_id);
-            let result =
-                process_state(&simulation_id, chain, component, &block, state_id, state).await;
+            let simulation_id = generate_simulation_id(&component.protocol_system, &id);
+            let result = process_state(&simulation_id, chain, component, &block, id, state).await;
             drop(permit);
             result
         });
@@ -467,11 +526,9 @@ async fn process_update(
         }
     }
 
-    info!("Collected {} execution data for block {}", block_execution_info.len(), block.number());
-
     if block_execution_info.is_empty() {
         warn!("No simulations were gathered for block {}", block.number());
-        return Ok(())
+        return Ok(());
     }
 
     let results =
@@ -520,10 +577,127 @@ async fn process_update(
         );
     }
     if n_reverts > 0 || n_failures > 0 {
-        warn!("Tested {total_simulations}, {n_reverts} simulations reverted, {n_failures} executions failed")
+        warn!("For block {}, simulated {total_simulations} executions, {n_reverts} simulations reverted, {n_failures} executions setup failed", block.number())
     }
 
     Ok(())
+}
+
+#[allow(clippy::type_complexity)]
+fn select_components_to_process(
+    update: &StreamUpdate,
+    tycho_state: &Arc<RwLock<TychoState>>,
+    cli: &Arc<Cli>,
+) -> miette::Result<Vec<(String, ProtocolComponent, Box<dyn ProtocolSim>)>> {
+    // Collect all components to process (both updated and stale) for batch validation
+    let mut components_to_process: Vec<(String, ProtocolComponent, Box<dyn ProtocolSim>)> =
+        Vec::new();
+
+    // Collect updated components
+    for (id, state) in update
+        .update
+        .states
+        .iter()
+        .take(cli.max_simulations as usize)
+    {
+        let component = match update.update_type {
+            UpdateType::Protocol => {
+                let states = &tycho_state
+                    .read()
+                    .map_err(|e| miette!("Failed to acquire read lock on Tycho state: {e}"))?
+                    .components;
+                match states.get(id) {
+                    Some(comp) => comp.clone(),
+                    None => {
+                        warn!(id=%id, "Component not found in cached protocol pairs. Potential causes: \
+                        there was an error decoding the component, the component was evicted from the cache, \
+                        or the component was never added to the cache. Skipping...");
+                        continue;
+                    }
+                }
+            }
+            UpdateType::Rfq => match update.update.new_pairs.get(id) {
+                Some(comp) => comp.clone(),
+                None => {
+                    warn!(id=%id, "Component not found in update's new pairs. Potential cause: \
+                    the `states` and `new_pairs` lists don't contain the same items. Skipping...");
+                    continue;
+                }
+            },
+        };
+        components_to_process.push((id.clone(), component, state.clone_box()));
+    }
+
+    if update.update_type == UpdateType::Protocol {
+        // Collect stale components (not updated in this block)
+        let selected_ids = {
+            let current_state = tycho_state
+                .read()
+                .map_err(|e| miette!("Failed to acquire write lock on Tycho state: {e}"))?;
+
+            let mut all_selected_ids = Vec::new();
+
+            for component_id in &cli.always_test_components {
+                if !update
+                    .update
+                    .states
+                    .keys()
+                    .contains(component_id) &&
+                    current_state
+                        .components
+                        .contains_key(component_id)
+                {
+                    all_selected_ids.push(component_id.clone());
+                }
+            }
+
+            for component_ids in current_state
+                .component_ids_by_protocol
+                .values()
+            {
+                let available_ids: Vec<_> = component_ids
+                    .iter()
+                    .filter(|id| {
+                        !update.update.states.keys().contains(id) && !all_selected_ids.contains(id)
+                    })
+                    .cloned()
+                    .collect();
+
+                let protocol_selected_ids: Vec<_> = available_ids
+                    .choose_multiple(
+                        &mut rand::rng(),
+                        (cli.max_simulations_stale as usize).min(available_ids.len()),
+                    )
+                    .cloned()
+                    .collect();
+
+                all_selected_ids.extend(protocol_selected_ids);
+            }
+            all_selected_ids
+        };
+
+        for id in &selected_ids {
+            let (component, state) = {
+                let current_state = tycho_state
+                    .read()
+                    .map_err(|e| miette!("Failed to acquire read lock on Tycho state: {e}"))?;
+
+                match (current_state.components.get(id), current_state.states.get(id)) {
+                    (Some(comp), Some(state)) => (comp.clone(), state.clone()),
+                    (None, _) => {
+                        error!(id=%id, "Component not found in saved protocol components.");
+                        continue;
+                    }
+                    (_, None) => {
+                        error!(id=%id, "State not found in saved protocol states");
+                        continue;
+                    }
+                }
+            };
+            components_to_process.push((id.clone(), component, state.clone_box()));
+        }
+    }
+    Ok(components_to_process)
 }
 
 #[tracing::instrument(
@@ -548,6 +722,7 @@ async fn process_state(
         error!("Component has less than 2 tokens, skipping...");
         return HashMap::new();
     }
+    let mut min_amount = BigUint::ZERO;
     // Get all the possible swap directions
     let swap_directions = match component.protocol_system.as_str() {
         HashflowClient::PROTOCOL_SYSTEM => {
@@ -564,6 +739,10 @@ async fn process_state(
                     return HashMap::new();
                 }
             };
+            // The smallest amount acceptable for hashflow is the amount of the first level, random
+            // small amounts are not accepted. The amount in will be capped to this value
+            let min_amount_in = BigUint::from(state.levels.levels[0].quantity.ceil() as u128);
+            min_amount = min_amount_in * BigUint::from(10u32).pow(state.base_token.decimals);
             vec![(state.base_token, state.quote_token)]
         }
         _ => component
@@ -575,7 +754,7 @@ async fn process_state(
     };
     let mut execution_infos = HashMap::new();
     for (i, (token_in, token_out)) in swap_directions.iter().enumerate() {
-        info!(
+        debug!(
             "Processing {} pool {state_id}, from {} to {}",
             component.protocol_system, token_in.symbol, token_out.symbol
         );
@@ -598,6 +777,10 @@ async fn process_state(
                     token_in = %token_in.address,
                     token_out = %token_out.address,
                     error = %format_error_chain(&e),
+                    "Get limits operation failed: {}", format_error_chain(&e)
+                );
+                debug!(
+                    event_type = "get_limits_failure",
                     state = ?state,
                     "Get limits operation failed: {}", format_error_chain(&e)
                 );
@@ -605,7 +788,7 @@ async fn process_state(
                 continue;
             }
         };
-        info!(
+        debug!(
             "Retrieved limits: max input {max_input} {}; max output {max_output} {}",
             token_in.symbol, token_out.symbol
         );
@@ -615,10 +798,20 @@ async fn process_state(
         let percentage = 0.001;
         let percentage_biguint = BigUint::from((percentage * 1000.0) as u32);
         let thousand = BigUint::from(1000u32);
-        let amount_in = (&max_input * &percentage_biguint) / &thousand;
+        let mut amount_in = (&max_input * &percentage_biguint) / &thousand;
         if amount_in.is_zero() {
-            warn!("Calculated amount_in is zero, skipping...");
+            debug!("Calculated amount_in is zero, skipping...");
             continue;
+        }
+        if min_amount != BigUint::ZERO && amount_in < min_amount {
+            amount_in = min_amount.clone();
+        }
+
+        // Cap amount_in to avoid "amount exceeds 96 bits" error (it happens for uniswap v3 and v4
+        // sometimes because the returned limits can be very high)
+        let max_96_bit = BigUint::from(2u128.pow(96) - 1);
+        if amount_in > max_96_bit {
+            amount_in = max_96_bit - BigUint::from(1u32);
         }
 
         // Get expected amount out using tycho-simulation and measure duration
@@ -642,6 +835,10 @@ async fn process_state(
                     token_out = %token_out.address,
                     amount_in = %amount_in,
                     error = %format_error_chain(&e),
+                    "Get amount out operation failed: {}", format_error_chain(&e)
+                );
+                debug!(
+                    event_type = "get_amount_out_failure",
                     state = ?state,
                     "Get amount out operation failed: {}", format_error_chain(&e)
                 );
@@ -651,7 +848,7 @@ async fn process_state(
         };
         let duration_seconds = start_time.elapsed().as_secs_f64();
         let expected_amount_out = amount_out_result.amount;
-        info!(
+        debug!(
             event_type = "get_amount_out_duration",
             token_in = %token_in.address,
             token_out = %token_out.address,
@@ -665,7 +862,7 @@ async fn process_state(
         // Sometimes the expected amount out might be zero (e.g. pool is depleted in one direction)
         // Then execution will fail with TychoRouter__UndefinedMinAmountOut
         if expected_amount_out == BigUint::ZERO {
-            continue
+            continue;
         }
         // Simulate execution amount out against the RPC
         let (solution, transaction) = match encode_swap(
@@ -722,7 +919,6 @@ fn process_execution_result(
     result: &TychoExecutionResult,
     execution_info: TychoExecutionInput,
     state_str: String,
-
     block: Block,
     chain_id: String,
     n_reverts: &mut i32,
@@ -730,7 +926,7 @@ fn process_execution_result(
 ) {
     match result {
         TychoExecutionResult::Success { gas_used, amount_out } => {
-            info!(
+            debug!(
                 event_type = "simulation_execution_success",
                 amount_out = amount_out.to_string(),
                 gas_used = gas_used,
@@ -755,21 +951,22 @@ fn process_execution_result(
                     100.0
             };
 
-            if slippage > 1.0 {
-                info!(
+            if !(-0.2..=0.2).contains(&slippage) {
+                error!(
                     event_type = "execution_slippage",
-                    state = ?state_str,
                     token_in = %execution_info.token_in,
                     token_out = %execution_info.token_out,
+                    amount_in = %execution_info.solution.given_amount,
                     simulated_amount  = %amount_out,
                     executed_amount = %execution_info.expected_amount_out,
                     slippage_ratio = slippage,
+                    state = ?state_str,
                     "Execution slippage: {:.2}%",
                     slippage
                 );
             } else {
                 // don't show the state in this case to not overwhelm the logs
-                info!(
+                debug!(
                     event_type = "execution_slippage",
                     token_in = %execution_info.token_in,
                     token_out = %execution_info.token_out,
@@ -814,19 +1011,22 @@ fn process_execution_result(
             } else {
                 String::new()
             };
-            let error_category = categorize_error(&error_name);
+            let error_category = categorize_error(revert_reason);
             error!(
                 event_type = "simulation_execution_failure",
                 error_message = %revert_reason,
                 error_name = %error_name,
                 error_category = %error_category,
-                state = ?state_str,
+                amount_in =%execution_info.solution.given_amount,
                 token_in = %execution_info.token_in,
                 token_out = %execution_info.token_out,
                 tenderly_url = %tenderly_url,
                 overwrites = %overwrites_string,
                 "Failed to simulate swap: {error_msg}"
             );
+            debug!(event_type = "simulation_execution_failure",
+                state = ?state_str,
+                "State of failed swap: {error_msg}");
             metrics::record_simulation_execution_failure(
                 &execution_info.protocol_system,
                 error_category,
@@ -840,6 +1040,7 @@ fn process_execution_result(
                 event_type = "simulation_execution_failure",
                 error_message = %error_msg,
                 error_category = %error_category,
+                amount_in =%execution_info.solution.given_amount,
                 token_in = %execution_info.token_in,
                 token_out = %execution_info.token_out,
                 "Failed to simulate swap: {error_msg}"
@@ -874,13 +1075,14 @@ fn extract_error_name(revert_reason: &str) -> String {
     }
 }
 
-fn categorize_error(error_name: &str) -> &'static str {
+fn categorize_error(error_message: &str) -> &'static str {
     // We can add more categories here when we find new meaningful ones
-    match error_name {
+    match error_message {
         e if e.contains("Couldn't find storage slot") => "Storage slot not found",
         e if e.contains("TychoRouter__NegativeSlippage") => "TychoRouter__NegativeSlippage",
         e if e.contains("0xf7bf5832") => "Fee token", /* Decodes to TychoRouter__AmountOutNotFullyReceived */
         e if e.contains("UniswapV2: K") => "Fee token",
+        e if e.contains("Insufficient balance for amount + tax") => "Fee token",
         _ => "other",
     }
 }

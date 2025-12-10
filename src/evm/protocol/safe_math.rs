@@ -116,6 +116,135 @@ pub fn _construc_result_i256(res: Option<I256>) -> Result<I256, SimulationError>
     }
 }
 
+/// Computes the integer square root of a U512 value using Newton's method.
+///
+/// Returns the floor of the square root.
+///
+/// # Algorithm
+///
+/// Uses Newton's method iteration:
+/// - Start with initial guess based on bit length
+/// - Iterate: x_new = (x + n/x) / 2
+/// - Stop when convergence is reached or value stops decreasing
+pub fn sqrt_u512(value: U512) -> U512 {
+    // Handle zero case
+    if value == U512::ZERO {
+        return U512::ZERO;
+    }
+
+    // Handle small values
+    if value == U512::from(1u32) {
+        return U512::from(1u32);
+    }
+
+    // Initial guess: use bit length to get approximate starting point
+    // For square root, start with 2^(bits/2)
+    let bits = 512 - value.leading_zeros();
+    let mut result = U512::from(1u32) << (bits / 2);
+
+    // Newton's method iteration for square root
+    // x_new = (x + n/x) / 2
+    let mut decreasing = false;
+    loop {
+        // Calculate: (value / result + result) / 2
+        let division = value / result;
+        let iter = (division + result) / U512::from(2u32);
+
+        // Check convergence
+        if iter == result {
+            // Hit fixed point, we're done
+            break;
+        }
+
+        if iter > result {
+            if decreasing {
+                // Was decreasing, now increasing - we've converged
+                break;
+            }
+            // Limit increase to prevent slow convergence
+            result =
+                if iter > result * U512::from(2u32) { result * U512::from(2u32) } else { iter };
+        } else {
+            // Converging downwards
+            decreasing = true;
+            result = iter;
+        }
+    }
+
+    result
+}
+
+/// Integer square root for U256, returning U256
+pub fn sqrt_u256(value: U256) -> Result<U256, SimulationError> {
+    if value == U256::ZERO {
+        return Ok(U256::ZERO);
+    }
+
+    let bits = 256 - value.leading_zeros();
+    let mut remainder = U256::ZERO;
+    let mut temp = U256::ZERO;
+    let result = compute_karatsuba_sqrt(value, &mut remainder, &mut temp, bits);
+
+    // Extract lower 256 bits
+    let limbs = result.as_limbs();
+    Ok(U256::from_limbs([limbs[0], limbs[1], limbs[2], limbs[3]]))
+}
+
+/// Recursive Karatsuba square root implementation
+/// Computes sqrt(x) and stores remainder in r
+/// Uses temp variable t for intermediate calculations
+/// Ref: https://hal.inria.fr/file/index/docid/72854/filename/RR-3805.pdf
+fn compute_karatsuba_sqrt(x: U256, r: &mut U256, t: &mut U256, bits: usize) -> U256 {
+    // Base case: use simple method for small numbers
+    if bits <= 64 {
+        let x_small = x.as_limbs()[0];
+        let result = (x_small as f64).sqrt() as u64;
+        *r = x - U256::from(result * result);
+        return U256::from(result);
+    }
+
+    // Divide-and-conquer approach
+    // Split into quarters: process b bits at a time where b = bits/4
+    let b = bits / 4;
+
+    // q = x >> (2*b)  -- extract upper bits
+    let mut q = x >> (b * 2);
+
+    // Recursively compute sqrt of upper portion
+    let mut s = compute_karatsuba_sqrt(q, r, t, bits - b * 2);
+
+    // Build mask for extracting bits: (1 << (2*b)) - 1
+    *t = (U256::from(1u32) << (b * 2)) - U256::from(1u32);
+
+    // Extract middle bits and combine with remainder from recursive call
+    *r = (*r << b) | ((x & *t) >> b);
+
+    // Divide: t = r / (2*s), with quotient q and remainder r
+    s <<= 1;
+    q = *r / s;
+    *r -= q * s;
+
+    // Build s = (s << (b-1)) + q
+    s = (s << (b - 1)) + q;
+
+    // Extract lower b bits
+    *t = (U256::from(1u32) << b) - U256::from(1u32);
+    *r = (*r << b) | (x & *t);
+
+    // Compute q^2
+    let q_squared = q * q;
+
+    // Adjust if remainder is too small
+    if *r < q_squared {
+        *t = (s << 1) - U256::from(1u32);
+        *r += *t;
+        s -= U256::from(1u32);
+    }
+
+    *r -= q_squared;
+    s
+}
+
 #[cfg(test)]
 mod safe_math_tests {
     use std::str::FromStr;
@@ -389,5 +518,34 @@ mod safe_math_tests {
         if is_ok {
             assert_eq!(res.unwrap(), expected);
         }
+    }
+
+    #[test]
+    fn test_sqrt_u512() {
+        // Test edge cases
+        assert_eq!(sqrt_u512(U512::ZERO), U512::ZERO);
+        assert_eq!(sqrt_u512(U512::from(1u32)), U512::from(1u32));
+
+        // Test small perfect squares
+        assert_eq!(sqrt_u512(U512::from(4u32)), U512::from(2u32));
+        assert_eq!(sqrt_u512(U512::from(100u32)), U512::from(10u32));
+        assert_eq!(sqrt_u512(U512::from(10000u32)), U512::from(100u32));
+        assert_eq!(sqrt_u512(U512::from(1000000u32)), U512::from(1000u32));
+
+        // For non-perfect squares, should return floor of sqrt
+        assert_eq!(sqrt_u512(U512::from(2u32)), U512::from(1u32)); // sqrt(2) ≈ 1.41
+        assert_eq!(sqrt_u512(U512::from(3u32)), U512::from(1u32)); // sqrt(3) ≈ 1.73
+        assert_eq!(sqrt_u512(U512::from(5u32)), U512::from(2u32)); // sqrt(5) ≈ 2.23
+        assert_eq!(sqrt_u512(U512::from(8u32)), U512::from(2u32)); // sqrt(8) ≈ 2.82
+        assert_eq!(sqrt_u512(U512::from(10u32)), U512::from(3u32)); // sqrt(10) ≈ 3.16
+        assert_eq!(sqrt_u512(U512::from(15u32)), U512::from(3u32)); // sqrt(15) ≈ 3.87
+        assert_eq!(sqrt_u512(U512::from(99u32)), U512::from(9u32)); // sqrt(99) ≈ 9.94
+
+        // Test large values
+        let large = U512::from_str("1000000000000000000000000000000000000").unwrap();
+        let sqrt_large = sqrt_u512(large);
+        // Verify that sqrt_large^2 <= large < (sqrt_large + 1)^2
+        assert!(sqrt_large * sqrt_large <= large);
+        assert!((sqrt_large + U512::from(1u32)) * (sqrt_large + U512::from(1u32)) > large);
     }
 }

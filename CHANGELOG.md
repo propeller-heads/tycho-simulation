@@ -1,3 +1,291 @@
+## [0.214.0](https://github.com/propeller-heads/tycho-simulation/compare/0.213.2...0.214.0) (2025-12-10)
+
+
+### Features
+
+* Add ERC4626 in integration test ([822613a](https://github.com/propeller-heads/tycho-simulation/commit/822613a58ffc8fa5a01a79900e1c9dd022639d6e))
+* Add ERC4626 protocol implementation ([ef9a9e2](https://github.com/propeller-heads/tycho-simulation/commit/ef9a9e22768854ec03f049e1dc163f506faba2f4))
+* Add ERC4626 to default protocol ([a29528c](https://github.com/propeller-heads/tycho-simulation/commit/a29528cfc1523a6012d9d2b7f7ed9b0ab2a22338))
+* Add pool asset balance to ERC4626 decoding ([11b2156](https://github.com/propeller-heads/tycho-simulation/commit/11b21569c84008dfb549af4eaf662269a1ec6871))
+* Add pool total supply to ERC4626 state decoding ([e32d213](https://github.com/propeller-heads/tycho-simulation/commit/e32d213844a9ab880848d8a1d1b31ff5c91019b4))
+* get total_supply by vm instead of balance ([9c495ef](https://github.com/propeller-heads/tycho-simulation/commit/9c495ef77741d54d06d2d94a03c8275c17c20920))
+
+
+### Bug Fixes
+
+* ERC4626 pool total supply fallback to max_redeem ([4741719](https://github.com/propeller-heads/tycho-simulation/commit/4741719e327004f8186e74ecc269b07a53a2a885))
+
+## [0.213.2](https://github.com/propeller-heads/tycho-simulation/compare/0.213.1...0.213.2) (2025-12-10)
+
+
+### Bug Fixes
+
+* add unichain default min days to token fetch util fn ([824f772](https://github.com/propeller-heads/tycho-simulation/commit/824f772c48c0bf977bb92de526f0acf36587a847))
+* log panics on the price printer ([414374c](https://github.com/propeller-heads/tycho-simulation/commit/414374c476c7e8e2b27ff3642a187ee02acb1b0f))
+* only require RPC_URL on ethereum price printer ([9895ba4](https://github.com/propeller-heads/tycho-simulation/commit/9895ba425c55d58fe4a18e96ada0713f7b84d29a))
+
+## [0.213.1](https://github.com/propeller-heads/tycho-simulation/compare/0.213.0...0.213.1) (2025-12-10)
+
+
+### Bug Fixes
+
+* derive amount_out with get_amount_out in swap_to_price ([538ae0a](https://github.com/propeller-heads/tycho-simulation/commit/538ae0ae478e5682b8a36d13951225276020a229))
+
+## [0.213.0](https://github.com/propeller-heads/tycho-simulation/compare/0.212.0...0.213.0) (2025-12-09)
+
+
+### Features
+
+* Implement swap_to_price method in UniswapV4State ([3ca1948](https://github.com/propeller-heads/tycho-simulation/commit/3ca1948f7b8d28dbd89b8ec5c8184b8739c4ea36))
+
+## [0.212.0](https://github.com/propeller-heads/tycho-simulation/compare/0.211.4...0.212.0) (2025-12-09)
+
+
+### Features
+
+* add dependecy for test set up ([6e9f0bb](https://github.com/propeller-heads/tycho-simulation/commit/6e9f0bbcc57d71c8503667475b2110ad8a43c811))
+* add helper to convert hex string to BigUint ([3ac5226](https://github.com/propeller-heads/tycho-simulation/commit/3ac5226753740cde6b2c453c830d88325ec2d0c5))
+* add initial state and decoder for Lido ([ef2d8b5](https://github.com/propeller-heads/tycho-simulation/commit/ef2d8b5ad872c894012b8be3b122e960cd3716e5))
+* add parsing of the total_wrapped_st_eth for lido state ([4e1995a](https://github.com/propeller-heads/tycho-simulation/commit/4e1995a8512a42244309df0bbebf0d21baa9e3a1))
+* add pooled ETH and token tracking fields ([f6cdd72](https://github.com/propeller-heads/tycho-simulation/commit/f6cdd72433153b74fa5577020f4b390564bc774c))
+* add unit tests for lido state ([8b02221](https://github.com/propeller-heads/tycho-simulation/commit/8b02221a278c9bc50befc4fc9e36547231cd70d2))
+* add unit tests for wrapped stETH ([5021cfd](https://github.com/propeller-heads/tycho-simulation/commit/5021cfd05d02a3cbf35304e2c46d64af04cbd84f))
+
+
+### Bug Fixes
+
+* add balance set up to the test where required ([d517b33](https://github.com/propeller-heads/tycho-simulation/commit/d517b3345a300fc401f6771f0b1d1a339b3a91ac))
+* correct calculation logic ([9e572c9](https://github.com/propeller-heads/tycho-simulation/commit/9e572c989c45ccbc6e58a593ae90d218670ebd64))
+* put inputs in the correct order ([abe6e8b](https://github.com/propeller-heads/tycho-simulation/commit/abe6e8bee8d04317fbffdaf54fe529f75b6db3a0))
+* replace spot calculation with correct formula ([b403e40](https://github.com/propeller-heads/tycho-simulation/commit/b403e400ee110de7f362094514f946cfaacf3d3a))
+* use u256 operations ([06c490b](https://github.com/propeller-heads/tycho-simulation/commit/06c490b9798f9adff67dcb161b984b0df6dc1559))
+
+## [0.211.4](https://github.com/propeller-heads/tycho-simulation/compare/0.211.3...0.211.4) (2025-12-09)
+
+
+### Bug Fixes
+
+* Use little endian encoding in evm conversion utils ([cf0490b](https://github.com/propeller-heads/tycho-simulation/commit/cf0490b8e3588b944d4c692b398b165266e31761))
+
+## [0.211.3](https://github.com/propeller-heads/tycho-simulation/compare/0.211.2...0.211.3) (2025-12-08)
+
+
+### Bug Fixes
+
+* (cluster test) Overwrite Angstrom storage properly ([958e567](https://github.com/propeller-heads/tycho-simulation/commit/958e567d955687444bab2b5b6a6a6bc5cbf08d27))
+
+## [0.211.2](https://github.com/propeller-heads/tycho-simulation/compare/0.211.1...0.211.2) (2025-12-05)
+
+
+### Bug Fixes
+
+* Add state overwrites for an angstrom swap without attestation data ([9a0169f](https://github.com/propeller-heads/tycho-simulation/commit/9a0169ff53ca042a07b59aea621e803974a66934))
+* **quickstart:** Remove filter for uniswap_v4_hooks ([394afa7](https://github.com/propeller-heads/tycho-simulation/commit/394afa7d91f8f73563150462c608a32b33ced739))
+
+## [0.211.1](https://github.com/propeller-heads/tycho-simulation/compare/0.211.0...0.211.1) (2025-12-04)
+
+
+### Bug Fixes
+
+* update dependencies for svm-rs and svm-rs-builds to resolve build issues ([6ac0804](https://github.com/propeller-heads/tycho-simulation/commit/6ac0804d26b99d2efdbf3918c94cd0c01bca4b6b))
+
+## [0.211.0](https://github.com/propeller-heads/tycho-simulation/compare/0.210.0...0.211.0) (2025-12-04)
+
+
+### Features
+
+* add deposit assignment logic and new attributes to RocketPoolState ([110320d](https://github.com/propeller-heads/tycho-simulation/commit/110320d263217cc255d77f8f01d89689e2aa3c18))
+* add to RocketPoolState additional queue attributes and deposit assignment logic ([17ced17](https://github.com/propeller-heads/tycho-simulation/commit/17ced17adc22c7f25be0d746ea4e7e5696344978))
+* implement RocketPoolState with decoding logic and state management ([cb87b63](https://github.com/propeller-heads/tycho-simulation/commit/cb87b63b281c492e36ed2d1cdce80666ea9cfc4d))
+
+
+### Bug Fixes
+
+* add additional queue attributes to decoder tests ([520f27b](https://github.com/propeller-heads/tycho-simulation/commit/520f27bf4131c32942887b5305484a51bcb88e5b))
+* implement excess balance calculation and related withdrawal limits in RocketPoolState ([6127c06](https://github.com/propeller-heads/tycho-simulation/commit/6127c0641154c44b1edf53b0d4efd03146c0d4b3))
+* replace hardcoded ETH address with constant reference ([580144a](https://github.com/propeller-heads/tycho-simulation/commit/580144a4d16f36b30420265073a0ac910b5a91f0))
+
+## [0.210.0](https://github.com/propeller-heads/tycho-simulation/compare/0.209.1...0.210.0) (2025-12-03)
+
+
+### Features
+
+* implement swap_to_price method for PancakeswapV2State ([a29b49e](https://github.com/propeller-heads/tycho-simulation/commit/a29b49e11d733dcff459968d2054adf0cb9628fa))
+
+
+### Bug Fixes
+
+* adjust pancake v2 fee and fix tests ([bbf2dfd](https://github.com/propeller-heads/tycho-simulation/commit/bbf2dfd2eb2c9a6c4cb0fafb3c3197ba8e45ee44))
+
+## [0.209.1](https://github.com/propeller-heads/tycho-simulation/compare/0.209.0...0.209.1) (2025-12-02)
+
+
+### Bug Fixes
+
+* decode from error message instead of name ([b863df0](https://github.com/propeller-heads/tycho-simulation/commit/b863df02e12749bd709e84947414049d1a15125f))
+
+## [0.209.0](https://github.com/propeller-heads/tycho-simulation/compare/0.208.3...0.209.0) (2025-12-02)
+
+
+### Features
+
+* Add  swaps_to_price and querry_supply methods to UniswapV3State ([8f4d199](https://github.com/propeller-heads/tycho-simulation/commit/8f4d1999f81c3a0c81fefbef8847ee8d04573ded))
+* improve get_sqrt_price_q96 with faster sqrt calculation ([5ea8ace](https://github.com/propeller-heads/tycho-simulation/commit/5ea8ace4f22da209e6a2617d018b1e9da4b4efbe))
+
+## [0.208.3](https://github.com/propeller-heads/tycho-simulation/compare/0.208.2...0.208.3) (2025-12-02)
+
+
+### Bug Fixes
+
+* Limit token loading for integration test ([756b5bb](https://github.com/propeller-heads/tycho-simulation/commit/756b5bb0fd12f62d0c67894402fd6e6c47e16e5c))
+
+## [0.208.2](https://github.com/propeller-heads/tycho-simulation/compare/0.208.1...0.208.2) (2025-12-02)
+
+
+### Bug Fixes
+
+* **cluster-test:** Decrease slippage threshold to be logged ([ddf0828](https://github.com/propeller-heads/tycho-simulation/commit/ddf082855ce0731b91ad65b0157f37d4ada77c11))
+
+## [0.208.1](https://github.com/propeller-heads/tycho-simulation/compare/0.208.0...0.208.1) (2025-12-02)
+
+
+### Bug Fixes
+
+* **CI:** Bring back testing docs ([2577fd5](https://github.com/propeller-heads/tycho-simulation/commit/2577fd5762214b1f0844dc9277024deb8f89b7b0))
+
+## [0.208.0](https://github.com/propeller-heads/tycho-simulation/compare/0.207.0...0.208.0) (2025-12-01)
+
+
+### Features
+
+* add swap_to_price and query_supply methods for UniswapV2State ([b8aa3b7](https://github.com/propeller-heads/tycho-simulation/commit/b8aa3b74557efc6bb6491cdac0905b91bd4b6a32))
+
+## [0.207.0](https://github.com/propeller-heads/tycho-simulation/compare/0.206.2...0.207.0) (2025-11-28)
+
+
+### Features
+
+* Allow passing protocols as cli args ([f53a990](https://github.com/propeller-heads/tycho-simulation/commit/f53a990dee51f51b984cfebd1ccf6436aae5a743))
+
+
+### Bug Fixes
+
+* Exit application when protocol stream terminates ([47f1e95](https://github.com/propeller-heads/tycho-simulation/commit/47f1e95e6aa45732f6e9129e0c0b20e5fca27ed5))
+
+## [0.206.2](https://github.com/propeller-heads/tycho-simulation/compare/0.206.1...0.206.2) (2025-11-28)
+
+
+### Bug Fixes
+
+* **cluster-test:** Cap min amount in for Hashflow ([0cf166f](https://github.com/propeller-heads/tycho-simulation/commit/0cf166f79f938c570914f5355252972dc87641a5))
+* Don't allow the amount in to be bigger than 96 bits ([3754f18](https://github.com/propeller-heads/tycho-simulation/commit/3754f186f6d915cc858315353e78f1e861ec2e51))
+
+## [0.206.1](https://github.com/propeller-heads/tycho-simulation/compare/0.206.0...0.206.1) (2025-11-28)
+
+
+### Bug Fixes
+
+* **CI:** Temporarily don't run docs tests ([b0f1fba](https://github.com/propeller-heads/tycho-simulation/commit/b0f1fba236614ac43800ab361dc18d8918508701))
+* **EVMPoolState:** After swapping, set the spot prices correctly ([8bfd22c](https://github.com/propeller-heads/tycho-simulation/commit/8bfd22c51cdd15ee7e4bbc1353feb305796d2a6a))
+* Fix test ([7c8a30c](https://github.com/propeller-heads/tycho-simulation/commit/7c8a30ce1a3384ad72fc62c93765112551d617ac))
+
+## [0.206.0](https://github.com/propeller-heads/tycho-simulation/compare/0.205.0...0.206.0) (2025-11-26)
+
+
+### Features
+
+* Add validation for curve ([e87a96a](https://github.com/propeller-heads/tycho-simulation/commit/e87a96a8247752785a082b7c0d3f199fb264ff55))
+* Metric for failed validations ([6ab9e6e](https://github.com/propeller-heads/tycho-simulation/commit/6ab9e6e168d7cc7fa366b16dd62687a85455b584))
+* Split validation in two steps for batching ([39a0e78](https://github.com/propeller-heads/tycho-simulation/commit/39a0e7844f70a78b0536551aad25cbe86c4967d3))
+* Validator trait + implementation for USV2 ([e8614ac](https://github.com/propeller-heads/tycho-simulation/commit/e8614ac971c13d42075400d927d3b6e732c705fb))
+
+
+### Bug Fixes
+
+* **cluster-test:** Handle failures in the run() method nicely ([28b2f9c](https://github.com/propeller-heads/tycho-simulation/commit/28b2f9c583445fb13bad4203e2d1a4599622a96e))
+* gate the validation module behind the evm feature ([8978571](https://github.com/propeller-heads/tycho-simulation/commit/8978571251a223efac61c8ef06ff739ac18388fb))
+* In validations RPC calls, handle each result individually ([a2baaf6](https://github.com/propeller-heads/tycho-simulation/commit/a2baaf62c5e2900ca950e2c16aea9c599a970b88))
+* Remove removed ids from the TychoState ([3345b14](https://github.com/propeller-heads/tycho-simulation/commit/3345b141ac5a6e4b5eba095430985f9baa089dae))
+
+## [0.205.0](https://github.com/propeller-heads/tycho-simulation/compare/0.204.0...0.205.0) (2025-11-26)
+
+
+### Features
+
+* remove uniswap_v4 from exchanges requiring filters ([db4154f](https://github.com/propeller-heads/tycho-simulation/commit/db4154fc7147f1bab48082e9afc7376a20cd9687))
+
+## [0.204.0](https://github.com/propeller-heads/tycho-simulation/compare/0.203.1...0.204.0) (2025-11-26)
+
+
+### Features
+
+* remove filters for integration testing for Curve ([f4cdf2b](https://github.com/propeller-heads/tycho-simulation/commit/f4cdf2b09b22d519932305a6f17054e6e4993853))
+
+## [0.203.1](https://github.com/propeller-heads/tycho-simulation/compare/0.203.0...0.203.1) (2025-11-25)
+
+
+### Bug Fixes
+
+* Remove removed ids from the TychoState ([b8c7610](https://github.com/propeller-heads/tycho-simulation/commit/b8c76106ece6e455c165e9c72c533daae13da93c))
+
+## [0.203.0](https://github.com/propeller-heads/tycho-simulation/compare/0.202.2...0.203.0) (2025-11-24)
+
+
+### Features
+
+* **cluster-test:** Track current absolute slippage as gauge ([98c7145](https://github.com/propeller-heads/tycho-simulation/commit/98c714560495bb6129b9bb5d362ed7a9359fd7ab))
+
+## [0.202.2](https://github.com/propeller-heads/tycho-simulation/compare/0.202.1...0.202.2) (2025-11-21)
+
+
+### Bug Fixes
+
+* **cluster-test:** Demote most info! to debug! ([3624ee5](https://github.com/propeller-heads/tycho-simulation/commit/3624ee537a5d925cc8c0e2ace84250feb5c78427))
+
+## [0.202.1](https://github.com/propeller-heads/tycho-simulation/compare/0.202.0...0.202.1) (2025-11-21)
+
+
+### Bug Fixes
+
+* add pool_removed to AngstromHookHandler init ([3d43ba6](https://github.com/propeller-heads/tycho-simulation/commit/3d43ba65336edf2b1a9ee22693fddcac7d9f27db))
+
+## [0.202.0](https://github.com/propeller-heads/tycho-simulation/compare/0.201.3...0.202.0) (2025-11-21)
+
+
+### Features
+
+* Angstrom Hook Support ([1dbe025](https://github.com/propeller-heads/tycho-simulation/commit/1dbe0251a6d202462146a0034f3d884438d5c5d0))
+* AngstromHookHandler takes fees directly, not token map ([3ce1b9b](https://github.com/propeller-heads/tycho-simulation/commit/3ce1b9b7ba71d1cbfda64b505594b97c65dd7038))
+* Draft for angstrom implementation ([aa1ce31](https://github.com/propeller-heads/tycho-simulation/commit/aa1ce31c1406cd97c83849b874ae24c42e019557))
+
+
+### Bug Fixes
+
+* Add removed pool to delta transition ([b00651f](https://github.com/propeller-heads/tycho-simulation/commit/b00651fe76e8361936d2cdf87d8f6d52a8535182))
+* kill unwraps ([3c6f176](https://github.com/propeller-heads/tycho-simulation/commit/3c6f1760254dabe2d7b7515d796fbb6ad9aca3db))
+* Return err if angstrom pool removed ([92ce3f2](https://github.com/propeller-heads/tycho-simulation/commit/92ce3f2a732b7f5bf4f24841c9cd9aa04fe1194c))
+
+## [0.201.3](https://github.com/propeller-heads/tycho-simulation/compare/0.201.2...0.201.3) (2025-11-21)
+
+
+### Bug Fixes
+
+* revert locked cargo dependencies ([0c97f91](https://github.com/propeller-heads/tycho-simulation/commit/0c97f91bfccf4723754b1145753f4f8fde077991))
+
+## [0.201.2](https://github.com/propeller-heads/tycho-simulation/compare/0.201.1...0.201.2) (2025-11-21)
+
+
+### Bug Fixes
+
+* Show state when slippage <-1.0 ([76c1e32](https://github.com/propeller-heads/tycho-simulation/commit/76c1e329258c27e8e36bc70e5ac36ed50b6c79db))
+
+## [0.201.1](https://github.com/propeller-heads/tycho-simulation/compare/0.201.0...0.201.1) (2025-11-21)
+
+
+### Bug Fixes
+
+* fixes to fluid implementation ([33170f9](https://github.com/propeller-heads/tycho-simulation/commit/33170f9b3c4fe95760bf6143e56e91f144d2091a))
+
 ## [0.201.0](https://github.com/propeller-heads/tycho-simulation/compare/0.200.0...0.201.0) (2025-11-20)
 
 

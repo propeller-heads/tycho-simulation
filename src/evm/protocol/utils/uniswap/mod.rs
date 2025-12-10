@@ -3,7 +3,6 @@ use tycho_common::Bytes;
 
 pub(crate) mod liquidity_math;
 pub(crate) mod lp_fee;
-mod solidity_math;
 pub(crate) mod sqrt_price_math;
 pub(crate) mod swap_math;
 pub mod tick_list;
@@ -32,6 +31,8 @@ pub(crate) struct StepComputation {
 #[derive(Debug)]
 pub(crate) struct SwapResults {
     pub(crate) amount_calculated: I256,
+    pub(crate) amount_specified: I256,
+    pub(crate) amount_remaining: I256,
     pub(crate) sqrt_price: U256,
     pub(crate) liquidity: u128,
     pub(crate) tick: i32,
