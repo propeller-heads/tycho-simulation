@@ -10,7 +10,7 @@ use tycho_common::{
     models::token::Token,
     simulation::{
         errors::{SimulationError, TransitionError},
-        protocol_sim::{Balances, GetAmountOutResult, Price, ProtocolSim, Trade},
+        protocol_sim::{Balances, GetAmountOutResult, ProtocolSim, TargetPriceParams, Trade},
     },
     Bytes,
 };
@@ -851,27 +851,22 @@ impl ProtocolSim for UniswapV4State {
     ///
     /// Note: This implementation does not invoke hooks, as it is a query-only operation meant to
     /// determine available liquidity at a given price without executing an actual swap.
-    fn swap_to_price(
-        &self,
-        token_in: &Bytes,
-        token_out: &Bytes,
-        target_price: Price,
-    ) -> Result<Trade, SimulationError> {
+    fn swap_to_price(&self, params: TargetPriceParams) -> Result<Trade, SimulationError> {
         if self.liquidity == 0 {
             return Ok(Trade::new(BigUint::ZERO, BigUint::ZERO));
         }
 
         // Calculate total fee (protocol + LP fee) for V4
-        let zero_for_one = token_in < token_out;
+        let zero_for_one = params.token_in().address < params.token_out().address;
         let fee_pips = self
             .fees
             .calculate_swap_fees_pips(zero_for_one, None);
 
         clmm_swap_to_price(
             self.sqrt_price,
-            token_in,
-            token_out,
-            &target_price,
+            &params.token_in().address,
+            &params.token_out().address,
+            params.target_price(),
             fee_pips,
             Sign::Negative, // V4 uses negative for exact input
             |zero_for_one, amount_specified, sqrt_price_limit| {
@@ -917,7 +912,7 @@ mod tests {
     use rstest::rstest;
     use serde_json::Value;
     use tycho_client::feed::{synchronizer::ComponentWithState, BlockHeader};
-    use tycho_common::models::Chain;
+    use tycho_common::{models::Chain, simulation::protocol_sim::Price};
 
     use super::*;
     use crate::{
@@ -967,6 +962,30 @@ mod tests {
         Token::new(
             &Bytes::from_str("0x0000000000000000000000000000000000000000").unwrap(),
             "ETH",
+            18,
+            0,
+            &[Some(10_000)],
+            Default::default(),
+            100,
+        )
+    }
+
+    fn token_x() -> Token {
+        Token::new(
+            &Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap(),
+            "X",
+            18,
+            0,
+            &[Some(10_000)],
+            Default::default(),
+            100,
+        )
+    }
+
+    fn token_y() -> Token {
+        Token::new(
+            &Bytes::from_str("0x0000000000000000000000000000000000000002").unwrap(),
+            "Y",
             18,
             0,
             &[Some(10_000)],
@@ -1916,14 +1935,14 @@ mod tests {
     fn test_swap_to_price_price_too_high() {
         let pool = create_basic_v4_test_pool();
 
-        let token_x = Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap();
-        let token_y = Bytes::from_str("0x0000000000000000000000000000000000000002").unwrap();
+        let token_x = token_x();
+        let token_y = token_y();
 
         // Price far above pool price - should return zero
         let target_price = Price::new(BigUint::from(10_000_000u64), BigUint::from(1_000_000u64));
 
         let trade = pool
-            .swap_to_price(&token_x, &token_y, target_price)
+            .swap_to_price(TargetPriceParams::new(token_x, token_y, target_price))
             .expect("swap_to_price failed");
         assert_eq!(
             trade.amount_in,
@@ -1950,13 +1969,13 @@ mod tests {
         )
         .unwrap();
 
-        let token_x = Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap();
-        let token_y = Bytes::from_str("0x0000000000000000000000000000000000000002").unwrap();
+        let token_x = token_x();
+        let token_y = token_y();
 
         let target_price = Price::new(BigUint::from(2_000_000u64), BigUint::from(1_000_000u64));
 
         let trade = pool
-            .swap_to_price(&token_x, &token_y, target_price)
+            .swap_to_price(TargetPriceParams::new(token_x, token_y, target_price))
             .expect("swap_to_price failed");
 
         assert_eq!(trade.amount_in, BigUint::zero());
@@ -1987,13 +2006,13 @@ mod tests {
         )
         .expect("Failed to create pool");
 
-        let token_x = Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap();
-        let token_y = Bytes::from_str("0x0000000000000000000000000000000000000002").unwrap();
+        let token_x = token_x();
+        let token_y = token_y();
 
         let target_price = Price::new(BigUint::from(2_000_000u64), BigUint::from(1_010_000u64));
 
         let trade = pool
-            .swap_to_price(&token_x, &token_y, target_price)
+            .swap_to_price(TargetPriceParams::new(token_x, token_y, target_price))
             .expect("swap_to_price failed");
 
         // Should still get a non-zero amount
@@ -2027,22 +2046,22 @@ mod tests {
         )
         .expect("Failed to create pool");
 
-        let token_x = Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap();
-        let token_y = Bytes::from_str("0x0000000000000000000000000000000000000002").unwrap();
+        let token_x = token_x();
+        let token_y = token_y();
 
         // Pool at 2.0 Y/X = 0.5 X/Y, swap_to_price moves price DOWN to target
 
         // Test zero_for_one direction (X -> Y, uses zero_for_one fee)
         let target_price = Price::new(BigUint::from(2_000_000u64), BigUint::from(1_010_000u64));
         let trade_zfo = pool
-            .swap_to_price(&token_x, &token_y, target_price.clone())
+            .swap_to_price(TargetPriceParams::new(token_x.clone(), token_y.clone(), target_price))
             .expect("swap_to_price failed");
 
         // Test one_for_zero direction (Y -> X, uses one_for_zero fee)
         let target_price_reverse =
             Price::new(BigUint::from(1_010_000u64), BigUint::from(2_040_000u64));
         let trade_ofz = pool
-            .swap_to_price(&token_y, &token_x, target_price_reverse)
+            .swap_to_price(TargetPriceParams::new(token_y, token_x, target_price_reverse))
             .expect("swap_to_price failed");
 
         assert!(
@@ -2066,28 +2085,28 @@ mod tests {
         // Test with various target prices using working format
         let pool = create_basic_v4_test_pool();
 
-        let token_x = Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap();
-        let token_y = Bytes::from_str("0x0000000000000000000000000000000000000002").unwrap();
+        let token_x = token_x();
+        let token_y = token_y();
 
         // Pool at 2.0 Y/X (20M/10M)
         // Test 1: Target close to spot (1.98 Y/X)
         let target_price = Price::new(BigUint::from(2_000_000u64), BigUint::from(1_010_000u64));
         let trade_close = pool
-            .swap_to_price(&token_x, &token_y, target_price)
+            .swap_to_price(TargetPriceParams::new(token_x.clone(), token_y.clone(), target_price))
             .expect("swap_to_price failed");
         assert!(trade_close.amount_out > BigUint::ZERO, "Expected non-zero for 1.98 Y/X target");
 
         // Test 2: Target further from spot (1.90 Y/X)
         let target_price = Price::new(BigUint::from(1_900_000u64), BigUint::from(1_000_000u64));
         let trade_medium = pool
-            .swap_to_price(&token_x, &token_y, target_price)
+            .swap_to_price(TargetPriceParams::new(token_x.clone(), token_y.clone(), target_price))
             .expect("swap_to_price failed");
         assert!(trade_medium.amount_out > BigUint::ZERO, "Expected non-zero for 1.90 Y/X target");
 
         // Test 3: Target far from spot (1.5 Y/X)
         let target_price = Price::new(BigUint::from(1_500_000u64), BigUint::from(1_000_000u64));
         let trade_far = pool
-            .swap_to_price(&token_x, &token_y, target_price)
+            .swap_to_price(TargetPriceParams::new(token_x, token_y, target_price))
             .expect("swap_to_price failed");
         assert!(trade_far.amount_out > BigUint::ZERO, "Expected non-zero for 1.5 Y/X target");
 
@@ -2133,15 +2152,15 @@ mod tests {
         )
         .expect("Failed to create pool");
 
-        let token_x = Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap();
-        let token_y = Bytes::from_str("0x0000000000000000000000000000000000000002").unwrap();
+        let token_x = token_x();
+        let token_y = token_y();
 
         // Test 1: Price just above spot price, too little to cover fees
         // target_price = Y/X = 1999750/1000250 (token_out/token_in)
         let target_price = Price::new(BigUint::from(1_999_750u64), BigUint::from(1_000_250u64));
 
         let trade = pool
-            .swap_to_price(&token_x, &token_y, target_price)
+            .swap_to_price(TargetPriceParams::new(token_x.clone(), token_y.clone(), target_price))
             .expect("swap_to_price failed");
         assert_eq!(
             trade.amount_in,
@@ -2159,7 +2178,7 @@ mod tests {
         let target_price = Price::new(BigUint::from(1_999_000u64), BigUint::from(1_001_000u64));
 
         let trade = pool
-            .swap_to_price(&token_x, &token_y, target_price)
+            .swap_to_price(TargetPriceParams::new(token_x, token_y, target_price))
             .expect("swap_to_price failed");
 
         // Should match V3 output exactly with same fees
@@ -2176,16 +2195,13 @@ mod tests {
         // Validates that swap_to_price amounts can be used with get_amount_out
         let pool = create_basic_v4_test_pool();
 
-        let token_x_addr = Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap();
-        let token_y_addr = Bytes::from_str("0x0000000000000000000000000000000000000002").unwrap();
-
-        let token_x = Token::new(&token_x_addr, "X", 18, 0, &[], Chain::Ethereum, 1);
-        let token_y = Token::new(&token_y_addr, "Y", 18, 0, &[], Chain::Ethereum, 1);
+        let token_x = token_x();
+        let token_y = token_y();
 
         // Get the trade from swap_to_price
         let target_price = Price::new(BigUint::from(2_000_000u64), BigUint::from(1_010_000u64));
         let trade = pool
-            .swap_to_price(&token_x_addr, &token_y_addr, target_price)
+            .swap_to_price(TargetPriceParams::new(token_x.clone(), token_y.clone(), target_price))
             .expect("swap_to_price failed");
         assert!(trade.amount_in > BigUint::ZERO, "Amount in should be positive");
 
@@ -2237,14 +2253,14 @@ mod tests {
         )
         .expect("Failed to create pool");
 
-        let token_x = Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap();
-        let token_y = Bytes::from_str("0x0000000000000000000000000000000000000002").unwrap();
+        let token_x = token_x();
+        let token_y = token_y();
 
         // Target price: 2_000_000/1_010_000 ≈ 1.98 Y/X
         let target_price = Price::new(BigUint::from(2_000_000u64), BigUint::from(1_010_000u64));
 
         let trade = pool
-            .swap_to_price(&token_x, &token_y, target_price)
+            .swap_to_price(TargetPriceParams::new(token_x, token_y, target_price))
             .expect("swap_to_price failed");
 
         // Should match V3's output exactly with same fees (0.3%)
