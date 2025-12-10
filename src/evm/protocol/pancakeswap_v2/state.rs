@@ -7,7 +7,7 @@ use tycho_common::{
     models::token::Token,
     simulation::{
         errors::{SimulationError, TransitionError},
-        protocol_sim::{Balances, GetAmountOutResult, ProtocolSim, TargetPriceParams, Trade},
+        protocol_sim::{Balances, GetAmountOutResult, ProtocolSim, SwapToPriceParams, Trade},
     },
     Bytes,
 };
@@ -101,7 +101,7 @@ impl ProtocolSim for PancakeswapV2State {
         cpmm_delta_transition(delta, reserve0_mut, reserve1_mut)
     }
 
-    fn swap_to_price(&self, params: TargetPriceParams) -> Result<Trade, SimulationError> {
+    fn swap_to_price(&self, params: &SwapToPriceParams) -> Result<Trade, SimulationError> {
         let zero2one = params.token_in().address < params.token_out().address;
         let (reserve_in, reserve_out) =
             if zero2one { (self.reserve0, self.reserve1) } else { (self.reserve1, self.reserve0) };
@@ -412,10 +412,11 @@ mod tests {
         let target_price = Price::new(BigUint::from(2u32), BigUint::from(5u32));
 
         let trade = state
-            .swap_to_price(TargetPriceParams::new(
+            .swap_to_price(&SwapToPriceParams::new(
                 token_in.clone(),
                 token_out.clone(),
                 target_price,
+                None,
             ))
             .unwrap();
 
@@ -462,7 +463,7 @@ mod tests {
         let target_price = Price::new(BigUint::from(1u32), BigUint::from(1u32));
 
         let trade = state
-            .swap_to_price(TargetPriceParams::new(token_in, token_out, target_price))
+            .swap_to_price(&SwapToPriceParams::new(token_in, token_out, target_price, None))
             .unwrap();
 
         assert_eq!(
@@ -493,7 +494,7 @@ mod tests {
             Price::new(u256_to_biguint(spot_price_num), u256_to_biguint(spot_price_den));
 
         let trade = state
-            .swap_to_price(TargetPriceParams::new(token_in, token_out, target_price))
+            .swap_to_price(&SwapToPriceParams::new(token_in, token_out, target_price, None))
             .unwrap();
 
         // At exact spot price, we should return zero amount
@@ -522,7 +523,7 @@ mod tests {
             Price::new(u256_to_biguint(spot_price_num), u256_to_biguint(spot_price_den));
 
         let trade = state
-            .swap_to_price(TargetPriceParams::new(token_in, token_out, target_price))
+            .swap_to_price(&SwapToPriceParams::new(token_in, token_out, target_price, None))
             .unwrap();
 
         assert!(
@@ -552,7 +553,7 @@ mod tests {
         let target_price = Price::new(price_numerator, price_denominator);
 
         let trade = state
-            .swap_to_price(TargetPriceParams::new(token_in, token_out, target_price))
+            .swap_to_price(&SwapToPriceParams::new(token_in, token_out, target_price, None))
             .unwrap();
 
         assert!(trade.amount_in > BigUint::ZERO, "Should require some input amount");
@@ -569,7 +570,7 @@ mod tests {
         let target_price = Price::new(BigUint::from(2u32), BigUint::from(3u32));
 
         let trade = state
-            .swap_to_price(TargetPriceParams::new(token_in, token_out, target_price))
+            .swap_to_price(&SwapToPriceParams::new(token_in, token_out, target_price, None))
             .unwrap();
         assert!(trade.amount_in > BigUint::ZERO, "Amount in should be non-zero");
         assert!(trade.amount_out > BigUint::ZERO, "Amount out should be non-zero");
@@ -592,7 +593,7 @@ mod tests {
         let target_price = Price::new(BigUint::from(1_950_000u128), BigUint::from(1_000_000u128));
 
         let trade = state
-            .swap_to_price(TargetPriceParams::new(token_in, token_out, target_price.clone()))
+            .swap_to_price(&SwapToPriceParams::new(token_in, token_out, target_price.clone(), None))
             .unwrap();
         assert!(trade.amount_out > BigUint::ZERO, "Should return amount out for valid price");
         assert!(trade.amount_in > BigUint::ZERO, "Should return amount in for valid price");
@@ -648,7 +649,7 @@ mod tests {
             Price::new(u256_to_biguint(above_limit_num), u256_to_biguint(above_limit_den));
 
         let trade_above_limit = pool
-            .swap_to_price(TargetPriceParams::new(usdc.clone(), dai.clone(), target_price))
+            .swap_to_price(&SwapToPriceParams::new(usdc.clone(), dai.clone(), target_price, None))
             .unwrap();
         assert_eq!(
             trade_above_limit.amount_out,
@@ -668,7 +669,7 @@ mod tests {
             Price::new(u256_to_biguint(below_limit_num), u256_to_biguint(below_limit_den));
 
         let trade_below_limit = pool
-            .swap_to_price(TargetPriceParams::new(usdc.clone(), dai.clone(), target_price))
+            .swap_to_price(&SwapToPriceParams::new(usdc.clone(), dai.clone(), target_price, None))
             .unwrap();
 
         assert!(
