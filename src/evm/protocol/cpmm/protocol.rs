@@ -214,12 +214,12 @@ impl ProtocolFee {
 pub fn cpmm_swap_to_price(
     reserve_in: U256,
     reserve_out: U256,
-    target_price: Price,
+    target_price_limit: &Price,
     fee: ProtocolFee,
 ) -> Result<Trade, SimulationError> {
     // Flip target pool price to swap price
-    let swap_price_num = biguint_to_u256(&target_price.denominator);
-    let swap_price_den = biguint_to_u256(&target_price.numerator);
+    let swap_price_num = biguint_to_u256(&target_price_limit.denominator);
+    let swap_price_den = biguint_to_u256(&target_price_limit.numerator);
 
     // Check reachability: target price must be above the spot price (with fees)
     // swap_price_num/swap_price_den >= (reserve_in * FEE_PRECISION) / (reserve_out *
