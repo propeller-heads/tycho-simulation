@@ -7,8 +7,8 @@ use tycho_common::models::token::Token;
 #[cfg(feature = "swap_to_price")]
 use tycho_simulation::swap_to_price::{
     strategies::{
-        BrentAndStrategy, BrentOrStrategy, BrentOriginalStrategy, BrentStrategy,
-        BlendedIqiSecantStrategy, ChandrupatlaStrategy, ConvexSearchStrategy,
+        BlendedIqiSecantStrategy, BrentAndStrategy, BrentOrStrategy, BrentOriginalStrategy,
+        BrentStrategy, ChandrupatlaStrategy, ConvexSearchStrategy, EVMChandrupatlaStrategy,
         HybridStrategy, IqiStrategy,
     },
     within_tolerance, ProtocolSimExt, SWAP_TO_PRICE_MAX_ITERATIONS,
@@ -82,7 +82,8 @@ pub async fn run_benchmark(
             ("iqi", Box::new(IqiStrategy)),                        // Simple IQI
             ("hybrid", Box::new(HybridStrategy)),                  // IQI + secant + bisection
             ("convex", Box::new(ConvexSearchStrategy)),            // Convex-aware search
-            ("chandrupatla", Box::new(ChandrupatlaStrategy::default())), // Chandrupatla's method
+            ("chandrupatla", Box::new(ChandrupatlaStrategy::default())), // Chandrupatla's method (archived)
+            ("evm_chandru", Box::new(EVMChandrupatlaStrategy::default())), // EVM Chandrupatla (TF/SciPy-based)
             ("blended_iqi", Box::new(BlendedIqiSecantStrategy)),   // Blended IQI + secant
         ];
         let _ = use_query_supply; // silence unused warning
@@ -279,7 +280,7 @@ pub async fn run_benchmark(
                         let bps = bps_f64.round() as i32;
 
                         // Format bps display - use decimal places for very small movements
-                        let bps_display = if bps_f64.abs() < 1.0 {
+                        let _bps_display = if bps_f64.abs() < 1.0 {
                             format!("{:.2}bps", bps_f64)
                         } else {
                             format!("{}bps", bps)
@@ -402,36 +403,36 @@ pub async fn run_benchmark(
                                 }
                             };
 
-                            if bench_result.status == "success" {
-                                // Check if converged within tolerance
-                                let converged =
-                                    within_tolerance(bench_result.actual_price, target_price);
+                            // if bench_result.status == "success" {
+                            //     // Check if converged within tolerance
+                            //     let converged =
+                            //         within_tolerance(bench_result.actual_price, target_price);
 
-                                let output = if bench_result.iterations == SWAP_TO_PRICE_MAX_ITERATIONS
-                                    || !converged
-                                {
-                                    format!(
-                                        "    +{:>7} [{:<14}]: {:>3} iters, {:.6} actual (diff: {:.4}%){}",
-                                        bps_display,
-                                        strategy_name,
-                                        bench_result.iterations,
-                                        bench_result.actual_price,
-                                        bench_result.convergence_error_bps / 100.0,
-                                        if !converged { " ⚠ NOT CONVERGED" } else { "" }
-                                    )
-                                } else {
-                                    format!(
-                                        "    +{:>7} [{:<14}]: {:>3} iters",
-                                        bps_display, strategy_name, bench_result.iterations
-                                    )
-                                };
-                                println!("{}", output);
-                            } else {
-                                println!(
-                                    "    +{:>7} [{:<14}]: {}",
-                                    bps_display, strategy_name, bench_result.status
-                                );
-                            }
+                            //     let output = if bench_result.iterations == SWAP_TO_PRICE_MAX_ITERATIONS
+                            //         || !converged
+                            //     {
+                            //         format!(
+                            //             "    +{:>7} [{:<14}]: {:>3} iters, {:.6} actual (diff: {:.4}%){}",
+                            //             bps_display,
+                            //             strategy_name,
+                            //             bench_result.iterations,
+                            //             bench_result.actual_price,
+                            //             bench_result.convergence_error_bps / 100.0,
+                            //             if !converged { " ⚠ NOT CONVERGED" } else { "" }
+                            //         )
+                            //     } else {
+                            //         format!(
+                            //             "    +{:>7} [{:<14}]: {:>3} iters",
+                            //             bps_display, strategy_name, bench_result.iterations
+                            //         )
+                            //     };
+                            //     println!("{}", output);
+                            // } else {
+                            //     println!(
+                            //         "    +{:>7} [{:<14}]: {}",
+                            //         bps_display, strategy_name, bench_result.status
+                            //     );
+                            // }
 
                             results.push(bench_result);
                         }

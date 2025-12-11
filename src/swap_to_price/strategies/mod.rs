@@ -3,7 +3,8 @@ pub mod history_based_archive;
 
 // Main strategies (best performers)
 pub use history_based::{
-    BrentAndStrategy, BrentOrStrategy, BrentOriginalStrategy, BrentStrategy, IqiStrategy,
+    BrentAndStrategy, BrentOrStrategy, BrentOriginalStrategy, BrentStrategy,
+    EVMChandrupatlaStrategy, IqiStrategy,
 };
 
 // Archived strategies (kept for reference)

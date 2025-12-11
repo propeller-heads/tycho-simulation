@@ -1150,3 +1150,149 @@ impl ProtocolSimExt for BrentOrStrategy {
         })
     }
 }
+
+// =============================================================================
+// Strategy 3: EVM Chandrupatla (uses crate::evm::chandrupatla module)
+// =============================================================================
+
+/// Wrapper for the EVM Chandrupatla implementation.
+///
+/// This strategy delegates to the `crate::evm::chandrupatla` module which
+/// implements Chandrupatla's algorithm following the TensorFlow Probability
+/// and SciPy reference implementations.
+///
+/// Unlike the archived `ChandrupatlaStrategy`, this version:
+/// - Uses the correct xi/phi criterion: `(1 - √(1-ξ)) < φ < √ξ`
+/// - Properly maintains the three-point bracket state (x1, x2, x3)
+/// - Supports configurable tolerance, max_iterations, min_divisor, and t_min
+pub struct EVMChandrupatlaStrategy {
+    /// Configuration for the Chandrupatla algorithm
+    pub config: crate::evm::chandrupatla::ChandrupatlaConfig,
+}
+
+impl Default for EVMChandrupatlaStrategy {
+    fn default() -> Self {
+        Self {
+            config: crate::evm::chandrupatla::ChandrupatlaConfig::default(),
+        }
+    }
+}
+
+impl EVMChandrupatlaStrategy {
+    /// Create with custom configuration
+    pub fn with_config(config: crate::evm::chandrupatla::ChandrupatlaConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl ProtocolSimExt for EVMChandrupatlaStrategy {
+    fn swap_to_price(
+        &self,
+        state: &dyn ProtocolSim,
+        target_price: f64,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<SwapToPriceResult, SwapToPriceError> {
+        let result = crate::evm::chandrupatla::swap_to_price(
+            state,
+            target_price,
+            token_in,
+            token_out,
+            Some(self.config),
+        )
+        .map_err(|e| match e {
+            crate::evm::chandrupatla::ChandrupatlaSearchError::TargetBelowSpot { target, spot } => {
+                SwapToPriceError::TargetBelowSpot { target, spot }
+            }
+            crate::evm::chandrupatla::ChandrupatlaSearchError::TargetAboveLimit {
+                target,
+                spot,
+                limit,
+            } => SwapToPriceError::TargetAboveLimit {
+                target,
+                spot,
+                limit,
+            },
+            crate::evm::chandrupatla::ChandrupatlaSearchError::ConvergenceFailure {
+                iterations,
+                target_price,
+                best_price,
+                error_bps,
+                amount,
+            } => SwapToPriceError::ConvergenceFailure {
+                iterations,
+                target_price,
+                best_price,
+                error_bps,
+                amount,
+            },
+            crate::evm::chandrupatla::ChandrupatlaSearchError::SimulationError(e) => {
+                SwapToPriceError::SimulationError(e)
+            }
+        })?;
+
+        Ok(SwapToPriceResult {
+            amount_in: result.amount_in,
+            amount_out: result.amount_out,
+            actual_price: result.actual_price,
+            gas: result.gas,
+            new_state: result.new_state,
+            iterations: result.iterations,
+        })
+    }
+
+    fn query_supply(
+        &self,
+        state: &dyn ProtocolSim,
+        target_price: f64,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<QuerySupplyResult, SwapToPriceError> {
+        let result = crate::evm::chandrupatla::query_supply(
+            state,
+            target_price,
+            token_in,
+            token_out,
+            Some(self.config),
+        )
+        .map_err(|e| match e {
+            crate::evm::chandrupatla::ChandrupatlaSearchError::TargetBelowSpot { target, spot } => {
+                SwapToPriceError::TargetBelowSpot { target, spot }
+            }
+            crate::evm::chandrupatla::ChandrupatlaSearchError::TargetAboveLimit {
+                target,
+                spot,
+                limit,
+            } => SwapToPriceError::TargetAboveLimit {
+                target,
+                spot,
+                limit,
+            },
+            crate::evm::chandrupatla::ChandrupatlaSearchError::ConvergenceFailure {
+                iterations,
+                target_price,
+                best_price,
+                error_bps,
+                amount,
+            } => SwapToPriceError::ConvergenceFailure {
+                iterations,
+                target_price,
+                best_price,
+                error_bps,
+                amount,
+            },
+            crate::evm::chandrupatla::ChandrupatlaSearchError::SimulationError(e) => {
+                SwapToPriceError::SimulationError(e)
+            }
+        })?;
+
+        Ok(QuerySupplyResult {
+            amount_in: result.amount_in,
+            amount_out: result.amount_out,
+            trade_price: result.trade_price,
+            gas: result.gas,
+            new_state: result.new_state,
+            iterations: result.iterations,
+        })
+    }
+}
