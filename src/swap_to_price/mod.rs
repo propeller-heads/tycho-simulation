@@ -2,10 +2,18 @@
 //!
 //! This module provides extended functionality for working with protocol simulations,
 //! including utilities for finding swap amounts to reach specific target prices.
+//!
+//! # Two Methods
+//!
+//! - **`swap_to_price`**: Find amount to move **spot price** to target. Returns error if
+//!   not within tolerance after max iterations.
+//! - **`query_supply`**: Find maximum trade where **trade price** stays at/below target.
+//!   Always returns best valid trade, even if far from target.
 
 pub mod strategies;
 
 use num_bigint::BigUint;
+use num_traits::ToPrimitive;
 use tycho_common::{
     models::token::Token,
     simulation::{errors::SimulationError, protocol_sim::ProtocolSim},
@@ -14,16 +22,37 @@ use tycho_common::{
 pub const SWAP_TO_PRICE_TOLERANCE: f64 = 0.00001; // 0.001%
 pub const SWAP_TO_PRICE_MAX_ITERATIONS: u32 = 100;
 
-/// Check if actual price is within tolerance of target price
-///
-/// Returns true if the relative difference between actual and target is <= SWAP_TO_PRICE_TOLERANCE
-pub fn within_tolerance(actual_price: f64, target_price: f64) -> bool {
-    let diff = (actual_price - target_price).abs();
-    let relative_diff = diff / target_price;
-    relative_diff <= SWAP_TO_PRICE_TOLERANCE
+/// Which price metric to track during the search
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PriceMetric {
+    /// Track the resulting spot price after the swap
+    /// Used by `swap_to_price` - we want to move the pool's marginal price to target
+    SpotPrice,
+    /// Track the trade price (execution price = amount_in / amount_out)
+    /// Used by `query_supply` - we want to find max trade at/below target price
+    TradePrice,
 }
 
-/// Result of a swap_to_price operation
+/// Check if actual price is within tolerance of target price (one-sided)
+///
+/// The target_price is a hard upper limit we must not exceed. This function returns true if:
+/// - `actual_price <= target_price` (hard upper limit), AND
+/// - `actual_price >= target_price * (1 - SWAP_TO_PRICE_TOLERANCE)` (within tolerance below)
+///
+/// This applies to both `swap_to_price` (tracking spot price) and `query_supply` (tracking
+/// trade price). In both cases, we're finding an amount where the resulting price approaches
+/// the target from below without exceeding it.
+pub fn within_tolerance(actual_price: f64, target_price: f64) -> bool {
+    // actual_price must not exceed target (hard limit)
+    if actual_price > target_price {
+        return false;
+    }
+    // actual_price must be within tolerance below target
+    let lower_bound = target_price * (1.0 - SWAP_TO_PRICE_TOLERANCE);
+    actual_price >= lower_bound
+}
+
+/// Result of a price-targeting operation (swap_to_price or query_supply)
 ///
 /// This result may represent either:
 /// - **Converged**: `actual_price` is within `SWAP_TO_PRICE_TOLERANCE` of target
@@ -45,10 +74,46 @@ pub fn within_tolerance(actual_price: f64, target_price: f64) -> bool {
 pub struct SwapToPriceResult {
     /// The amount of input token needed to achieve the target price
     pub amount_in: BigUint,
-    /// The actual final price achieved.
+    /// The amount of output token received
+    pub amount_out: BigUint,
+    /// The actual final price achieved (spot price or trade price depending on method).
     /// May differ from target if pool precision limits convergence (best achievable).
     /// Use `within_tolerance(actual_price, target_price)` to check if exact.
     pub actual_price: f64,
+    /// Gas cost of the operation
+    pub gas: BigUint,
+    /// The updated protocol state after the swap
+    pub new_state: Box<dyn ProtocolSim>,
+    /// Number of get_amount_out calls (iterations) needed
+    pub iterations: u32,
+}
+
+impl SwapToPriceResult {
+    /// Calculate the trade price (execution price) for this result
+    ///
+    /// Trade price = amount_in / amount_out (how much you pay per unit received)
+    pub fn trade_price(&self) -> Option<f64> {
+        let amount_in_f64 = self.amount_in.to_f64()?;
+        let amount_out_f64 = self.amount_out.to_f64()?;
+        if amount_out_f64 == 0.0 {
+            return None;
+        }
+        Some(amount_in_f64 / amount_out_f64)
+    }
+}
+
+/// Result of a query_supply operation
+///
+/// This represents the maximum trade where the trade price (execution price)
+/// stays at or below the target price.
+#[derive(Debug, Clone)]
+pub struct QuerySupplyResult {
+    /// The amount of input token for this trade
+    pub amount_in: BigUint,
+    /// The amount of output token received
+    pub amount_out: BigUint,
+    /// The trade price (execution price = amount_in / amount_out)
+    pub trade_price: f64,
     /// Gas cost of the operation
     pub gas: BigUint,
     /// The updated protocol state after the swap
@@ -84,8 +149,13 @@ pub enum SwapToPriceError {
     SimulationError(#[from] SimulationError),
 }
 
-/// Trait for different swap-to-price strategies
-pub trait SwapToPriceStrategy {
+/// Extension trait for ProtocolSim with price-targeting search strategies
+///
+/// This trait provides two methods for finding trade amounts based on price targets:
+///
+/// - **`swap_to_price`**: Find amount to move spot price to target (strict convergence)
+/// - **`query_supply`**: Find max trade at/below target trade price (best effort)
+pub trait ProtocolSimExt {
     /// Calculate the amount of input token needed to reach a target spot price
     ///
     /// This finds how much `token_in` to sell for `token_out` to reach a target price.
@@ -107,15 +177,9 @@ pub trait SwapToPriceStrategy {
     /// Result: How much DAI to sell for WETH to reach 3000 DAI/WETH
     /// ```
     ///
-    /// # Arguments
-    /// * `state` - The current protocol state
-    /// * `target_price` - The desired price of `token_out` in terms of `token_in`
-    ///   (i.e., `spot_price(token_out, token_in)`)
-    /// * `token_in` - The token being sold (quote token in the price)
-    /// * `token_out` - The token being bought (base token in the price)
-    ///
     /// # Returns
-    /// The amount in needed and the resulting state, or an error
+    /// - `Ok(result)` if converged within tolerance
+    /// - `Err(ConvergenceFailure)` if max iterations reached without convergence
     fn swap_to_price(
         &self,
         state: &dyn ProtocolSim,
@@ -123,7 +187,29 @@ pub trait SwapToPriceStrategy {
         token_in: &Token,
         token_out: &Token,
     ) -> Result<SwapToPriceResult, SwapToPriceError>;
+
+    /// Find the maximum trade where the trade price stays at or below the target
+    ///
+    /// This finds the largest amount of `token_in` that can be traded for `token_out`
+    /// while keeping the execution price (amount_in / amount_out) at or below `target_price`.
+    ///
+    /// # Difference from swap_to_price
+    /// - **Metric**: Tracks trade price (execution price), not spot price
+    /// - **On max iterations**: Returns best valid trade found, never errors for convergence
+    ///
+    /// # Returns
+    /// Always returns a result (may return zero trade if target is below spot)
+    fn query_supply(
+        &self,
+        state: &dyn ProtocolSim,
+        target_price: f64,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<QuerySupplyResult, SwapToPriceError>;
 }
+
+// Keep the old trait name as an alias for backward compatibility
+pub use ProtocolSimExt as SwapToPriceStrategy;
 
 #[cfg(test)]
 mod tests {
@@ -131,20 +217,48 @@ mod tests {
 
     #[test]
     fn test_within_tolerance() {
-        // 0.1% difference, should be within 0.1% tolerance
-        assert!(within_tolerance(1.001, 1.0));
+        // SWAP_TO_PRICE_TOLERANCE is 0.00001 (0.001%)
+        // Target is a hard upper limit - tolerance only applies below
 
-        // 0.05% difference, should be within tolerance
-        assert!(within_tolerance(1.0005, 1.0));
+        // Exactly at target - should pass
+        assert!(within_tolerance(1.0, 1.0));
 
-        // 2% difference, should NOT be within 0.1% tolerance
-        assert!(!within_tolerance(1.02, 1.0));
+        // Just below target (within tolerance) - should pass
+        assert!(within_tolerance(0.999995, 1.0)); // 0.0005% below
+        assert!(within_tolerance(0.99999, 1.0)); // 0.001% below (at boundary)
 
-        // Exactly at tolerance boundary (0.1%)
-        assert!(within_tolerance(1.001, 1.0));
+        // Above target - should NEVER pass (hard limit)
+        assert!(!within_tolerance(1.000001, 1.0)); // even tiny amount above
+        assert!(!within_tolerance(1.000005, 1.0)); // 0.0005% above
+        assert!(!within_tolerance(1.00001, 1.0)); // 0.001% above
+
+        // Too far below target - should NOT pass (not close enough)
+        assert!(!within_tolerance(0.9999, 1.0)); // 0.01% below
 
         // Test with larger numbers
-        assert!(within_tolerance(2000.0, 2001.0));
-        assert!(!within_tolerance(2000.0, 2100.0));
+        let target = 3000.0;
+        assert!(within_tolerance(target, target)); // exact
+        assert!(within_tolerance(target * 0.999995, target)); // within tolerance below
+        assert!(!within_tolerance(target * 1.000001, target)); // above target (fails)
+        assert!(!within_tolerance(target * 0.9999, target)); // too far below
+    }
+
+    #[test]
+    fn test_within_tolerance_edge_cases() {
+        // Very close to boundary
+        let target = 1000.0;
+        let tolerance = SWAP_TO_PRICE_TOLERANCE;
+
+        // Just inside tolerance
+        let just_inside = target * (1.0 - tolerance * 0.99);
+        assert!(within_tolerance(just_inside, target));
+
+        // Just outside tolerance
+        let just_outside = target * (1.0 - tolerance * 1.01);
+        assert!(!within_tolerance(just_outside, target));
+
+        // Just above target (should always fail)
+        let just_above = target * (1.0 + tolerance * 0.01);
+        assert!(!within_tolerance(just_above, target));
     }
 }

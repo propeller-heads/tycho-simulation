@@ -3,7 +3,7 @@ use num_traits::ToPrimitive;
 use tycho_common::{models::token::Token, simulation::protocol_sim::ProtocolSim};
 
 use crate::swap_to_price::{
-    within_tolerance, SwapToPriceResult, SwapToPriceError, SwapToPriceStrategy,
+    within_tolerance, QuerySupplyResult, SwapToPriceError, SwapToPriceResult, SwapToPriceStrategy,
     SWAP_TO_PRICE_MAX_ITERATIONS,
 };
 
@@ -575,6 +575,7 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
             let minimal_result = state.get_amount_out(BigUint::from(1u32), token_in, token_out)?;
             return Ok(SwapToPriceResult {
                 amount_in: BigUint::from(0u32),
+                amount_out: BigUint::from(0u32),
                 actual_price: spot_price,
                 gas: BigUint::from(0u32),
                 new_state: minimal_result.new_state,
@@ -665,6 +666,7 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
             if within_tolerance(price, target_price) {
                 return Ok(SwapToPriceResult {
                     amount_in: mid,
+                    amount_out: result.amount.clone(),
                     actual_price: price,
                     gas: result.gas.clone(),
                     new_state: result.new_state,
@@ -706,6 +708,7 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
             if within_tolerance(price, target_price) {
                 return Ok(SwapToPriceResult {
                     amount_in: low.clone(),
+                    amount_out: res.amount.clone(),
                     actual_price: price,
                     gas: res.gas.clone(),
                     new_state: res.new_state.clone(),
@@ -720,6 +723,7 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
             if within_tolerance(price, target_price) {
                 return Ok(SwapToPriceResult {
                     amount_in: high.clone(),
+                    amount_out: res.amount.clone(),
                     actual_price: price,
                     gas: res.gas.clone(),
                     new_state: res.new_state.clone(),
@@ -743,6 +747,7 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
                 if low_diff <= high_diff {
                     Ok(SwapToPriceResult {
                         amount_in: low.clone(),
+                        amount_out: low_res.amount.clone(),
                         actual_price: lp,
                         gas: low_res.gas.clone(),
                         new_state: low_res.new_state.clone(),
@@ -751,6 +756,7 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
                 } else {
                     Ok(SwapToPriceResult {
                         amount_in: high.clone(),
+                        amount_out: high_res.amount.clone(),
                         actual_price: hp,
                         gas: high_res.gas.clone(),
                         new_state: high_res.new_state.clone(),
@@ -762,6 +768,7 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
                 let lp = low_res.new_state.spot_price(token_out, token_in)?;
                 Ok(SwapToPriceResult {
                     amount_in: low.clone(),
+                    amount_out: low_res.amount.clone(),
                     actual_price: lp,
                     gas: low_res.gas.clone(),
                     new_state: low_res.new_state.clone(),
@@ -772,6 +779,7 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
                 let hp = high_res.new_state.spot_price(token_out, token_in)?;
                 Ok(SwapToPriceResult {
                     amount_in: high.clone(),
+                    amount_out: high_res.amount.clone(),
                     actual_price: hp,
                     gas: high_res.gas.clone(),
                     new_state: high_res.new_state.clone(),
@@ -800,6 +808,20 @@ impl<F: InterpolationFunction> SwapToPriceStrategy for InterpolationSearchStrate
                 })
             }
         }
+    }
+
+    fn query_supply(
+        &self,
+        _state: &dyn ProtocolSim,
+        _target_price: f64,
+        _token_in: &Token,
+        _token_out: &Token,
+    ) -> Result<QuerySupplyResult, SwapToPriceError> {
+        // InterpolationSearchStrategy does not support query_supply
+        // as it tracks spot price, not trade price
+        unimplemented!(
+            "InterpolationSearchStrategy does not support query_supply - use a history-based strategy instead"
+        )
     }
 }
 
