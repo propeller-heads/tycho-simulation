@@ -95,7 +95,7 @@ pub fn print_summary(results: &[BenchmarkResult]) {
     println!("BENCHMARK SUMMARY");
     println!("{}", "=".repeat(80));
 
-    #[cfg(feature = "swap_to_price")]
+    #[cfg(feature = "evm")]
     {
         use tycho_simulation::swap_to_price::{SWAP_TO_PRICE_MAX_ITERATIONS, SWAP_TO_PRICE_TOLERANCE};
         println!("\nConfiguration:");
@@ -357,15 +357,7 @@ pub fn print_summary(results: &[BenchmarkResult]) {
 }
 
 fn calculate_summary(results: &[BenchmarkResult]) -> Summary {
-    #[cfg(feature = "swap_to_price")]
     use tycho_simulation::swap_to_price::within_tolerance;
-    #[cfg(not(feature = "swap_to_price"))]
-    fn within_tolerance(actual: f64, target: f64) -> bool {
-        const SWAP_TO_PRICE_TOLERANCE: f64 = 0.001;
-        let diff = (actual - target).abs();
-        let relative_diff = diff / target;
-        relative_diff <= SWAP_TO_PRICE_TOLERANCE
-    }
 
     let total_scenarios = results.len();
 

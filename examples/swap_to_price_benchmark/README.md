@@ -23,10 +23,10 @@ This benchmark tests **multiple interpolation search strategies** across multipl
 export TYCHO_AUTH_KEY="your_api_key_here"
 
 # 2. Create snapshot (captures live Tycho stream data)
-cargo run --example swap_to_price_benchmark --features swap_to_price,evm --release -- snapshot
+cargo run --example swap_to_price_benchmark --features evm --release -- snapshot
 
 # 3. Run benchmark (auto-finds latest snapshot)
-cargo run --example swap_to_price_benchmark --features swap_to_price,evm --release -- run
+cargo run --example swap_to_price_benchmark --features evm --release -- run
 ```
 
 ## Prerequisites

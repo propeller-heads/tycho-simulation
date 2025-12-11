@@ -74,8 +74,8 @@ pub async fn run_benchmark(
         // Compare strategies with various parameter values
         let strategies: Vec<(&str, Box<dyn ProtocolSimExt>)> = vec![
             // Brent variants - testing different acceptance criteria
-            ("brent", Box::new(BrentStrategy)),           // 1% bracket only
-            ("step_1/2", Box::new(BrentOriginalStrategy)),  // half prev step only (classical)
+            ("brent_1%_bracket", Box::new(BrentStrategy)),           // 1% bracket only
+            ("brent_step_1/2", Box::new(BrentOriginalStrategy)),  // half prev step only (classical)
             // ("brkt_AND_step", Box::new(BrentAndStrategy)),  // both criteria (AND)
             // ("brkt_OR_step", Box::new(BrentOrStrategy)),    // either criterion (OR)
             // Other strategies for comparison
@@ -441,11 +441,6 @@ pub async fn run_benchmark(
                 }
             }
         }
-    }
-
-    #[cfg(not(feature = "swap_to_price"))]
-    {
-        return Err("This benchmark requires the 'swap_to_price' feature to be enabled".into());
     }
 
     Ok(results)

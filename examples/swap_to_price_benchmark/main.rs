@@ -191,61 +191,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            #[cfg(feature = "swap_to_price")]
-            {
-                let mode = if query_supply { "query_supply" } else { "swap_to_price" };
-                println!("Running benchmark on snapshot (mode: {})...", mode);
-                println!("   File: {}", snapshot_path.display());
+            let mode = if query_supply { "query_supply" } else { "swap_to_price" };
+            println!("Running benchmark on snapshot (mode: {})...", mode);
+            println!("   File: {}", snapshot_path.display());
 
-                // Run the benchmark
-                let results = benchmark::run_benchmark(&snapshot_path, query_supply).await?;
+            // Run the benchmark
+            let results = benchmark::run_benchmark(&snapshot_path, query_supply).await?;
 
-                // Create output directory
-                let output_dir = std::path::PathBuf::from("examples/swap_to_price_benchmark/runs");
-                if !output_dir.exists() {
-                    std::fs::create_dir_all(&output_dir)?;
-                }
-
-                // Save and print results
-                let output_path = reporting::save_results(&results, &output_dir)?;
-                reporting::print_summary(&results);
-
-                println!("\nResults saved to: {}", output_path.display());
+            // Create output directory
+            let output_dir = std::path::PathBuf::from("examples/swap_to_price_benchmark/runs");
+            if !output_dir.exists() {
+                std::fs::create_dir_all(&output_dir)?;
             }
 
-            #[cfg(not(feature = "swap_to_price"))]
-            {
-                println!("Loading snapshot...");
-                println!("   File: {}", snapshot_path.display());
+            // Save and print results
+            let output_path = reporting::save_results(&results, &output_dir)?;
+            reporting::print_summary(&results);
 
-                // Load and decode snapshot (everything is self-contained!)
-                let loaded = snapshot::load_snapshot(&snapshot_path).await?;
-
-                println!("\n✅ Snapshot loaded and decoded successfully!");
-                println!("   Block: {}", loaded.metadata.block_number);
-                println!("   Chain: {}", loaded.metadata.chain);
-                println!("   Captured: {}", loaded.metadata.captured_at.format("%Y-%m-%d %H:%M:%S UTC"));
-                println!("   States: {}", loaded.states.len());
-                println!("   Components: {}", loaded.components.len());
-
-                // Show some sample pools
-                println!("\n📊 Sample pools:");
-                for (pool_id, component) in loaded.components.iter().take(5) {
-                    let tokens_str = component
-                        .tokens
-                        .iter()
-                        .map(|t| t.symbol.as_str())
-                        .collect::<Vec<_>>()
-                        .join("/");
-                    println!("   {} - {} ({})", component.protocol_system, tokens_str, pool_id);
-                }
-
-                if loaded.components.len() > 5 {
-                    println!("   ... and {} more", loaded.components.len() - 5);
-                }
-
-                println!("\n💡 Tip: Add --features swap_to_price to run the full benchmark");
-            }
+            println!("\nResults saved to: {}", output_path.display());
         }
     }
 
