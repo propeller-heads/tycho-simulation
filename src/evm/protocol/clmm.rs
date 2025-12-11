@@ -53,10 +53,16 @@ where
 
     // Validate price limit is compatible with swap direction
     if zero_for_one && sqrt_price_limit >= sqrt_price {
-        return Ok(Trade::new(BigUint::ZERO, BigUint::ZERO));
+        return Err(SimulationError::InvalidInput(
+            "Target price is unreachable (already below current spot price)".to_string(),
+            None,
+        ));
     }
     if !zero_for_one && sqrt_price_limit <= sqrt_price {
-        return Ok(Trade::new(BigUint::ZERO, BigUint::ZERO));
+        return Err(SimulationError::InvalidInput(
+            "Target price is unreachable (already below current spot price)".to_string(),
+            None,
+        ));
     }
 
     // Use U160_MAX as "infinite" amount to find maximum available liquidity

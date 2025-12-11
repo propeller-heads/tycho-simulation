@@ -1941,19 +1941,9 @@ mod tests {
         // Price far above pool price - should return zero
         let target_price = Price::new(BigUint::from(10_000_000u64), BigUint::from(1_000_000u64));
 
-        let trade = pool
-            .swap_to_price(&SwapToPriceParams::new(token_x, token_y, target_price, None))
-            .expect("swap_to_price failed");
-        assert_eq!(
-            trade.amount_in,
-            BigUint::zero(),
-            "Expected zero amount in for price above pool price"
-        );
-        assert_eq!(
-            trade.amount_out,
-            BigUint::zero(),
-            "Expected zero amount out for price above pool price"
-        );
+        let result =
+            pool.swap_to_price(&SwapToPriceParams::new(token_x, token_y, target_price, None));
+        assert!(result.is_err(), "Should return error when target price is unreachable");
     }
 
     #[test]
@@ -2174,24 +2164,13 @@ mod tests {
         // target_price = Y/X = 1999750/1000250 (token_out/token_in)
         let target_price = Price::new(BigUint::from(1_999_750u64), BigUint::from(1_000_250u64));
 
-        let trade = pool
-            .swap_to_price(&SwapToPriceParams::new(
-                token_x.clone(),
-                token_y.clone(),
-                target_price,
-                None,
-            ))
-            .expect("swap_to_price failed");
-        assert_eq!(
-            trade.amount_in,
-            BigUint::zero(),
-            "Expected zero amount in when price doesn't cover fees"
-        );
-        assert_eq!(
-            trade.amount_out,
-            BigUint::zero(),
-            "Expected zero amount out when price doesn't cover fees"
-        );
+        let result = pool.swap_to_price(&SwapToPriceParams::new(
+            token_x.clone(),
+            token_y.clone(),
+            target_price,
+            None,
+        ));
+        assert!(result.is_err(), "Should return error when target price is unreachable");
 
         // Test 2: Price high enough to cover fees (0.1% higher)
         // target_price = Y/X = 1999000/1001000 (token_out/token_in)

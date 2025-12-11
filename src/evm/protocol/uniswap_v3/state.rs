@@ -972,19 +972,9 @@ mod tests {
         let target_price =
             Price::new(10_000_000u64.to_biguint().unwrap(), 1_000_000u64.to_biguint().unwrap());
 
-        let trade = pool
-            .swap_to_price(&SwapToPriceParams::new(token_x, token_y, target_price, None))
-            .expect("swap_to_price failed");
-        assert_eq!(
-            trade.amount_in,
-            BigUint::zero(),
-            "Expected zero amount in for price above pool price"
-        );
-        assert_eq!(
-            trade.amount_out,
-            BigUint::zero(),
-            "Expected zero amount out for price above pool price"
-        );
+        let result =
+            pool.swap_to_price(&SwapToPriceParams::new(token_x, token_y, target_price, None));
+        assert!(result.is_err(), "Should return error when target price is unreachable");
     }
 
     #[test]
@@ -1108,17 +1098,28 @@ mod tests {
             let target_price =
                 Price::new(buy_price.to_biguint().unwrap(), sell_price.to_biguint().unwrap());
 
-            let expected = BigUint::from_str(expected_str).expect("Failed to parse expected value");
-
-            let trade = pool
-                .swap_to_price(&SwapToPriceParams::new(
+            if expected_str == "0" {
+                let result = pool.swap_to_price(&SwapToPriceParams::new(
                     buy_token.clone(),
                     sell_token.clone(),
                     target_price,
                     None,
-                ))
-                .unwrap_or_else(|e| panic!("{} - query_supply failed: {:?}", test_id, e));
-            assert_eq!(trade.amount_out, expected, "{}", test_id);
+                ));
+                assert!(result.is_err(), "Should return error when target price is unreachable");
+            } else {
+                let expected =
+                    BigUint::from_str(expected_str).expect("Failed to parse expected value");
+
+                let trade = pool
+                    .swap_to_price(&SwapToPriceParams::new(
+                        buy_token.clone(),
+                        sell_token.clone(),
+                        target_price,
+                        None,
+                    ))
+                    .unwrap_or_else(|e| panic!("{} - query_supply failed: {:?}", test_id, e));
+                assert_eq!(trade.amount_out, expected, "{}", test_id);
+            }
         }
     }
 
@@ -1160,24 +1161,13 @@ mod tests {
         let target_price =
             Price::new(1_999_750u64.to_biguint().unwrap(), 1_000_250u64.to_biguint().unwrap());
 
-        let trade = pool
-            .swap_to_price(&SwapToPriceParams::new(
-                token_x.clone(),
-                token_y.clone(),
-                target_price,
-                None,
-            ))
-            .expect("swap_to_price failed");
-        assert_eq!(
-            trade.amount_in,
-            BigUint::zero(),
-            "Expected zero amount in when price doesn't cover fees"
-        );
-        assert_eq!(
-            trade.amount_out,
-            BigUint::zero(),
-            "Expected zero amount out when price doesn't cover fees"
-        );
+        let result = pool.swap_to_price(&SwapToPriceParams::new(
+            token_x.clone(),
+            token_y.clone(),
+            target_price,
+            None,
+        ));
+        assert!(result.is_err(), "Should return error when target price is unreachable");
 
         // Test 2: Price high enough to cover fees (0.1% higher)
         // target_price = Y/X = 1999000/1001000 (token_out/token_in)
