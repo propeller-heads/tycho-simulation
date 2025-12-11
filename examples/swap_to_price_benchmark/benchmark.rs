@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::Instant;
 use tycho_common::models::token::Token;
 
-#[cfg(feature = "swap_to_price")]
+#[cfg(feature = "evm")]
 use tycho_simulation::swap_to_price::{
     strategies::{
         BlendedIqiSecantStrategy, BrentAndStrategy, BrentOrStrategy, BrentOriginalStrategy,
@@ -66,7 +66,7 @@ pub async fn run_benchmark(
 
     let mut results = Vec::new();
 
-    #[cfg(feature = "swap_to_price")]
+    #[cfg(feature = "evm")]
     {
         // Filter for specific pool (None = all pools)
         const DEBUG_POOL_FILTER: Option<&str> = None;

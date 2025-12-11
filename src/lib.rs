@@ -18,7 +18,7 @@ pub use tycho_ethereum;
 
 #[cfg(feature = "evm")]
 pub mod evm;
-#[cfg(feature = "swap_to_price")]
+#[cfg(feature = "evm")]
 pub mod swap_to_price;
 pub mod protocol;
 #[cfg(feature = "rfq")]

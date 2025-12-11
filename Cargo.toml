@@ -140,15 +140,15 @@ tracing-appender = "0.2.3"
 [features]
 default = ["evm", "rfq"]
 network_tests = []
-swap_to_price = ["dep:rmp-serde"]
 evm = [
     "dep:foundry-config", "dep:foundry-evm", "dep:revm", "dep:revm-inspectors", "dep:alloy",
+    "dep:rmp-serde",
 ]
 rfq = ["dep:reqwest", "dep:async-trait", "dep:tokio-tungstenite", "dep:async-stream", "dep:http", "dep:prost"]
 
 [[example]]
 name = "swap_to_price_benchmark"
-required-features = ["swap_to_price", "evm"]
+required-features = ["evm"]
 
 [profile.bench]
 debug = true
