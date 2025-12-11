@@ -563,19 +563,19 @@ where
         token_in: &Token,
         token_out: &Token,
     ) -> Result<crate::evm::chandrupatla::SwapToPriceResult, crate::evm::chandrupatla::ChandrupatlaSearchError> {
-        crate::evm::chandrupatla::swap_to_price(self, target_price, token_in, token_out)
+        crate::evm::chandrupatla::swap_to_price(self, target_price, token_in, token_out, None)
     }
 
     /// Find the maximum trade where the trade price stays at or below the target.
     ///
-    /// See [`crate::evm::chandrupatla::query_supply`] for details.
+    /// See [`crate::evm::brent::query_supply`] for details.
     pub fn query_supply(
         &self,
         target_price: f64,
         token_in: &Token,
         token_out: &Token,
     ) -> Result<crate::evm::chandrupatla::QuerySupplyResult, crate::evm::chandrupatla::ChandrupatlaSearchError> {
-        crate::evm::chandrupatla::query_supply(self, target_price, token_in, token_out)
+        crate::evm::chandrupatla::query_supply(self, target_price, token_in, token_out, None)
     }
 }
 
@@ -688,7 +688,7 @@ where
     }
 
     fn get_limits(
-        &self, 
+        &self,
         sell_token: Bytes,
         buy_token: Bytes,
     ) -> Result<(BigUint, BigUint), SimulationError> {
