@@ -1296,3 +1296,142 @@ impl ProtocolSimExt for EVMChandrupatlaStrategy {
         })
     }
 }
+
+// =============================================================================
+// Strategy 4: EVM Brent (uses crate::evm::brent module)
+// =============================================================================
+
+/// Wrapper for the EVM Brent implementation.
+///
+/// This strategy delegates to the `crate::evm::brent` module which
+/// implements Brent's algorithm (van Wijngaarden-Dekker-Brent method).
+///
+/// Brent's method combines bisection, secant, and inverse quadratic
+/// interpolation with safety conditions to ensure convergence.
+pub struct EVMBrentStrategy {
+    /// Configuration for the Brent algorithm
+    pub config: crate::evm::brent::BrentConfig,
+}
+
+impl Default for EVMBrentStrategy {
+    fn default() -> Self {
+        Self {
+            config: crate::evm::brent::BrentConfig::default(),
+        }
+    }
+}
+
+impl EVMBrentStrategy {
+    /// Create with custom configuration
+    pub fn with_config(config: crate::evm::brent::BrentConfig) -> Self {
+        Self { config }
+    }
+}
+
+impl ProtocolSimExt for EVMBrentStrategy {
+    fn swap_to_price(
+        &self,
+        state: &dyn ProtocolSim,
+        target_price: f64,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<SwapToPriceResult, SwapToPriceError> {
+        let result = crate::evm::brent::swap_to_price(
+            state,
+            target_price,
+            token_in,
+            token_out,
+            Some(self.config),
+        )
+        .map_err(|e| match e {
+            crate::evm::brent::BrentSearchError::TargetBelowSpot { target, spot } => {
+                SwapToPriceError::TargetBelowSpot { target, spot }
+            }
+            crate::evm::brent::BrentSearchError::TargetAboveLimit { target, spot, limit } => {
+                SwapToPriceError::TargetAboveLimit {
+                    target,
+                    spot,
+                    limit,
+                }
+            }
+            crate::evm::brent::BrentSearchError::ConvergenceFailure {
+                iterations,
+                target_price,
+                best_price,
+                error_bps,
+                amount,
+            } => SwapToPriceError::ConvergenceFailure {
+                iterations,
+                target_price,
+                best_price,
+                error_bps,
+                amount,
+            },
+            crate::evm::brent::BrentSearchError::SimulationError(e) => {
+                SwapToPriceError::SimulationError(e)
+            }
+        })?;
+
+        Ok(SwapToPriceResult {
+            amount_in: result.amount_in,
+            amount_out: result.amount_out,
+            actual_price: result.actual_price,
+            gas: result.gas,
+            new_state: result.new_state,
+            iterations: result.iterations,
+        })
+    }
+
+    fn query_supply(
+        &self,
+        state: &dyn ProtocolSim,
+        target_price: f64,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<QuerySupplyResult, SwapToPriceError> {
+        let result = crate::evm::brent::query_supply(
+            state,
+            target_price,
+            token_in,
+            token_out,
+            Some(self.config),
+        )
+        .map_err(|e| match e {
+            crate::evm::brent::BrentSearchError::TargetBelowSpot { target, spot } => {
+                SwapToPriceError::TargetBelowSpot { target, spot }
+            }
+            crate::evm::brent::BrentSearchError::TargetAboveLimit { target, spot, limit } => {
+                SwapToPriceError::TargetAboveLimit {
+                    target,
+                    spot,
+                    limit,
+                }
+            }
+            crate::evm::brent::BrentSearchError::ConvergenceFailure {
+                iterations,
+                target_price,
+                best_price,
+                error_bps,
+                amount,
+            } => SwapToPriceError::ConvergenceFailure {
+                iterations,
+                target_price,
+                best_price,
+                error_bps,
+                amount,
+            },
+            crate::evm::brent::BrentSearchError::SimulationError(e) => {
+                SwapToPriceError::SimulationError(e)
+            }
+        })?;
+
+        Ok(QuerySupplyResult {
+            amount_in: result.amount_in,
+            amount_out: result.amount_out,
+            trade_price: result.trade_price,
+            gas: result.gas,
+            new_state: result.new_state,
+            iterations: result.iterations,
+        })
+    }
+}

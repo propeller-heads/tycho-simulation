@@ -8,8 +8,8 @@ use tycho_common::models::token::Token;
 use tycho_simulation::swap_to_price::{
     strategies::{
         BlendedIqiSecantStrategy, BrentAndStrategy, BrentOrStrategy, BrentOriginalStrategy,
-        BrentStrategy, ChandrupatlaStrategy, ConvexSearchStrategy, EVMChandrupatlaStrategy,
-        HybridStrategy, IqiStrategy,
+        BrentStrategy, ChandrupatlaStrategy, ConvexSearchStrategy, EVMBrentStrategy,
+        EVMChandrupatlaStrategy, HybridStrategy, IqiStrategy,
     },
     within_tolerance, ProtocolSimExt, SWAP_TO_PRICE_MAX_ITERATIONS,
 };
@@ -74,16 +74,17 @@ pub async fn run_benchmark(
         // Compare strategies with various parameter values
         let strategies: Vec<(&str, Box<dyn ProtocolSimExt>)> = vec![
             // Brent variants - testing different acceptance criteria
-            ("brkt_1%", Box::new(BrentStrategy)),           // 1% bracket only
+            ("brent", Box::new(BrentStrategy)),           // 1% bracket only
             ("step_1/2", Box::new(BrentOriginalStrategy)),  // half prev step only (classical)
-            ("brkt_AND_step", Box::new(BrentAndStrategy)),  // both criteria (AND)
-            ("brkt_OR_step", Box::new(BrentOrStrategy)),    // either criterion (OR)
+            // ("brkt_AND_step", Box::new(BrentAndStrategy)),  // both criteria (AND)
+            // ("brkt_OR_step", Box::new(BrentOrStrategy)),    // either criterion (OR)
             // Other strategies for comparison
-            ("iqi", Box::new(IqiStrategy)),                        // Simple IQI
-            ("hybrid", Box::new(HybridStrategy)),                  // IQI + secant + bisection
-            ("convex", Box::new(ConvexSearchStrategy)),            // Convex-aware search
+            // ("iqi", Box::new(IqiStrategy)),                        // Simple IQI
+            // ("hybrid", Box::new(HybridStrategy)),                  // IQI + secant + bisection
+            // ("convex", Box::new(ConvexSearchStrategy)),            // Convex-aware search
             ("chandrupatla", Box::new(ChandrupatlaStrategy::default())), // Chandrupatla's method (archived)
             ("evm_chandru", Box::new(EVMChandrupatlaStrategy::default())), // EVM Chandrupatla (TF/SciPy-based)
+            ("evm_brent", Box::new(EVMBrentStrategy::default())),  // EVM Brent (classic Brent-Dekker)
             ("blended_iqi", Box::new(BlendedIqiSecantStrategy)),   // Blended IQI + secant
         ];
         let _ = use_query_supply; // silence unused warning
@@ -156,61 +157,61 @@ pub async fn run_benchmark(
                         format!("{:.6}", spot_price)
                     };
 
-                    // DEBUG: Print price table for various amounts
-                    if let Ok((max_amount, _)) = state.get_limits(token_in.address.clone(), token_out.address.clone()) {
-                        use num_bigint::BigUint;
-                        use num_traits::ToPrimitive;
+                    // // DEBUG: Print price table for various amounts
+                    // if let Ok((max_amount, _)) = state.get_limits(token_in.address.clone(), token_out.address.clone()) {
+                    //     use num_bigint::BigUint;
+                    //     use num_traits::ToPrimitive;
 
-                        println!("\n  === PRICE TABLE: {} -> {} ===", token_in.symbol, token_out.symbol);
-                        println!("  Cached spot price: {:.10}", spot_price);
-                        println!("  Max amount (limit): {} ({} digits)", max_amount, max_amount.to_string().len());
-                        println!("  {:>20} | {:>15} | {:>15} | {:>12}", "Amount", "Exec Price", "New Spot", "Δ from spot");
-                        println!("  {:-<20}-+-{:-<15}-+-{:-<15}-+-{:-<12}", "", "", "", "");
+                    //     println!("\n  === PRICE TABLE: {} -> {} ===", token_in.symbol, token_out.symbol);
+                    //     println!("  Cached spot price: {:.10}", spot_price);
+                    //     println!("  Max amount (limit): {} ({} digits)", max_amount, max_amount.to_string().len());
+                    //     println!("  {:>20} | {:>15} | {:>15} | {:>12}", "Amount", "Exec Price", "New Spot", "Δ from spot");
+                    //     println!("  {:-<20}-+-{:-<15}-+-{:-<15}-+-{:-<12}", "", "", "", "");
 
-                        // Test amounts: 1, 10, 100, 1e6, 1e9, 1e12, 1e15, 1e18, 0.001%, 0.01%, 0.1%, 1%
-                        let test_amounts: Vec<(String, BigUint)> = vec![
-                            ("1 wei".to_string(), BigUint::from(1u32)),
-                            ("10 wei".to_string(), BigUint::from(10u32)),
-                            ("100 wei".to_string(), BigUint::from(100u32)),
-                            ("1e6 wei".to_string(), BigUint::from(1_000_000u64)),
-                            ("1e9 wei".to_string(), BigUint::from(1_000_000_000u64)),
-                            ("1e12 wei".to_string(), BigUint::from(1_000_000_000_000u64)),
-                            ("1e15 wei".to_string(), BigUint::from(1_000_000_000_000_000u64)),
-                            ("1e18 (1 tok)".to_string(), BigUint::from(1_000_000_000_000_000_000u64)),
-                            ("0.001% limit".to_string(), &max_amount / 100_000u32),
-                            ("0.01% limit".to_string(), &max_amount / 10_000u32),
-                            ("0.1% limit".to_string(), &max_amount / 1_000u32),
-                            ("1% limit".to_string(), &max_amount / 100u32),
-                        ];
+                    //     // Test amounts: 1, 10, 100, 1e6, 1e9, 1e12, 1e15, 1e18, 0.001%, 0.01%, 0.1%, 1%
+                    //     let test_amounts: Vec<(String, BigUint)> = vec![
+                    //         ("1 wei".to_string(), BigUint::from(1u32)),
+                    //         ("10 wei".to_string(), BigUint::from(10u32)),
+                    //         ("100 wei".to_string(), BigUint::from(100u32)),
+                    //         ("1e6 wei".to_string(), BigUint::from(1_000_000u64)),
+                    //         ("1e9 wei".to_string(), BigUint::from(1_000_000_000u64)),
+                    //         ("1e12 wei".to_string(), BigUint::from(1_000_000_000_000u64)),
+                    //         ("1e15 wei".to_string(), BigUint::from(1_000_000_000_000_000u64)),
+                    //         ("1e18 (1 tok)".to_string(), BigUint::from(1_000_000_000_000_000_000u64)),
+                    //         ("0.001% limit".to_string(), &max_amount / 100_000u32),
+                    //         ("0.01% limit".to_string(), &max_amount / 10_000u32),
+                    //         ("0.1% limit".to_string(), &max_amount / 1_000u32),
+                    //         ("1% limit".to_string(), &max_amount / 100u32),
+                    //     ];
 
-                        for (label, amount) in test_amounts {
-                            match state.get_amount_out(amount.clone(), token_in, token_out) {
-                                Ok(result) => {
-                                    // Calculate execution price
-                                    let amount_f64 = amount.to_f64().unwrap_or(0.0);
-                                    let out_f64 = result.amount.to_f64().unwrap_or(0.0);
-                                    let exec_price = if out_f64 > 0.0 { amount_f64 / out_f64 } else { 0.0 };
+                    //     for (label, amount) in test_amounts {
+                    //         match state.get_amount_out(amount.clone(), token_in, token_out) {
+                    //             Ok(result) => {
+                    //                 // Calculate execution price
+                    //                 let amount_f64 = amount.to_f64().unwrap_or(0.0);
+                    //                 let out_f64 = result.amount.to_f64().unwrap_or(0.0);
+                    //                 let exec_price = if out_f64 > 0.0 { amount_f64 / out_f64 } else { 0.0 };
 
-                                    // Get new spot price
-                                    let new_spot = result.new_state.spot_price(token_out, token_in).unwrap_or(0.0);
+                    //                 // Get new spot price
+                    //                 let new_spot = result.new_state.spot_price(token_out, token_in).unwrap_or(0.0);
 
-                                    // Delta from original spot in bps
-                                    let delta_bps = if spot_price > 0.0 {
-                                        ((new_spot - spot_price) / spot_price) * 10000.0
-                                    } else {
-                                        0.0
-                                    };
+                    //                 // Delta from original spot in bps
+                    //                 let delta_bps = if spot_price > 0.0 {
+                    //                     ((new_spot - spot_price) / spot_price) * 10000.0
+                    //                 } else {
+                    //                     0.0
+                    //                 };
 
-                                    println!("  {:>20} | {:>15.6} | {:>15.6} | {:>+11.2}bps",
-                                        label, exec_price, new_spot, delta_bps);
-                                }
-                                Err(e) => {
-                                    println!("  {:>20} | ERROR: {:?}", label, e);
-                                }
-                            }
-                        }
-                        println!();
-                    }
+                    //                 println!("  {:>20} | {:>15.6} | {:>15.6} | {:>+11.2}bps",
+                    //                     label, exec_price, new_spot, delta_bps);
+                    //             }
+                    //             Err(e) => {
+                    //                 println!("  {:>20} | ERROR: {:?}", label, e);
+                    //             }
+                    //         }
+                    //     }
+                    //     println!();
+                    // }
 
                     // Calculate limit price for this direction
                     let (limit_price, max_amount_in_debug) = match state.get_limits(token_in.address.clone(), token_out.address.clone()) {

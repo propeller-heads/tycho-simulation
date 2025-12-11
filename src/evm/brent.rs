@@ -1,4 +1,4 @@
-//! Brent's method for finding swap amounts to reach target prices.
+//! Brent-style method for finding swap amounts to reach target prices.
 //!
 //! This module provides two search modes:
 //! - [`swap_to_price`]: Find amount to move **spot price** to target
@@ -6,31 +6,37 @@
 //!
 //! # Implementation Notes
 //!
-//! This implementation follows Brent's 1973 algorithm, which combines three
-//! root-finding techniques: bisection, secant method, and inverse quadratic
-//! interpolation (IQI). The algorithm is also known as the van Wijngaarden-Dekker-Brent
-//! method.
+//! This implementation is inspired by Brent's method but adapted for the
+//! discrete, non-linear nature of AMM price curves. It combines:
+//! - Inverse Quadratic Interpolation (IQI) for fast convergence
+//! - Secant method as a fallback
+//! - Geometric mean bisection (log-space) as the final fallback
+//!
+//! Unlike classic Brent which uses complex state tracking and x-space
+//! convergence, this uses a simpler history-based approach with
+//! **price-space convergence**.
 //!
 //! ## References
 //!
 //! - Brent, R. P. (1973). "Algorithms for Minimization without Derivatives."
 //!   Prentice-Hall. Chapter 4.
-//! - SciPy: <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.brentq.html>
-//! - argmin-rs: <https://github.com/argmin-rs/argmin/blob/main/crates/argmin/src/solver/brent/brentroot.rs>
+//!
+//! Reference implementations:
+//! - SciPy brentq: <https://github.com/scipy/scipy/blob/main/scipy/optimize/Zeros/brentq.c>
 //!
 //! ## Algorithm
 //!
-//! The algorithm maintains a bracket [a, b] where f(a) and f(b) have opposite signs.
 //! At each iteration:
-//! 1. Try inverse quadratic interpolation if three distinct function values exist
-//! 2. Otherwise, try the secant method (linear interpolation)
-//! 3. Apply safety conditions - if they fail, use bisection instead
-//! 4. Update the bracket based on the sign of f at the new point
+//! 1. Try IQI if 3+ history points exist and the estimate is within bounds
+//! 2. Try secant method if 2+ history points exist
+//! 3. Fall back to geometric mean (bisection in log-space)
+//! 4. Update bracket based on whether price is above/below target
 //!
-//! The safety conditions ensure that:
-//! - The new point stays within the bracket
-//! - The step size doesn't grow too large
-//! - Progress is being made toward convergence
+//! ## Convergence
+//!
+//! Terminates when:
+//! 1. The price is within tolerance of the target
+//! 2. The discrete precision limit is reached: `high - low <= 1` (BigUint)
 
 use num_bigint::BigUint;
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -43,7 +49,7 @@ use tycho_common::{
 // Configuration
 // =============================================================================
 
-/// Configuration parameters for Brent's root-finding algorithm.
+/// Configuration parameters for Brent-style root-finding algorithm.
 ///
 /// These parameters control convergence behavior, numerical stability,
 /// and iteration limits.
@@ -58,15 +64,14 @@ pub struct BrentConfig {
     /// Default: 100
     pub max_iterations: u32,
 
-    /// Absolute tolerance for the x values (amounts).
-    /// Used in convergence checking: |b - a| < xtol + rtol * |b|
-    /// Default: 2e-12
-    pub xtol: f64,
+    /// Minimum divisor to avoid division by zero in numerical computations.
+    /// Default: 1e-12
+    pub min_divisor: f64,
 
-    /// Relative tolerance for the x values (amounts).
-    /// Used in convergence checking: |b - a| < xtol + rtol * |b|
-    /// Default: 4 * f64::EPSILON
-    pub rtol: f64,
+    /// IQI acceptance threshold: fraction of bracket size.
+    /// IQI estimate is accepted if it improves the bracket by at least this fraction.
+    /// Default: 0.01 (1%)
+    pub iqi_threshold: f64,
 }
 
 impl Default for BrentConfig {
@@ -74,8 +79,8 @@ impl Default for BrentConfig {
         Self {
             tolerance: 0.00001,
             max_iterations: 100,
-            xtol: 2e-12,
-            rtol: 4.0 * f64::EPSILON,
+            min_divisor: 1e-12,
+            iqi_threshold: 0.01,
         }
     }
 }
@@ -98,15 +103,15 @@ impl BrentConfig {
         self
     }
 
-    /// Sets the absolute x tolerance.
-    pub fn with_xtol(mut self, xtol: f64) -> Self {
-        self.xtol = xtol;
+    /// Sets the minimum divisor for numerical stability.
+    pub fn with_min_divisor(mut self, min_divisor: f64) -> Self {
+        self.min_divisor = min_divisor;
         self
     }
 
-    /// Sets the relative x tolerance.
-    pub fn with_rtol(mut self, rtol: f64) -> Self {
-        self.rtol = rtol;
+    /// Sets the IQI acceptance threshold.
+    pub fn with_iqi_threshold(mut self, iqi_threshold: f64) -> Self {
+        self.iqi_threshold = iqi_threshold;
         self
     }
 }
@@ -139,6 +144,54 @@ impl SearchConfig {
     }
 }
 
+/// A point in the search history (amount, price)
+#[derive(Debug, Clone, Copy)]
+struct HistoryPoint {
+    amount: f64,
+    price: f64,
+}
+
+/// Ring buffer of last 3 history points for IQI/secant interpolation.
+///
+/// Points are stored in insertion order (oldest first when full).
+/// We only need 3 points for IQI and 2 for secant, so no need to store full history.
+#[derive(Debug, Clone, Default)]
+struct RecentHistory {
+    points: [Option<HistoryPoint>; 3],
+    count: usize,
+}
+
+impl RecentHistory {
+    fn new() -> Self {
+        Self { points: [None; 3], count: 0 }
+    }
+
+    fn push(&mut self, amount: f64, price: f64) {
+        let point = HistoryPoint { amount, price };
+        if self.count < 3 {
+            self.points[self.count] = Some(point);
+            self.count += 1;
+        } else {
+            // Shift left and add at end (drop oldest)
+            self.points[0] = self.points[1];
+            self.points[1] = self.points[2];
+            self.points[2] = Some(point);
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.count
+    }
+
+    /// Get the last N points (most recent last)
+    fn last_n(&self, n: usize) -> Vec<HistoryPoint> {
+        let n = n.min(self.count);
+        let start = self.count.saturating_sub(n);
+        (start..self.count)
+            .filter_map(|i| self.points[i])
+            .collect()
+    }
+}
 
 /// Result of a swap_to_price operation
 #[derive(Debug, Clone)]
@@ -223,43 +276,133 @@ fn geometric_mean(a: &BigUint, b: &BigUint) -> BigUint {
     BigUint::from_f64(result).unwrap_or_else(|| (a + b) / 2u32)
 }
 
+/// Inverse Quadratic Interpolation from 3 points
+fn iqi(
+    a1: f64,
+    p1: f64,
+    a2: f64,
+    p2: f64,
+    a3: f64,
+    p3: f64,
+    target: f64,
+    min_divisor: f64,
+) -> Option<f64> {
+    let denom1 = (p1 - p2) * (p1 - p3);
+    let denom2 = (p2 - p1) * (p2 - p3);
+    let denom3 = (p3 - p1) * (p3 - p2);
+
+    if denom1.abs() < min_divisor || denom2.abs() < min_divisor || denom3.abs() < min_divisor {
+        return None;
+    }
+
+    let t1 = (target - p2) * (target - p3) / denom1;
+    let t2 = (target - p1) * (target - p3) / denom2;
+    let t3 = (target - p1) * (target - p2) / denom3;
+
+    let result = a1 * t1 + a2 * t2 + a3 * t3;
+
+    if result.is_finite() && result > 0.0 {
+        Some(result)
+    } else {
+        None
+    }
+}
+
+/// Secant method estimate
+fn secant(a1: f64, p1: f64, a2: f64, p2: f64, target: f64, min_divisor: f64) -> Option<f64> {
+    let dp = p2 - p1;
+    if dp.abs() < min_divisor {
+        return None;
+    }
+    let result = a2 - (p2 - target) * (a2 - a1) / dp;
+    if result.is_finite() && result > 0.0 {
+        Some(result)
+    } else {
+        None
+    }
+}
+
+/// Ensure the next amount is safely within bounds and different from current bounds
+fn safe_next_amount(amount: BigUint, low: &BigUint, high: &BigUint) -> Option<BigUint> {
+    if &amount <= low || &amount >= high {
+        return None;
+    }
+    Some(amount)
+}
+
+/// Compute the next amount using Brent-style method.
+///
+/// Tries IQI first, then secant, then falls back to geometric mean.
+fn brent_next_amount(
+    history: &RecentHistory,
+    low: &BigUint,
+    high: &BigUint,
+    target: f64,
+    config: &BrentConfig,
+) -> BigUint {
+    let fallback = geometric_mean(low, high);
+    let low_f64 = low.to_f64().unwrap_or(0.0);
+    let high_f64 = high.to_f64().unwrap_or(f64::MAX);
+
+    // Try IQI if we have 3 points
+    if history.len() >= 3 {
+        let pts = history.last_n(3);
+        if pts.len() == 3 {
+            if let Some(estimate) = iqi(
+                pts[0].amount,
+                pts[0].price,
+                pts[1].amount,
+                pts[1].price,
+                pts[2].amount,
+                pts[2].price,
+                target,
+                config.min_divisor,
+            ) {
+                // Accept if within bounds and making reasonable progress
+                let bracket_size = high_f64 - low_f64;
+                if estimate > low_f64 && estimate < high_f64 {
+                    let improvement = (estimate - low_f64).min(high_f64 - estimate);
+                    if improvement > bracket_size * config.iqi_threshold {
+                        if let Some(amount) = BigUint::from_f64(estimate) {
+                            if let Some(safe) = safe_next_amount(amount, low, high) {
+                                return safe;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Try secant if we have 2+ points
+    if history.len() >= 2 {
+        let pts = history.last_n(2);
+        if pts.len() == 2 {
+            if let Some(estimate) =
+                secant(pts[0].amount, pts[0].price, pts[1].amount, pts[1].price, target, config.min_divisor)
+            {
+                if estimate > low_f64 && estimate < high_f64 {
+                    if let Some(amount) = BigUint::from_f64(estimate) {
+                        if let Some(safe) = safe_next_amount(amount, low, high) {
+                            return safe;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fall back to geometric mean (bisection in log space)
+    fallback
+}
+
 // =============================================================================
 // Core Search Algorithm
 // =============================================================================
 
-/// Evaluate the objective function: f(x) = price(x) - target_price
+/// Run the search algorithm with Brent-style method.
 ///
-/// We're finding the root of f(x) = 0, i.e., where price equals target.
-fn evaluate_objective(
-    state: &dyn ProtocolSim,
-    amount: &BigUint,
-    token_in: &Token,
-    token_out: &Token,
-    target_price: f64,
-    config: &SearchConfig,
-) -> Result<(f64, f64, BigUint, BigUint, Box<dyn ProtocolSim>), BrentSearchError> {
-    let result = state.get_amount_out(amount.clone(), token_in, token_out)?;
-
-    let price = match config.metric {
-        PriceMetric::SpotPrice => result.new_state.spot_price(token_out, token_in)?,
-        PriceMetric::TradePrice => {
-            let amount_in_f64 = amount.to_f64().unwrap_or(0.0);
-            let amount_out_f64 = result.amount.to_f64().unwrap_or(1.0);
-            if amount_out_f64 > 0.0 {
-                amount_in_f64 / amount_out_f64
-            } else {
-                f64::MAX
-            }
-        }
-    };
-
-    // f(x) = price - target (we want to find where this equals 0)
-    let f_value = price - target_price;
-
-    Ok((price, f_value, result.amount, result.gas, result.new_state))
-}
-
-/// Run the search algorithm with Brent's method.
+/// Uses a simpler history-based approach that works better for AMM price curves.
 fn run_search(
     state: &dyn ProtocolSim,
     target_price: f64,
@@ -292,7 +435,10 @@ fn run_search(
 
     // Step 4: Validate target price is above spot
     if target_price < spot_price {
-        return Err(BrentSearchError::TargetBelowSpot { target: target_price, spot: spot_price });
+        return Err(BrentSearchError::TargetBelowSpot {
+            target: target_price,
+            spot: spot_price,
+        });
     }
 
     // Step 5: Calculate limit price (spot price at max trade)
@@ -317,191 +463,95 @@ fn run_search(
         });
     }
 
-    // Step 8: Initialize Brent state
-    // We frame this as root-finding: f(x) = price(x) - target_price = 0
-    //
-    // Initial bracket: [0, max_amount_in]
-    // f(0) = spot_price - target_price < 0  (spot is below target)
-    // f(max) = limit_price - target_price > 0  (limit is above target)
+    // Step 8: Initialize search state
+    let mut low = BigUint::from(0u32);
+    let mut low_price = spot_price;
+    let mut high = max_amount_in.clone();
+    let mut high_price = limit_spot_price;
+    let mut history = RecentHistory::new();
 
-    let a = 0.0_f64;
-    let fa = spot_price - target_price; // negative
+    // Add initial bounds to history
+    history.push(0.0, spot_price);
+    if let Some(high_f64) = high.to_f64() {
+        history.push(high_f64, limit_spot_price);
+    }
 
-    let b = max_amount_in.to_f64().unwrap_or(f64::MAX);
-    let fb = limit_spot_price - target_price; // positive
-
-    // Ensure |f(b)| <= |f(a)| by swapping if necessary
-    let (mut a, mut fa, mut b, mut fb) = if fa.abs() < fb.abs() {
-        (b, fb, a, fa)
-    } else {
-        (a, fa, b, fb)
-    };
-
-    // Initialize c = a (the contrapoint)
-    let mut c = a;
-    let mut fc = fa;
-
-    // d and e track step sizes for safety conditions
-    let mut d = b - a;
-    let mut e = d;
-
-    // Track best result for discrete (BigUint) precision
+    // Track best result
     let mut best_result: Option<SwapToPriceResult> = None;
     let mut best_error = f64::MAX;
 
-    // Also track bracket in BigUint for precision
-    let mut low = BigUint::from(0u32);
-    let mut high = max_amount_in.clone();
-
-    // Step 9: Main Brent loop
+    // Step 9: Main search loop
     for iteration in 0..config.max_iterations {
-        // Check convergence on bracket width
-        let tol1 = config.rtol * b.abs() + config.xtol / 2.0;
-        let xm = (a - b) / 2.0;
+        // Calculate next amount using Brent-style method
+        let next_amount = brent_next_amount(&history, &low, &high, target_price, config);
 
-        if xm.abs() <= tol1 || fb == 0.0 {
-            if let Some(result) = best_result {
-                return Ok(result);
+        // Simulate the swap
+        let result = state.get_amount_out(next_amount.clone(), token_in, token_out)?;
+
+        // Get the price based on the metric
+        let current_price = match search_config.metric {
+            PriceMetric::SpotPrice => result.new_state.spot_price(token_out, token_in)?,
+            PriceMetric::TradePrice => {
+                let amount_in_f64 = next_amount.to_f64().unwrap_or(0.0);
+                let amount_out_f64 = result.amount.to_f64().unwrap_or(1.0);
+                if amount_out_f64 > 0.0 {
+                    amount_in_f64 / amount_out_f64
+                } else {
+                    f64::MAX
+                }
             }
+        };
+
+        // Add to history
+        if let Some(amount_f64) = next_amount.to_f64() {
+            history.push(amount_f64, current_price);
         }
 
-        // Compute next point using Brent's method
-        let s = if e.abs() < tol1 || fc.abs() <= fb.abs() {
-            // Bisection step
-            e = xm;
-            d = xm;
-            b + xm
-        } else {
-            // Try interpolation
-            let (p, q) = if (a - c).abs() < f64::EPSILON {
-                // Secant method
-                let s_val = fb / fa;
-                let p = 2.0 * xm * s_val;
-                let q = 1.0 - s_val;
-                (p, q)
-            } else {
-                // Inverse quadratic interpolation
-                let s_val = fb / fa;
-                let q_val = fa / fc;
-                let r = fb / fc;
-                let p = s_val * (2.0 * xm * q_val * (q_val - r) - (b - c) * (r - 1.0));
-                let q = (q_val - 1.0) * (r - 1.0) * (s_val - 1.0);
-                (p, q)
-            };
+        // Calculate error
+        let error = (current_price - target_price).abs() / target_price;
 
-            // Adjust signs
-            let (p, q) = if q > 0.0 { (-p, q) } else { (p, -q) };
-
-            let s_val = e;
-            e = d;
-
-            // Safety conditions
-            if 2.0 * p < (3.0 * xm * q - (tol1 * q).abs()).min(s_val * q).abs() {
-                // Accept interpolation
-                d = p / q;
-                b + d
-            } else {
-                // Bisection
-                d = xm;
-                e = d;
-                b + xm
-            }
-        };
-
-        // Ensure the step is at least tol1
-        let s = if (s - b).abs() < tol1 {
-            b + tol1.copysign(xm)
-        } else {
-            s
-        };
-
-        // Convert to BigUint (our discrete domain)
-        let amount_new = if s <= 0.0 {
-            BigUint::from(1u32)
-        } else {
-            BigUint::from_f64(s).unwrap_or_else(|| geometric_mean(&low, &high))
-        };
-
-        // Ensure we're within bounds and making progress
-        let amount_new = if &amount_new <= &low {
-            &low + BigUint::from(1u32)
-        } else if &amount_new >= &high {
-            &high - BigUint::from(1u32)
-        } else {
-            amount_new
-        };
-
-        // Check if we've hit precision limit
-        if &high - &low <= BigUint::from(1u32) {
-            if let Some(result) = best_result {
-                return Ok(result);
-            }
-        }
-
-        // Evaluate objective at new point
-        let (price_new, f_new, amount_out, gas, new_state) = evaluate_objective(
-            state,
-            &amount_new,
-            token_in,
-            token_out,
-            target_price,
-            &search_config,
-        )?;
-
-        let s_f64 = amount_new.to_f64().unwrap_or(s);
-
-        // Calculate error and track best
-        let error = (price_new - target_price).abs() / target_price;
+        // Track best result
         if error < best_error {
             best_error = error;
             best_result = Some(SwapToPriceResult {
-                amount_in: amount_new.clone(),
-                amount_out: amount_out.clone(),
-                actual_price: price_new,
-                gas: gas.clone(),
-                new_state: new_state.clone(),
+                amount_in: next_amount.clone(),
+                amount_out: result.amount.clone(),
+                actual_price: current_price,
+                gas: result.gas.clone(),
+                new_state: result.new_state.clone(),
                 iterations: iteration + 1,
             });
         }
 
         // Check convergence
-        if within_tolerance(price_new, target_price, config.tolerance) {
+        if within_tolerance(current_price, target_price, config.tolerance) {
             return Ok(SwapToPriceResult {
-                amount_in: amount_new,
-                amount_out,
-                actual_price: price_new,
-                gas,
-                new_state,
+                amount_in: next_amount,
+                amount_out: result.amount,
+                actual_price: current_price,
+                gas: result.gas,
+                new_state: result.new_state,
                 iterations: iteration + 1,
             });
         }
 
-        // Update Brent state
-        // c becomes the old contrapoint
-        c = a;
-        fc = fa;
-
-        // Update bracket based on sign of f_new
-        if (f_new > 0.0) == (fb > 0.0) {
-            // f_new has same sign as fb: replace b
-            a = b;
-            fa = fb;
-        }
-
-        b = s_f64;
-        fb = f_new;
-
-        // Ensure |f(b)| <= |f(a)|
-        if fa.abs() < fb.abs() {
-            std::mem::swap(&mut a, &mut b);
-            std::mem::swap(&mut fa, &mut fb);
-        }
-
-        // Update BigUint bounds
-        if price_new < target_price {
-            low = amount_new;
+        // Update bounds
+        if current_price < target_price {
+            low = next_amount;
+            low_price = current_price;
         } else {
-            high = amount_new;
+            high = next_amount;
+            high_price = current_price;
+        }
+
+        // Suppress unused variable warnings
+        let _ = (low_price, high_price);
+
+        // Check if we've converged to adjacent integers (precision limit)
+        if &high - &low <= BigUint::from(1u32) {
+            if let Some(best) = best_result {
+                return Ok(best);
+            }
         }
     }
 

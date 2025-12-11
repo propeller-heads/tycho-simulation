@@ -118,7 +118,7 @@ pub fn print_summary(results: &[BenchmarkResult]) {
     println!("  Success rate: {:.1}% (converged + best achievable)",
         (summary.converged + summary.best_achievable) as f64 / total * 100.0);
 
-    println!("\nBy Strategy (Iterations):");
+    println!("\nBy Strategy (Iterations) - sorted by mean:");
     println!(
         "  {:<16} {:>8} {:>10} {:>12} {:>8} {:>8} {:>8} {:>8} {:>8}",
         "Strategy", "Total", "Converged", "Best Ach", "Min", "Mean", "Median", "P95", "P99"
@@ -126,7 +126,10 @@ pub fn print_summary(results: &[BenchmarkResult]) {
     println!("  {}", "-".repeat(100));
 
     let mut strategies: Vec<_> = summary.by_strategy.iter().collect();
-    strategies.sort_by_key(|(name, _)| name.to_string());
+    // Sort by mean iterations (ascending - best first)
+    strategies.sort_by(|(_, a), (_, b)| {
+        a.iterations.mean.partial_cmp(&b.iterations.mean).unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     for (strategy, stats) in &strategies {
         if stats.converged > 0 {
@@ -151,7 +154,7 @@ pub fn print_summary(results: &[BenchmarkResult]) {
     }
 
     // Print elapsed time statistics by strategy
-    println!("\nBy Strategy (Elapsed Time in microseconds):");
+    println!("\nBy Strategy (Elapsed Time in microseconds) - sorted by mean:");
     println!(
         "  {:<16} {:>10} {:>10} {:>10} {:>10} {:>10}",
         "Strategy", "Min", "Mean", "Median", "P95", "P99"
@@ -161,7 +164,10 @@ pub fn print_summary(results: &[BenchmarkResult]) {
     // Calculate time stats per strategy
     let time_stats = calculate_time_stats_by_strategy(results);
     let mut time_strategies: Vec<_> = time_stats.iter().collect();
-    time_strategies.sort_by_key(|(name, _)| name.to_string());
+    // Sort by mean time (ascending - fastest first)
+    time_strategies.sort_by(|(_, a), (_, b)| {
+        a.mean_us.partial_cmp(&b.mean_us).unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     for (strategy, stats) in time_strategies {
         println!(

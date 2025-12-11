@@ -20,7 +20,7 @@ use tycho_common::{
 };
 
 pub const SWAP_TO_PRICE_TOLERANCE: f64 = 0.00001; // 0.001%
-pub const SWAP_TO_PRICE_MAX_ITERATIONS: u32 = 100;
+pub const SWAP_TO_PRICE_MAX_ITERATIONS: u32 = 30;
 
 /// Which price metric to track during the search
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
