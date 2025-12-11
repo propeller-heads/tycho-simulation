@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "_tycho_simulation_py"
-version = "0.214.1"
+version = "0.215.1"
 dependencies = [
  "alloy",
  "num-bigint",
@@ -280,6 +280,7 @@ dependencies = [
  "alloy-core",
  "alloy-eips",
  "alloy-genesis",
+ "alloy-json-rpc",
  "alloy-network",
  "alloy-node-bindings",
  "alloy-provider",
@@ -4994,7 +4995,7 @@ checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "arbitrary",
  "equivalent",
- "hashbrown 0.16.0",
+ "hashbrown 0.15.5",
  "serde",
  "serde_core",
 ]
@@ -9359,9 +9360,9 @@ dependencies = [
 
 [[package]]
 name = "tycho-client"
-version = "0.117.4"
+version = "0.121.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1229d562a92e05b5f0e641bac7d2d6d4a58dea0b86cd88d0b1f7f1eb9b5ed34b"
+checksum = "57d041dd43007600053be833c0e91140286bfc6bad8ab910e4dff6ec50c4da06"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9389,9 +9390,9 @@ dependencies = [
 
 [[package]]
 name = "tycho-common"
-version = "0.117.4"
+version = "0.121.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f84e53134dd3d93646ff88e60dcc841e255eed99139e06bb37111d685a760fb6"
+checksum = "abf65bf19eb6a37932bfd20a0d243258409c0a561c9fab92ecfecd223acaa58a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9415,12 +9416,13 @@ dependencies = [
 
 [[package]]
 name = "tycho-ethereum"
-version = "0.117.4"
+version = "0.121.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5755e7f5e072682725d9a187501be219dc734570eb17c5627f994ee6cd3fe6cd"
+checksum = "0353ed0037c4bb8b79537f28e0e537abaf0de7029b21698847cb64ab8d4cd658"
 dependencies = [
  "alloy",
  "async-trait",
+ "backoff",
  "chrono",
  "futures 0.3.31",
  "rand 0.8.5",
@@ -9458,7 +9460,7 @@ dependencies = [
 
 [[package]]
 name = "tycho-integration-test"
-version = "0.214.1"
+version = "0.215.1"
 dependencies = [
  "actix-web",
  "alloy",
@@ -9487,7 +9489,7 @@ dependencies = [
 
 [[package]]
 name = "tycho-simulation"
-version = "0.214.1"
+version = "0.215.1"
 dependencies = [
  "alloy",
  "anyhow",
@@ -9545,7 +9547,7 @@ dependencies = [
 
 [[package]]
 name = "tycho-test"
-version = "0.214.1"
+version = "0.215.1"
 dependencies = [
  "actix-web",
  "alloy",
