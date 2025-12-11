@@ -152,3 +152,7 @@ required-features = ["evm"]
 
 [profile.bench]
 debug = true
+
+[profile.profiling]
+inherits = "release"
+debug = true

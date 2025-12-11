@@ -74,7 +74,11 @@ pub async fn run_benchmark(
         // Compare strategies with various parameter values
         let strategies: Vec<(&str, Box<dyn ProtocolSimExt>)> = vec![
             // Brent variants - testing different acceptance criteria
+            ("evm_brent", Box::new(EVMBrentStrategy::default())),  // EVM Brent (classic Brent-Dekker)
             ("brent_1%_bracket", Box::new(BrentStrategy)),           // 1% bracket only
+            ("chandrupatla", Box::new(ChandrupatlaStrategy::default())), // Chandrupatla's method (archived)
+            ("evm_chandru", Box::new(EVMChandrupatlaStrategy::default())), // EVM Chandrupatla (TF/SciPy-based)
+            ("blended_iqi", Box::new(BlendedIqiSecantStrategy)),   // Blended IQI + secant
             ("brent_step_1/2", Box::new(BrentOriginalStrategy)),  // half prev step only (classical)
             // ("brkt_AND_step", Box::new(BrentAndStrategy)),  // both criteria (AND)
             // ("brkt_OR_step", Box::new(BrentOrStrategy)),    // either criterion (OR)
@@ -82,10 +86,6 @@ pub async fn run_benchmark(
             // ("iqi", Box::new(IqiStrategy)),                        // Simple IQI
             // ("hybrid", Box::new(HybridStrategy)),                  // IQI + secant + bisection
             // ("convex", Box::new(ConvexSearchStrategy)),            // Convex-aware search
-            ("chandrupatla", Box::new(ChandrupatlaStrategy::default())), // Chandrupatla's method (archived)
-            ("evm_chandru", Box::new(EVMChandrupatlaStrategy::default())), // EVM Chandrupatla (TF/SciPy-based)
-            ("evm_brent", Box::new(EVMBrentStrategy::default())),  // EVM Brent (classic Brent-Dekker)
-            ("blended_iqi", Box::new(BlendedIqiSecantStrategy)),   // Blended IQI + secant
         ];
         let _ = use_query_supply; // silence unused warning
 

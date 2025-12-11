@@ -52,7 +52,7 @@ pub const TARGET_PROTOCOLS: &[&str] = &[
     // "ekubo_v2",
     "vm:balancer_v2",
     "vm:curve",
-    // "vm:maverick_v2", // TODO: Tycho indexer bug - 0xb40afd... has no code indexed
+    "vm:maverick_v2", // TODO: Tycho indexer bug - 0xb40afd... has no code indexed
     // "fluid_v1",
     // "erc4626", // still experimental
     // "rocketpool", // still experimental
@@ -117,7 +117,7 @@ enum Commands {
         api_key: Option<String>,
 
         /// Minimum TVL filter (ETH)
-        #[arg(long, default_value = "1")]
+        #[arg(long, default_value = "100")]
         min_tvl: f64,
 
         /// Maximum number of pools per protocol to include in snapshot
