@@ -14,6 +14,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+
 use alloy::primitives::U256;
 use num_bigint::{BigUint, ToBigUint};
 use num_traits::Euclid;
@@ -2722,8 +2723,8 @@ mod test {
     fn test_spot_price() {
         let (wsteth, eth, pool) = wsteth_eth_pool_23526115();
         // derived via numerical estimates from onchain quotes
-        let exp_spot0 = add_fee_markup(1.21511419, pool.fee());
-        let exp_spot1 = add_fee_markup(0.82285596, pool.fee());
+        let exp_spot0 = 1.21519682338399; // 1.21511419 adjusted by 0.0068% fee
+        let exp_spot1 = 0.82291191801042; // 0.82228559 adjusted by 0.0068% fee
 
         let spot0 = pool.spot_price(&wsteth, &eth).unwrap();
         let spot1 = pool.spot_price(&eth, &wsteth).unwrap();
