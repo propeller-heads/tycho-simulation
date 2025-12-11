@@ -7,14 +7,10 @@ use tycho_common::models::token::Token;
 #[cfg(feature = "swap_to_price")]
 use tycho_simulation::swap_to_price::{
     strategies::{
-        BinaryInterpolation, BoundedLinearInterpolation, BrentStrategy, ChandrupatlaStrategy,
-        ConvexSearchStrategy, ExponentialProbing, InterpolationSearchStrategy, IqiStrategy,
-        IqiV2Strategy, LinearInterpolation, LogAmountBinarySearch, LogPriceInterpolation,
-        LogarithmicBisection, NewtonCentralStrategy, NewtonLogStrategy, PiecewiseLinearStrategy,
-        QuadraticRegressionStrategy, SecantMethod, SqrtPriceInterpolation, TwoPhaseSearch,
-        WeightedRegressionStrategy,
+        BrentStrategy, ChandrupatlaStrategy, IqiStrategy, IqiV2Strategy, NewtonCentralStrategy,
+        NewtonLogStrategy, QuadraticRegressionStrategy,
     },
-    within_tolerance, SwapToPriceStrategy, SWAP_TO_PRICE_MAX_ITERATIONS,
+    within_tolerance, ProtocolSimExt, SWAP_TO_PRICE_MAX_ITERATIONS,
 };
 
 // Price movements to test (as multipliers)
@@ -35,6 +31,7 @@ const PRICE_MOVEMENTS: &[f64] = &[
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct BenchmarkResult {
+    pub mode: String, // "swap_to_price" or "query_supply"
     pub strategy: String,
     pub pool_id: String,
     pub protocol: String,
@@ -45,6 +42,7 @@ pub struct BenchmarkResult {
     pub target_movement_bps: i32,
     pub actual_price: f64,
     pub amount_in: String,
+    pub amount_out: String,
     pub iterations: u32,
     pub gas: String,
     pub elapsed_micros: u64,
@@ -54,13 +52,16 @@ pub struct BenchmarkResult {
 
 pub async fn run_benchmark(
     snapshot_path: &Path,
+    use_query_supply: bool,
 ) -> Result<Vec<BenchmarkResult>, Box<dyn std::error::Error>> {
     // Load and process snapshot in one step
     let loaded = snapshot::load_and_process_snapshot(snapshot_path).await?;
 
+    let mode_str = if use_query_supply { "query_supply" } else { "swap_to_price" };
     println!("Loaded snapshot with {} pools", loaded.states.len());
     println!("Block: {}", loaded.metadata.block_number);
     println!("Chain: {}", loaded.metadata.chain);
+    println!("Mode: {}", mode_str);
 
     let mut results = Vec::new();
 
@@ -69,20 +70,30 @@ pub async fn run_benchmark(
         // Filter for specific pool (None = all pools)
         const DEBUG_POOL_FILTER: Option<&str> = None;
 
-        // Define all strategies to benchmark
-        let strategies: Vec<(&str, Box<dyn SwapToPriceStrategy>)> = vec![
-            (
-                "log_amount",
-                Box::new(InterpolationSearchStrategy::new(LogAmountBinarySearch)),
-            ),
-            ("iqi", Box::new(IqiStrategy)),
-            ("iqi_v2", Box::new(IqiV2Strategy)),
-            ("brent", Box::new(BrentStrategy)),
-            ("chandrupatla", Box::new(ChandrupatlaStrategy)),
-            ("newton_cd", Box::new(NewtonCentralStrategy)),
-            ("newton_log", Box::new(NewtonLogStrategy)),
-            ("quad_regr", Box::new(QuadraticRegressionStrategy)),
-        ];
+        // Define all strategies to benchmark (only history-based strategies support query_supply)
+        let strategies: Vec<(&str, Box<dyn ProtocolSimExt>)> = if use_query_supply {
+            // Only history-based strategies support query_supply
+            vec![
+                ("iqi", Box::new(IqiStrategy)),
+                ("iqi_v2", Box::new(IqiV2Strategy)),
+                ("brent", Box::new(BrentStrategy)),
+                ("chandrupatla", Box::new(ChandrupatlaStrategy)),
+                ("newton_cd", Box::new(NewtonCentralStrategy)),
+                ("newton_log", Box::new(NewtonLogStrategy)),
+                ("quad_regr", Box::new(QuadraticRegressionStrategy)),
+            ]
+        } else {
+            // All strategies for swap_to_price
+            vec![
+                ("iqi", Box::new(IqiStrategy)),
+                ("iqi_v2", Box::new(IqiV2Strategy)),
+                ("brent", Box::new(BrentStrategy)),
+                ("chandrupatla", Box::new(ChandrupatlaStrategy)),
+                ("newton_cd", Box::new(NewtonCentralStrategy)),
+                ("newton_log", Box::new(NewtonLogStrategy)),
+                ("quad_regr", Box::new(QuadraticRegressionStrategy)),
+            ]
+        };
 
         println!("Testing {} strategies: {}", strategies.len(),
             strategies.iter().map(|(name, _)| *name).collect::<Vec<_>>().join(", "));
@@ -269,21 +280,45 @@ pub async fn run_benchmark(
                         // Test each strategy
                         for (strategy_name, strategy) in &strategies {
                             let start = Instant::now();
-                            let result = strategy.swap_to_price(
-                                state.as_ref(),
-                                target_price,
-                                token_in,
-                                token_out,
-                            );
-                            let elapsed = start.elapsed();
 
-                            let bench_result = match result {
-                                Ok(res) => {
-                                    let convergence_error =
-                                        ((res.actual_price - target_price).abs() / target_price)
-                                            * 10000.0;
+                            // Call the appropriate method based on mode
+                            let bench_result = if use_query_supply {
+                                let result = strategy.query_supply(
+                                    state.as_ref(),
+                                    target_price,
+                                    token_in,
+                                    token_out,
+                                );
+                                let elapsed = start.elapsed();
 
-                                    BenchmarkResult {
+                                match result {
+                                    Ok(res) => {
+                                        let convergence_error =
+                                            ((res.trade_price - target_price).abs() / target_price)
+                                                * 10000.0;
+
+                                        BenchmarkResult {
+                                            mode: mode_str.to_string(),
+                                            strategy: strategy_name.to_string(),
+                                            pool_id: pool_id.clone(),
+                                            protocol: component.protocol_system.clone(),
+                                            token_in: token_in.symbol.clone(),
+                                            token_out: token_out.symbol.clone(),
+                                            spot_price,
+                                            target_price,
+                                            target_movement_bps: bps,
+                                            actual_price: res.trade_price,
+                                            amount_in: res.amount_in.to_string(),
+                                            amount_out: res.amount_out.to_string(),
+                                            iterations: res.iterations,
+                                            gas: res.gas.to_string(),
+                                            elapsed_micros: elapsed.as_micros() as u64,
+                                            convergence_error_bps: convergence_error,
+                                            status: "success".to_string(),
+                                        }
+                                    }
+                                    Err(e) => BenchmarkResult {
+                                        mode: mode_str.to_string(),
                                         strategy: strategy_name.to_string(),
                                         pool_id: pool_id.clone(),
                                         protocol: component.protocol_system.clone(),
@@ -292,32 +327,71 @@ pub async fn run_benchmark(
                                         spot_price,
                                         target_price,
                                         target_movement_bps: bps,
-                                        actual_price: res.actual_price,
-                                        amount_in: res.amount_in.to_string(),
-                                        iterations: res.iterations,
-                                        gas: res.gas.to_string(),
+                                        actual_price: 0.0,
+                                        amount_in: "0".to_string(),
+                                        amount_out: "0".to_string(),
+                                        iterations: 0,
+                                        gas: "0".to_string(),
                                         elapsed_micros: elapsed.as_micros() as u64,
-                                        convergence_error_bps: convergence_error,
-                                        status: "success".to_string(),
-                                    }
+                                        convergence_error_bps: 0.0,
+                                        status: format!("{:?}", e),
+                                    },
                                 }
-                                Err(e) => BenchmarkResult {
-                                    strategy: strategy_name.to_string(),
-                                    pool_id: pool_id.clone(),
-                                    protocol: component.protocol_system.clone(),
-                                    token_in: token_in.symbol.clone(),
-                                    token_out: token_out.symbol.clone(),
-                                    spot_price,
+                            } else {
+                                let result = strategy.swap_to_price(
+                                    state.as_ref(),
                                     target_price,
-                                    target_movement_bps: bps,
-                                    actual_price: 0.0,
-                                    amount_in: "0".to_string(),
-                                    iterations: 0,
-                                    gas: "0".to_string(),
-                                    elapsed_micros: elapsed.as_micros() as u64,
-                                    convergence_error_bps: 0.0,
-                                    status: format!("{:?}", e),
-                                },
+                                    token_in,
+                                    token_out,
+                                );
+                                let elapsed = start.elapsed();
+
+                                match result {
+                                    Ok(res) => {
+                                        let convergence_error =
+                                            ((res.actual_price - target_price).abs() / target_price)
+                                                * 10000.0;
+
+                                        BenchmarkResult {
+                                            mode: mode_str.to_string(),
+                                            strategy: strategy_name.to_string(),
+                                            pool_id: pool_id.clone(),
+                                            protocol: component.protocol_system.clone(),
+                                            token_in: token_in.symbol.clone(),
+                                            token_out: token_out.symbol.clone(),
+                                            spot_price,
+                                            target_price,
+                                            target_movement_bps: bps,
+                                            actual_price: res.actual_price,
+                                            amount_in: res.amount_in.to_string(),
+                                            amount_out: res.amount_out.to_string(),
+                                            iterations: res.iterations,
+                                            gas: res.gas.to_string(),
+                                            elapsed_micros: elapsed.as_micros() as u64,
+                                            convergence_error_bps: convergence_error,
+                                            status: "success".to_string(),
+                                        }
+                                    }
+                                    Err(e) => BenchmarkResult {
+                                        mode: mode_str.to_string(),
+                                        strategy: strategy_name.to_string(),
+                                        pool_id: pool_id.clone(),
+                                        protocol: component.protocol_system.clone(),
+                                        token_in: token_in.symbol.clone(),
+                                        token_out: token_out.symbol.clone(),
+                                        spot_price,
+                                        target_price,
+                                        target_movement_bps: bps,
+                                        actual_price: 0.0,
+                                        amount_in: "0".to_string(),
+                                        amount_out: "0".to_string(),
+                                        iterations: 0,
+                                        gas: "0".to_string(),
+                                        elapsed_micros: elapsed.as_micros() as u64,
+                                        convergence_error_bps: 0.0,
+                                        status: format!("{:?}", e),
+                                    },
+                                }
                             };
 
                             if bench_result.status == "success" {

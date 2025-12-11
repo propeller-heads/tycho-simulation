@@ -128,6 +128,11 @@ enum Commands {
         /// Path to snapshot file (defaults to latest in examples/benchmark/data)
         #[arg(long)]
         snapshot: Option<PathBuf>,
+
+        /// Benchmark query_supply instead of swap_to_price
+        /// (query_supply tracks trade/execution price instead of spot price)
+        #[arg(long, default_value = "false")]
+        query_supply: bool,
     },
 }
 
@@ -174,7 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("   Tokens: {}", saved_snapshot.tokens.len());
         }
 
-        Commands::Run { snapshot } => {
+        Commands::Run { snapshot, query_supply } => {
             // Find snapshot file (use provided or find latest)
             let snapshot_path = match snapshot {
                 Some(path) => path,
@@ -186,11 +191,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             #[cfg(feature = "swap_to_price")]
             {
-                println!("Running benchmark on snapshot...");
+                let mode = if query_supply { "query_supply" } else { "swap_to_price" };
+                println!("Running benchmark on snapshot (mode: {})...", mode);
                 println!("   File: {}", snapshot_path.display());
 
                 // Run the benchmark
-                let results = benchmark::run_benchmark(&snapshot_path).await?;
+                let results = benchmark::run_benchmark(&snapshot_path, query_supply).await?;
 
                 // Create output directory
                 let output_dir = std::path::PathBuf::from("examples/swap_to_price_benchmark/runs");
