@@ -554,7 +554,8 @@ where
         &self.balances
     }
 
-    /// Find the amount of input token needed to reach a target spot price using Chandrupatla's method.
+    /// Find the amount of input token needed to reach a target spot price using Chandrupatla's
+    /// method.
     ///
     /// See [`crate::evm::chandrupatla::swap_to_price`] for details.
     pub fn swap_to_price(
@@ -562,7 +563,10 @@ where
         target_price: f64,
         token_in: &Token,
         token_out: &Token,
-    ) -> Result<crate::evm::chandrupatla::SwapToPriceResult, crate::evm::chandrupatla::ChandrupatlaSearchError> {
+    ) -> Result<
+        crate::evm::chandrupatla::SwapToPriceResult,
+        crate::evm::chandrupatla::ChandrupatlaSearchError,
+    > {
         crate::evm::chandrupatla::swap_to_price(self, target_price, token_in, token_out, None)
     }
 
@@ -574,7 +578,10 @@ where
         target_price: f64,
         token_in: &Token,
         token_out: &Token,
-    ) -> Result<crate::evm::chandrupatla::QuerySupplyResult, crate::evm::chandrupatla::ChandrupatlaSearchError> {
+    ) -> Result<
+        crate::evm::chandrupatla::QuerySupplyResult,
+        crate::evm::chandrupatla::ChandrupatlaSearchError,
+    > {
         crate::evm::chandrupatla::query_supply(self, target_price, token_in, token_out, None)
     }
 }

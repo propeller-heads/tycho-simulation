@@ -74,12 +74,7 @@ pub struct ChandrupatlaConfig {
 
 impl Default for ChandrupatlaConfig {
     fn default() -> Self {
-        Self {
-            tolerance: 0.00001,
-            max_iterations: 100,
-            min_divisor: 1e-12,
-            t_min: 0.05,
-        }
+        Self { tolerance: 0.00001, max_iterations: 100, min_divisor: 1e-12, t_min: 0.05 }
     }
 }
 
@@ -309,10 +304,10 @@ fn iqi_parameter(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -> f64 
     let df31 = f3 - f1;
     let df23 = f2 - f3;
 
-    if df12.abs() < config.min_divisor
-        || df32.abs() < config.min_divisor
-        || df31.abs() < config.min_divisor
-        || df23.abs() < config.min_divisor
+    if df12.abs() < config.min_divisor ||
+        df32.abs() < config.min_divisor ||
+        df31.abs() < config.min_divisor ||
+        df23.abs() < config.min_divisor
     {
         return 0.5; // fallback to bisection
     }
@@ -376,7 +371,9 @@ fn evaluate_objective(
     let result = state.get_amount_out(amount.clone(), token_in, token_out)?;
 
     let price = match config.metric {
-        PriceMetric::SpotPrice => result.new_state.spot_price(token_out, token_in)?,
+        PriceMetric::SpotPrice => result
+            .new_state
+            .spot_price(token_out, token_in)?,
         PriceMetric::TradePrice => {
             let amount_in_f64 = amount.to_f64().unwrap_or(0.0);
             let amount_out_f64 = result.amount.to_f64().unwrap_or(1.0);
@@ -410,8 +407,8 @@ fn run_search(
     let spot_price = state.spot_price(token_out, token_in)?;
 
     // Step 2: Check if we're already at target (for spot price metric)
-    if search_config.metric == PriceMetric::SpotPrice
-        && within_tolerance(spot_price, target_price, config.tolerance)
+    if search_config.metric == PriceMetric::SpotPrice &&
+        within_tolerance(spot_price, target_price, config.tolerance)
     {
         let minimal_result = state.get_amount_out(BigUint::one(), token_in, token_out)?;
         return Ok(SwapToPriceResult {
@@ -438,7 +435,9 @@ fn run_search(
 
     // Step 5: Calculate limit price (spot price at max trade)
     let limit_result = state.get_amount_out(max_amount_in.clone(), token_in, token_out)?;
-    let limit_spot_price = limit_result.new_state.spot_price(token_out, token_in)?;
+    let limit_spot_price = limit_result
+        .new_state
+        .spot_price(token_out, token_in)?;
 
     // Step 6: Validate limit price
     if limit_spot_price <= spot_price {
@@ -472,18 +471,13 @@ fn run_search(
     let x1 = 0.0_f64;
     let f1 = spot_price - target_price; // negative
 
-    let x2 = max_amount_in.to_f64().unwrap_or(f64::MAX);
+    let x2 = max_amount_in
+        .to_f64()
+        .unwrap_or(f64::MAX);
     let f2 = limit_spot_price - target_price; // positive
 
     // Initially x3 = x1 (no previous point yet)
-    let mut chandru_state = ChandrupatlaState {
-        x1,
-        f1,
-        x2,
-        f2,
-        x3: x1,
-        f3: f1,
-    };
+    let mut chandru_state = ChandrupatlaState { x1, f1, x2, f2, x3: x1, f3: f1 };
 
     // Track best result metadata only (avoid cloning Box<dyn ProtocolSim> every iteration)
     let mut best_amount: Option<BigUint> = None;
@@ -608,7 +602,9 @@ fn run_search(
         target_price,
         best_price,
         error_bps: best_error * 10000.0,
-        amount: best_amount.map(|a| a.to_string()).unwrap_or_default(),
+        amount: best_amount
+            .map(|a| a.to_string())
+            .unwrap_or_default(),
     })
 }
 
@@ -644,14 +640,7 @@ pub fn swap_to_price(
     config: Option<ChandrupatlaConfig>,
 ) -> Result<SwapToPriceResult, ChandrupatlaSearchError> {
     let config = config.unwrap_or_default();
-    run_search(
-        state,
-        target_price,
-        token_in,
-        token_out,
-        SearchConfig::swap_to_price(),
-        &config,
-    )
+    run_search(state, target_price, token_in, token_out, SearchConfig::swap_to_price(), &config)
 }
 
 /// Find the maximum trade where the trade price stays at or below the target.
@@ -805,19 +794,11 @@ mod tests {
             };
             let formula2 = phi * phi < xi && (1.0 - phi) * (1.0 - phi) < (1.0 - xi);
 
-            assert_eq!(
-                formula1, formula2,
-                "Formulas disagree for xi={}, phi={}",
-                xi, phi
-            );
+            assert_eq!(formula1, formula2, "Formulas disagree for xi={}, phi={}", xi, phi);
 
             // Also verify our implementation matches
             let result = should_use_iqi(xi, phi);
-            assert_eq!(
-                result, formula1,
-                "Implementation differs for xi={}, phi={}",
-                xi, phi
-            );
+            assert_eq!(result, formula1, "Implementation differs for xi={}, phi={}", xi, phi);
         }
     }
 
@@ -830,14 +811,7 @@ mod tests {
         // For a linear function, IQI should give the same result as linear interpolation
         // f(x) = x - 1, root at x = 1
         // Points: (0, -1), (2, 1), (0.5, -0.5)
-        let state = ChandrupatlaState {
-            x1: 0.0,
-            f1: -1.0,
-            x2: 2.0,
-            f2: 1.0,
-            x3: 0.5,
-            f3: -0.5,
-        };
+        let state = ChandrupatlaState { x1: 0.0, f1: -1.0, x2: 2.0, f2: 1.0, x3: 0.5, f3: -0.5 };
         let config = ChandrupatlaConfig::default();
 
         let t = iqi_parameter(&state, &config);
@@ -861,11 +835,7 @@ mod tests {
         let config = ChandrupatlaConfig::default();
 
         let t = chandrupatla_next_t(&state, &config);
-        assert!(
-            (t - 0.5).abs() < 0.01,
-            "Expected bisection (t=0.5), got t={}",
-            t
-        );
+        assert!((t - 0.5).abs() < 0.01, "Expected bisection (t=0.5), got t={}", t);
     }
 
     // =========================================================================
@@ -957,7 +927,13 @@ mod tests {
     // =========================================================================
 
     /// Pure Chandrupatla root-finding (for testing the algorithm itself)
-    fn find_root_chandrupatla<F>(f: F, mut a: f64, mut b: f64, tol: f64, max_iter: u32) -> (f64, u32)
+    fn find_root_chandrupatla<F>(
+        f: F,
+        mut a: f64,
+        mut b: f64,
+        tol: f64,
+        max_iter: u32,
+    ) -> (f64, u32)
     where
         F: Fn(f64) -> f64,
     {
@@ -991,10 +967,10 @@ mod tests {
                 let df_ca = fc - fa;
                 let df_bc = fb - fc;
 
-                if df_ab.abs() > config.min_divisor
-                    && df_cb.abs() > config.min_divisor
-                    && df_ca.abs() > config.min_divisor
-                    && df_bc.abs() > config.min_divisor
+                if df_ab.abs() > config.min_divisor &&
+                    df_cb.abs() > config.min_divisor &&
+                    df_ca.abs() > config.min_divisor &&
+                    df_bc.abs() > config.min_divisor
                 {
                     let term1 = (fa / df_ab) * (fc / df_cb);
                     let term2 = alpha * (fa / df_ca) * (fb / df_bc);
