@@ -1,17 +1,17 @@
 pub mod history_based;
-pub mod interpolation_search;
+pub mod history_based_archive;
 
+// Main strategies (best performers)
 pub use history_based::{
-    BrentStrategy, ChandrupatlaStrategy, ConvexSearchStrategy, HybridStrategy, IqiStrategy,
-    IqiV2Strategy, ItpStrategy, NewtonCentralStrategy, NewtonLogStrategy, PiecewiseLinearStrategy,
-    QuadraticRegressionStrategy, WeightedRegressionStrategy,
-    // AMM-Aware Strategies
-    BlendedIqiSecantStrategy, BlendedIqiSecantV2Strategy, BrentV2Strategy,
-    CurvatureAdaptiveStrategy, ElasticityNewtonStrategy, PrecisionLimitAwareStrategy,
-    StableSwapAwareStrategy,
+    BrentAndStrategy, BrentOrStrategy, BrentOriginalStrategy, BrentStrategy, IqiStrategy,
 };
-pub use interpolation_search::{
-    BinaryInterpolation, BoundedLinearInterpolation, ExponentialProbing, InterpolationFunction,
-    InterpolationSearchStrategy, LinearInterpolation, LogAmountBinarySearch, LogPriceInterpolation,
-    LogarithmicBisection, SecantMethod, SqrtPriceInterpolation, TwoPhaseSearch,
+
+// Archived strategies (kept for reference)
+pub use history_based_archive::{
+    BlendedIqiSecantStrategy, BlendedIqiSecantV2Strategy, BrentV2Strategy,
+    ChandrupatlaStrategy, ConvexSearchStrategy, CurvatureAdaptiveStrategy,
+    ElasticityNewtonStrategy, HybridStrategy, IqiV2Strategy, ItpStrategy,
+    NewtonCentralStrategy, NewtonLogStrategy, PiecewiseLinearStrategy,
+    PrecisionLimitAwareStrategy, QuadraticRegressionStrategy, RiddersStrategy,
+    StableSwapAwareStrategy, WeightedRegressionStrategy,
 };

@@ -54,8 +54,8 @@ pub const TARGET_PROTOCOLS: &[&str] = &[
     "vm:curve",
     "vm:maverick_v2",
     "fluid_v1",
-    // "erc4626", // still experimental
-    // "rocketpool", // still experimental
+    "erc4626", // still experimental
+    "rocketpool", // still experimental
 ];
 
 /// Finds the latest snapshot file in a directory
@@ -117,11 +117,11 @@ enum Commands {
         api_key: Option<String>,
 
         /// Minimum TVL filter (ETH)
-        #[arg(long, default_value = "10")]
+        #[arg(long, default_value = "5")]
         min_tvl: f64,
 
         /// Maximum number of pools per protocol to include in snapshot
-        #[arg(long, default_value = "20")]
+        #[arg(long, default_value = "40")]
         pool_count_limit: usize,
     },
 
@@ -166,7 +166,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 chain,
                 &protocols,
                 min_tvl,
-                Some(TARGET_TOKENS),
+                None, // Some(TARGET_TOKENS),
                 &output_folder,
                 pool_count_limit,
             )

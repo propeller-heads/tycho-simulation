@@ -1,8 +1,39 @@
-//! Brent's method for finding swap amounts to reach target prices.
+//! Modified Brent's method for finding swap amounts to reach target prices.
 //!
 //! This module provides two search modes:
 //! - [`swap_to_price`]: Find amount to move **spot price** to target
 //! - [`query_supply`]: Find max trade where **trade price** ≤ target
+//!
+//! # Implementation Notes
+//!
+//! This implementation is **modified from classical Brent's method** to better suit
+//! the AMM domain (discrete amounts, expensive EVM simulations).
+//!
+//! ## Differences from Classical Brent (scipy/Numerical Recipes)
+//!
+//! | Aspect | Classical Brent | This Implementation |
+//! |--------|-----------------|---------------------|
+//! | **IQI acceptance** | `2*|step| < min(|prev_step|, 3*|bisect| - δ)` | `improvement > bracket * 0.01` |
+//! | **Effective tolerance** | `δ = (xtol + rtol*|x|)/2` in acceptance | Not used in acceptance |
+//! | **Step memory** | Tracks previous step for acceptance | No step memory needed |
+//! | **Convergence** | `|bracket| < δ` or `f(x) = 0` | Relative price tolerance |
+//!
+//! ## IQI Threshold (1% of bracket)
+//!
+//! Classical Brent accepts an IQI/secant step if it's less than half the previous step.
+//! This prevents the algorithm from taking steps that don't sufficiently reduce the
+//! search space.
+//!
+//! Our implementation instead requires that the IQI estimate improves the bracket by
+//! at least 1% of its current size. This simpler criterion was developed during
+//! benchmarking and showed better performance in the AMM context:
+//!
+//! - **1% threshold**: 3.9 mean iterations
+//! - **Classical half-step**: 4.7-5.0 mean iterations
+//!
+//! The improvement likely comes from the discrete nature of AMM amounts—classical
+//! Brent's step-memory approach assumes continuous functions and small incremental
+//! improvements, while our bracket-based approach works better with discrete jumps.
 
 use num_bigint::BigUint;
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -22,8 +53,17 @@ const TOLERANCE: f64 = 0.00001;
 const MAX_ITERATIONS: u32 = 100;
 
 /// IQI acceptance threshold as fraction of bracket size.
-/// IQI estimate is accepted if it improves the bracket by at least this fraction.
-/// Benchmark result: 0.01 (1%) gives best performance (3.9 mean iterations).
+///
+/// **This is NOT from classical Brent.** Classical Brent uses a "half previous step"
+/// criterion: `2*|new_step| < |prev_step|`. Our 1% bracket threshold was developed
+/// during benchmarking and showed better performance in the AMM domain:
+///
+/// | Criterion | Mean Iterations |
+/// |-----------|-----------------|
+/// | 1% bracket (this) | 3.9 |
+/// | 1/2 prev step (classical) | 5.0 |
+/// | 3/4 prev step | 4.8 |
+/// | 9/10 prev step | 4.7 |
 const IQI_THRESHOLD: f64 = 0.01;
 
 /// Minimum divisor to avoid division by zero
@@ -198,7 +238,15 @@ fn secant(a1: f64, p1: f64, a2: f64, p2: f64, target: f64) -> Option<f64> {
     }
 }
 
-/// Compute the next amount using Brent's method (1% bracket threshold variant)
+/// Compute the next amount using Brent's method (modified acceptance criterion).
+///
+/// # Acceptance Criterion
+///
+/// Classical Brent accepts IQI if: `2*|step| < min(|prev_step|, 3*|bisect| - eff_tol)`
+/// This implementation accepts IQI if: `improvement > bracket_size * 0.01` (1% of bracket)
+///
+/// The 1% threshold was developed during benchmarking and outperforms classical Brent
+/// in the AMM domain (see `IQI_THRESHOLD` constant for benchmark results).
 fn brent_next_amount(
     history: &[HistoryPoint],
     low: &BigUint,
@@ -208,6 +256,7 @@ fn brent_next_amount(
     let fallback = geometric_mean(low, high);
     let low_f64 = low.to_f64().unwrap_or(0.0);
     let high_f64 = high.to_f64().unwrap_or(f64::MAX);
+    let bracket_size = high_f64 - low_f64;
 
     // Try IQI if we have 3+ points
     if history.len() >= 3 {
@@ -225,8 +274,8 @@ fn brent_next_amount(
             p3.price,
             target,
         ) {
-            // Accept if estimate is within bounds AND improves bracket by >1%
-            let bracket_size = high_f64 - low_f64;
+            // Accept IQI if within bounds AND improves bracket by >1%
+            // (Classical Brent would check: 2*|step| < |prev_step| instead)
 
             if estimate > low_f64 && estimate < high_f64 {
                 let iqi_improvement = (estimate - low_f64).min(high_f64 - estimate);

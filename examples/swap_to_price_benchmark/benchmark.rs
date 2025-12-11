@@ -7,9 +7,8 @@ use tycho_common::models::token::Token;
 #[cfg(feature = "swap_to_price")]
 use tycho_simulation::swap_to_price::{
     strategies::{
-        BrentStrategy, ChandrupatlaStrategy, BlendedIqiSecantStrategy, BlendedIqiSecantV2Strategy, BrentV2Strategy,
-        PrecisionLimitAwareStrategy,
-        StableSwapAwareStrategy,
+        BrentAndStrategy, BrentOrStrategy, BrentOriginalStrategy, BrentStrategy,
+        ChandrupatlaStrategy, ItpStrategy, RiddersStrategy,
     },
     within_tolerance, ProtocolSimExt, SWAP_TO_PRICE_MAX_ITERATIONS,
 };
@@ -71,24 +70,13 @@ pub async fn run_benchmark(
         // Filter for specific pool (None = all pools)
         const DEBUG_POOL_FILTER: Option<&str> = None;
 
-        // Define all strategies to benchmark
+        // Compare strategies with various parameter values
         let strategies: Vec<(&str, Box<dyn ProtocolSimExt>)> = vec![
-            ("brent", Box::new(BrentStrategy)),
-            ("chandrupatla", Box::new(ChandrupatlaStrategy)),
-            // ("iqi", Box::new(IqiStrategy)),
-            // ("iqi_v2", Box::new(IqiV2Strategy)),
-            // ("hybrid", Box::new(HybridStrategy)),
-            // ("newton_cd", Box::new(NewtonCentralStrategy)),
-            // ("newton_log", Box::new(NewtonLogStrategy)),
-            // ("itp", Box::new(ItpStrategy::default())),
-            // ("quad_regr", Box::new(QuadraticRegressionStrategy)),
-            // ("curvature", Box::new(CurvatureAdaptiveStrategy)),
-            // ("elasticity", Box::new(ElasticityNewtonStrategy)),
-            ("stableswap", Box::new(StableSwapAwareStrategy)),
-            ("blended", Box::new(BlendedIqiSecantStrategy)),
-            ("blended_v2", Box::new(BlendedIqiSecantV2Strategy)), // Improved version
-            ("prec_limit", Box::new(PrecisionLimitAwareStrategy)),
-            ("brent_v2", Box::new(BrentV2Strategy)),
+            // Brent strategies - testing different acceptance criteria
+            ("brkt_1%", Box::new(BrentStrategy)),           // 1% bracket only
+            ("step_1/2", Box::new(BrentOriginalStrategy)),  // half prev step only (classical)
+            ("brkt_AND_step", Box::new(BrentAndStrategy)),  // both criteria (AND)
+            ("brkt_OR_step", Box::new(BrentOrStrategy)),    // either criterion (OR)
         ];
         let _ = use_query_supply; // silence unused warning
 
