@@ -2,6 +2,7 @@ use alloy::primitives::U256;
 use tycho_common::keccak256;
 
 pub mod account_storage;
+pub mod brent;
 pub mod decoder;
 pub mod engine_db;
 pub mod protocol;
