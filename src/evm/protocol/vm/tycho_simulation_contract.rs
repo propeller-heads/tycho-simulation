@@ -151,9 +151,17 @@ where
     }
 
     fn simulate(&self, params: SimulationParameters) -> Result<SimulationResult, SimulationError> {
-        self.engine
-            .simulate(&params)
-            .map_err(|e| coerce_error(&e, "pool_state", params.gas_limit))
+        tracing::debug!(
+            "Simulating call to 0x{:x}, data len: {}, caller: 0x{:x}",
+            params.to,
+            params.data.len(),
+            params.caller
+        );
+        let result = self.engine.simulate(&params);
+        if let Err(ref e) = result {
+            tracing::debug!("Simulation failed: {:?}", e);
+        }
+        result.map_err(|e| coerce_error(&e, "pool_state", params.gas_limit))
     }
 }
 

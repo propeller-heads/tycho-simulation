@@ -313,12 +313,22 @@ where
 
                 // UPDATE VM STORAGE
                 info!(
-                    "Processing {} contracts from snapshots",
+                    "Processing {} contracts from snapshots for protocol {}",
                     protocol_msg
                         .snapshots
                         .get_vm_storage()
-                        .len()
+                        .len(),
+                    protocol
                 );
+                // Debug: log which contract addresses are being loaded and their code size
+                for (addr, account) in protocol_msg.snapshots.get_vm_storage().iter() {
+                    info!(
+                        "  Loading contract: 0x{} (code size: {}, storage slots: {})",
+                        hex::encode(addr.as_ref()),
+                        account.code.len(),
+                        account.slots.len()
+                    );
+                }
 
                 let mut proxy_token_accounts: HashMap<Address, AccountUpdate> = HashMap::new();
                 let mut storage_by_address: HashMap<Address, ResponseAccount> = HashMap::new();
@@ -446,6 +456,16 @@ where
                         .is_some_and(|predicate| !predicate(&snapshot))
                     {
                         continue;
+                    }
+
+                    // Debug: log pool and its involved contracts
+                    info!(
+                        "Decoding pool {} with {} contract_ids",
+                        snapshot.component.id,
+                        snapshot.component.contract_ids.len()
+                    );
+                    for contract_id in &snapshot.component.contract_ids {
+                        info!("  Involved contract: 0x{}", hex::encode(contract_id.as_ref()));
                     }
 
                     // Construct component from snapshot

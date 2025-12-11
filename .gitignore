@@ -34,4 +34,5 @@ flamegraph.svg
 .env
 
 examples/swap_to_price_benchmark/data/**/*.bin
+examples/swap_to_price_benchmark/data/**/*.json
 examples/swap_to_price_benchmark/runs/*

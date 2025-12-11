@@ -554,28 +554,28 @@ where
         &self.balances
     }
 
-    /// Find the amount of input token needed to reach a target spot price using Brent's method.
+    /// Find the amount of input token needed to reach a target spot price using Chandrupatla's method.
     ///
-    /// See [`crate::evm::brent::swap_to_price`] for details.
+    /// See [`crate::evm::chandrupatla::swap_to_price`] for details.
     pub fn swap_to_price(
         &self,
         target_price: f64,
         token_in: &Token,
         token_out: &Token,
-    ) -> Result<crate::evm::brent::SwapToPriceResult, crate::evm::brent::BrentSearchError> {
-        crate::evm::brent::swap_to_price(self, target_price, token_in, token_out)
+    ) -> Result<crate::evm::chandrupatla::SwapToPriceResult, crate::evm::chandrupatla::ChandrupatlaSearchError> {
+        crate::evm::chandrupatla::swap_to_price(self, target_price, token_in, token_out)
     }
 
     /// Find the maximum trade where the trade price stays at or below the target.
     ///
-    /// See [`crate::evm::brent::query_supply`] for details.
+    /// See [`crate::evm::chandrupatla::query_supply`] for details.
     pub fn query_supply(
         &self,
         target_price: f64,
         token_in: &Token,
         token_out: &Token,
-    ) -> Result<crate::evm::brent::QuerySupplyResult, crate::evm::brent::BrentSearchError> {
-        crate::evm::brent::query_supply(self, target_price, token_in, token_out)
+    ) -> Result<crate::evm::chandrupatla::QuerySupplyResult, crate::evm::chandrupatla::ChandrupatlaSearchError> {
+        crate::evm::chandrupatla::query_supply(self, target_price, token_in, token_out)
     }
 }
 

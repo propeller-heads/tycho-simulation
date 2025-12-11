@@ -48,14 +48,14 @@ pub const TARGET_PROTOCOLS: &[&str] = &[
     // "uniswap_v3",
     // "pancakeswap_v3",
     // "uniswap_v4",
+    // "uniswap_v4_hooks",
+    // "ekubo_v2",
     "vm:balancer_v2",
-    "uniswap_v4_hooks",
-    "ekubo_v2",
     "vm:curve",
-    "vm:maverick_v2",
-    "fluid_v1",
-    "erc4626", // still experimental
-    "rocketpool", // still experimental
+    // "vm:maverick_v2", // TODO: Tycho indexer bug - 0xb40afd... has no code indexed
+    // "fluid_v1",
+    // "erc4626", // still experimental
+    // "rocketpool", // still experimental
 ];
 
 /// Finds the latest snapshot file in a directory
@@ -117,7 +117,7 @@ enum Commands {
         api_key: Option<String>,
 
         /// Minimum TVL filter (ETH)
-        #[arg(long, default_value = "5")]
+        #[arg(long, default_value = "1")]
         min_tvl: f64,
 
         /// Maximum number of pools per protocol to include in snapshot

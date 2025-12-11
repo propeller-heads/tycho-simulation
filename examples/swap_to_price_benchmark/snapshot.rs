@@ -5,8 +5,8 @@
 //! self-contained `Snapshot` structure.
 //!
 //! ## Approach
-//! - **Capture**: Use `TychoStreamBuilder` to get raw `FeedMessage`, wrap in `Snapshot`, serialize to JSON
-//! - **Restore**: Deserialize `Snapshot`, decode using embedded tokens and protocols
+//! - **Capture**: Use `TychoStreamBuilder` to get raw `FeedMessage`, wrap in `Snapshot`, serialize to JSON file
+//! - **Restore**: Deserialize `Snapshot` from JSON, decode using embedded tokens and protocols
 //!
 //! ## Example
 //! ```no_run
@@ -255,6 +255,19 @@ pub async fn fetch_feed_message(
     // Unwrap the Result from the channel
     let feed_msg = feed_msg_result.map_err(|e| format!("Stream error: {}", e))?;
 
+    // Log what we received
+    info!("Received FeedMessage with {} protocols", feed_msg.state_msgs.len());
+    for (protocol, msg) in &feed_msg.state_msgs {
+        info!("  Protocol '{}': {} components", protocol, msg.snapshots.states.len());
+        // Log first few component IDs for debugging
+        for (id, component_with_state) in msg.snapshots.states.iter().take(5) {
+            info!("    - {} (tokens: {:?})", id, component_with_state.component.tokens);
+        }
+        if msg.snapshots.states.len() > 5 {
+            info!("    ... and {} more", msg.snapshots.states.len() - 5);
+        }
+    }
+
     // Shutdown the stream
     handle.abort();
 
@@ -341,13 +354,13 @@ pub async fn create_and_save_snapshot(
     }
 
     // Build filename with block number
-    let filename = format!("snapshot_{}.bin", block_number);
+    let filename = format!("snapshot_{}.json", block_number);
     let output_path = output_folder.join(&filename);
 
-    // Serialize to MessagePack
+    // Serialize to JSON
     info!("Saving snapshot to {}...", output_path.display());
     let file = File::create(&output_path)?;
-    rmp_serde::encode::write(&mut std::io::BufWriter::new(file), &snapshot)?;
+    serde_json::to_writer_pretty(std::io::BufWriter::new(file), &snapshot)?;
 
     info!("Snapshot saved successfully!");
 
@@ -406,22 +419,22 @@ pub async fn save_snapshot(
     .await
 }
 
-/// Loads a snapshot from a binary file.
+/// Loads a snapshot from a JSON file.
 ///
-/// This function deserializes a `Snapshot` from MessagePack format.
+/// This function deserializes a `Snapshot` from JSON format.
 /// Use `process_snapshot` to decode the snapshot into protocol states.
 ///
 /// # Arguments
-/// * `snapshot_path` - Path to the snapshot .bin file
+/// * `snapshot_path` - Path to the snapshot .json file
 ///
 /// # Returns
 /// `Snapshot` containing the raw data
 pub fn load_snapshot(snapshot_path: &Path) -> Result<Snapshot, Box<dyn std::error::Error>> {
     info!("Loading snapshot from {}...", snapshot_path.display());
 
-    // Deserialize Snapshot from MessagePack
+    // Deserialize Snapshot from JSON
     let file = File::open(snapshot_path)?;
-    let snapshot: Snapshot = rmp_serde::decode::from_read(std::io::BufReader::new(file))?;
+    let snapshot: Snapshot = serde_json::from_reader(std::io::BufReader::new(file))?;
 
     info!("Loaded snapshot:");
     info!("  Block: {}", snapshot.metadata.block_number);
@@ -470,7 +483,7 @@ pub async fn process_snapshot(
 /// Combines `load_snapshot` and `process_snapshot`.
 ///
 /// # Arguments
-/// * `snapshot_path` - Path to the snapshot .bin file
+/// * `snapshot_path` - Path to the snapshot .json file
 ///
 /// # Returns
 /// `LoadedSnapshot` containing decoded states, components, and metadata

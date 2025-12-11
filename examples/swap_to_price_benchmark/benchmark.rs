@@ -8,7 +8,8 @@ use tycho_common::models::token::Token;
 use tycho_simulation::swap_to_price::{
     strategies::{
         BrentAndStrategy, BrentOrStrategy, BrentOriginalStrategy, BrentStrategy,
-        ChandrupatlaStrategy, ItpStrategy, RiddersStrategy,
+        BlendedIqiSecantStrategy, ChandrupatlaStrategy, ConvexSearchStrategy,
+        HybridStrategy, IqiStrategy,
     },
     within_tolerance, ProtocolSimExt, SWAP_TO_PRICE_MAX_ITERATIONS,
 };
@@ -72,11 +73,17 @@ pub async fn run_benchmark(
 
         // Compare strategies with various parameter values
         let strategies: Vec<(&str, Box<dyn ProtocolSimExt>)> = vec![
-            // Brent strategies - testing different acceptance criteria
+            // Brent variants - testing different acceptance criteria
             ("brkt_1%", Box::new(BrentStrategy)),           // 1% bracket only
             ("step_1/2", Box::new(BrentOriginalStrategy)),  // half prev step only (classical)
             ("brkt_AND_step", Box::new(BrentAndStrategy)),  // both criteria (AND)
             ("brkt_OR_step", Box::new(BrentOrStrategy)),    // either criterion (OR)
+            // Other strategies for comparison
+            ("iqi", Box::new(IqiStrategy)),                        // Simple IQI
+            ("hybrid", Box::new(HybridStrategy)),                  // IQI + secant + bisection
+            ("convex", Box::new(ConvexSearchStrategy)),            // Convex-aware search
+            ("chandrupatla", Box::new(ChandrupatlaStrategy::default())), // Chandrupatla's method
+            ("blended_iqi", Box::new(BlendedIqiSecantStrategy)),   // Blended IQI + secant
         ];
         let _ = use_query_supply; // silence unused warning
 
@@ -205,13 +212,20 @@ pub async fn run_benchmark(
                     }
 
                     // Calculate limit price for this direction
-                    let limit_price = match state.get_limits(token_in.address.clone(), token_out.address.clone()) {
+                    let (limit_price, max_amount_in_debug) = match state.get_limits(token_in.address.clone(), token_out.address.clone()) {
                         Ok((max_amount_in, _)) => {
-                            state.get_amount_out(max_amount_in, token_in, token_out)
+                            let limit = state.get_amount_out(max_amount_in.clone(), token_in, token_out)
                                 .ok()
-                                .and_then(|result| result.new_state.spot_price(token_out, token_in).ok())
+                                .and_then(|result| result.new_state.spot_price(token_out, token_in).ok());
+                            (limit, Some(max_amount_in))
                         }
-                        Err(_) => None,
+                        Err(e) => {
+                            println!(
+                                "  ⚠ get_limits failed for {} -> {}: {:?}",
+                                token_in.symbol, token_out.symbol, e
+                            );
+                            (None, None)
+                        }
                     };
 
                     // Filter price movements to only include those within the limit
@@ -227,9 +241,18 @@ pub async fn run_benchmark(
                     };
 
                     if valid_movements.is_empty() {
+                        let limit_info = if let Some(limit) = limit_price {
+                            let max_move_pct = ((limit / spot_price) - 1.0) * 100.0;
+                            format!("limit={:.6}, max_move={:.4}%", limit, max_move_pct)
+                        } else {
+                            "limit=None".to_string()
+                        };
+                        let max_amt_info = max_amount_in_debug
+                            .map(|a| format!(", max_amt={}", a))
+                            .unwrap_or_default();
                         println!(
-                            "  {} -> {} (spot: {}) - skipping: no valid price movements within limit",
-                            token_in.symbol, token_out.symbol, spot_display
+                            "  {} -> {} (spot: {}, {}{}) - skipping: no valid price movements",
+                            token_in.symbol, token_out.symbol, spot_display, limit_info, max_amt_info
                         );
                         continue;
                     }
