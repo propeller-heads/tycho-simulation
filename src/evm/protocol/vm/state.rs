@@ -553,6 +553,30 @@ where
     pub fn get_balances(&self) -> &HashMap<Address, U256> {
         &self.balances
     }
+
+    /// Find the amount of input token needed to reach a target spot price using Chandrupatla's method.
+    ///
+    /// See [`crate::evm::chandrupatla::swap_to_price`] for details.
+    pub fn swap_to_price(
+        &self,
+        target_price: f64,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<crate::evm::chandrupatla::SwapToPriceResult, crate::evm::chandrupatla::ChandrupatlaSearchError> {
+        crate::evm::chandrupatla::swap_to_price(self, target_price, token_in, token_out, None)
+    }
+
+    /// Find the maximum trade where the trade price stays at or below the target.
+    ///
+    /// See [`crate::evm::brent::query_supply`] for details.
+    pub fn query_supply(
+        &self,
+        target_price: f64,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<crate::evm::chandrupatla::QuerySupplyResult, crate::evm::chandrupatla::ChandrupatlaSearchError> {
+        crate::evm::chandrupatla::query_supply(self, target_price, token_in, token_out, None)
+    }
 }
 
 impl<D> ProtocolSim for EVMPoolState<D>
