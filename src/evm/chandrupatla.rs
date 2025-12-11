@@ -145,6 +145,19 @@ impl SearchConfig {
 /// - `x3, f3`: Previous contrapoint (for IQI interpolation)
 ///
 /// Invariant: f1 and f2 have opposite signs (bracket the root)
+///
+/// # Precision Note
+///
+/// The x values (amounts) are stored as `f64` for efficient interpolation arithmetic.
+/// This means amounts larger than 2^53 (~9 × 10^15) cannot be represented exactly -
+/// consecutive integers may round to the same f64 value. For 18-decimal tokens,
+/// this corresponds to ~9 million tokens.
+///
+/// The algorithm maintains separate `BigUint` bounds (`low`, `high`) to ensure
+/// evaluation points are always valid integers, but the interpolation itself
+/// may lose precision for very large amounts. In practice, the algorithm will
+/// still converge but may not find the mathematically optimal integer amount
+/// for extremely large trades.
 #[derive(Debug, Clone, Copy)]
 struct ChandrupatlaState {
     x1: f64,
@@ -231,15 +244,10 @@ pub fn within_tolerance(actual_price: f64, target_price: f64, tolerance: f64) ->
 
 /// Geometric mean of two BigUint values (bisection in log space)
 fn geometric_mean(a: &BigUint, b: &BigUint) -> BigUint {
-    let a_f64 = a.to_f64().unwrap_or(0.0);
-    let b_f64 = b.to_f64().unwrap_or(f64::MAX);
-
-    if a_f64 <= 0.0 || b_f64 <= 0.0 {
+    if a.is_zero() || b.is_zero() {
         return (a + b) / 2u32;
     }
-
-    let result = (a_f64 * b_f64).sqrt();
-    BigUint::from_f64(result).unwrap_or_else(|| (a + b) / 2u32)
+    (a * b).sqrt()
 }
 
 /// Decide whether to use IQI based on Chandrupatla's criterion.
@@ -517,24 +525,23 @@ fn run_search(
 
         // Check if we've hit precision limit - re-evaluate best amount if needed
         if &high - &low <= one {
-            if let Some(best_amt) = best_amount {
-                let (price, _, amount_out, gas, new_state) = evaluate_objective(
-                    state,
-                    &best_amt,
-                    token_in,
-                    token_out,
-                    target_price,
-                    &search_config,
-                )?;
-                return Ok(SwapToPriceResult {
-                    amount_in: best_amt,
-                    amount_out,
-                    actual_price: price,
-                    gas,
-                    new_state,
-                    iterations: iteration + 1,
-                });
-            }
+            let final_amount = best_amount.unwrap_or(amount_new.clone());
+            let (price, _, amount_out, gas, new_state) = evaluate_objective(
+                state,
+                &final_amount,
+                token_in,
+                token_out,
+                target_price,
+                &search_config,
+            )?;
+            return Ok(SwapToPriceResult {
+                amount_in: final_amount,
+                amount_out,
+                actual_price: price,
+                gas,
+                new_state,
+                iterations: iteration + 1,
+            });
         }
 
         // Evaluate objective at new point
