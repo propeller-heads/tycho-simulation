@@ -23,7 +23,10 @@ use tycho_common::{
     Bytes,
 };
 use tycho_simulation::{
-    evm::protocol::{uniswap_v2::state::UniswapV2State, uniswap_v3::state::UniswapV3State},
+    evm::protocol::{
+        uniswap_v2::state::UniswapV2State, uniswap_v3::state::UniswapV3State,
+        uniswap_v4::state::UniswapV4State,
+    },
     protocol::models::{DecoderContext, TryFromWithBlock},
     utils::{get_default_url, load_all_tokens},
 };
@@ -33,6 +36,7 @@ use tycho_simulation::{
 pub enum ProtocolType {
     UniswapV2,
     UniswapV3,
+    UniswapV4,
 }
 
 impl ProtocolType {
@@ -40,6 +44,7 @@ impl ProtocolType {
         match self {
             ProtocolType::UniswapV2 => "uniswap_v2",
             ProtocolType::UniswapV3 => "uniswap_v3",
+            ProtocolType::UniswapV4 => "uniswap_v4",
         }
     }
 }
@@ -276,6 +281,43 @@ pub async fn decode_v3_states(
     Ok(states)
 }
 
+/// Decode UniswapV4 snapshots into pool states
+pub async fn decode_v4_states(
+    snapshots: &HashMap<String, ComponentWithState>,
+    tokens: &HashMap<Bytes, Token>,
+) -> Result<HashMap<String, Box<dyn ProtocolSim>>> {
+    let mut states: HashMap<String, Box<dyn ProtocolSim>> = HashMap::new();
+    let decoder_context = DecoderContext::new();
+    let block_header = BlockHeader {
+        number: 0,
+        hash: Bytes::from(vec![0; 32]),
+        parent_hash: Bytes::from(vec![0; 32]),
+        revert: false,
+        timestamp: 0,
+    };
+
+    for (id, snapshot) in snapshots {
+        match UniswapV4State::try_from_with_header(
+            snapshot.clone(),
+            block_header.clone(),
+            &HashMap::new(),
+            tokens,
+            &decoder_context,
+        )
+        .await
+        {
+            Ok(decoded_state) => {
+                states.insert(id.clone(), Box::new(decoded_state));
+            }
+            Err(e) => {
+                eprintln!("Failed to decode component {}: {:?}", id, e);
+            }
+        }
+    }
+
+    Ok(states)
+}
+
 /// Decode snapshots based on protocol type
 pub async fn decode_states(
     protocol: &ProtocolType,
@@ -285,6 +327,7 @@ pub async fn decode_states(
     match protocol {
         ProtocolType::UniswapV2 => decode_v2_states(snapshots, tokens).await,
         ProtocolType::UniswapV3 => decode_v3_states(snapshots, tokens).await,
+        ProtocolType::UniswapV4 => decode_v4_states(snapshots, tokens).await,
     }
 }
 
