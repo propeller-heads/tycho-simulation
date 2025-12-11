@@ -16,7 +16,7 @@ use super::reserve_price::spot_price_from_reserves;
 use crate::{
     evm::protocol::{
         safe_math::{safe_add_u256, safe_div_u256, safe_mul_u256, safe_sub_u256, sqrt_u512},
-        u256_num::{biguint_to_u256, u256_to_biguint},
+        u256_num::{biguint_to_u256, u256_to_biguint, u512_to_biguint},
     },
     protocol::errors::InvalidSnapshotError,
 };
@@ -217,6 +217,10 @@ pub fn cpmm_swap_to_price(
     target_price_limit: &Price,
     fee: ProtocolFee,
 ) -> Result<Trade, SimulationError> {
+    if reserve_in == U256::ZERO || reserve_out == U256::ZERO {
+        return Err(SimulationError::FatalError("Reserves cannot be zero".to_string()));
+    }
+
     // Flip target pool price to swap price
     let swap_price_num = biguint_to_u256(&target_price_limit.denominator);
     let swap_price_den = biguint_to_u256(&target_price_limit.numerator);
@@ -226,17 +230,21 @@ pub fn cpmm_swap_to_price(
     // FEE_NUMERATOR)
     // Cross-multiply to avoid division: swap_price_num * reserve_out * FEE_NUMERATOR >=
     // swap_price_den * reserve_in * FEE_PRECISION
-    let target_price_cross_mult = swap_price_num
-        .checked_mul(reserve_out)
-        .and_then(|x| x.checked_mul(fee.numerator))
+    // Use U512 precision to match the calculation of new reserves
+    let target_price_cross_mult = U512::from(swap_price_num)
+        .checked_mul(U512::from(reserve_out))
+        .and_then(|x| x.checked_mul(U512::from(fee.numerator)))
         .ok_or_else(|| SimulationError::FatalError("Overflow in price check".to_string()))?;
-    let current_price_cross_mult = swap_price_den
-        .checked_mul(reserve_in)
-        .and_then(|x| x.checked_mul(fee.precision))
+    let current_price_cross_mult = U512::from(swap_price_den)
+        .checked_mul(U512::from(reserve_in))
+        .and_then(|x| x.checked_mul(U512::from(fee.precision)))
         .ok_or_else(|| SimulationError::FatalError("Overflow in price check".to_string()))?;
 
     if target_price_cross_mult < current_price_cross_mult {
-        return Ok(Trade::new(BigUint::ZERO, BigUint::ZERO));
+        return Err(SimulationError::InvalidInput(
+            "Target price is unreachable (already below current spot price)".to_string(),
+            None,
+        ));
     }
 
     // Calculate new reserve_in: x' = sqrt(k * price_num * FEE_NUMERATOR / (price_den *
@@ -259,14 +267,11 @@ pub fn cpmm_swap_to_price(
         return Ok(Trade::new(BigUint::ZERO, BigUint::ZERO));
     }
 
-    let implied_amount_out = (amount_in * swap_price_den)
-        .checked_div(swap_price_num)
+    let implied_amount_out = (U512::from(amount_in).checked_mul(U512::from(swap_price_den)))
+        .and_then(|x| x.checked_div(U512::from(swap_price_num)))
         .ok_or_else(|| {
             SimulationError::FatalError("Division by zero in implied_amount_out".to_string())
         })?;
 
-    if implied_amount_out == U256::ZERO {
-        return Ok(Trade::new(BigUint::ZERO, BigUint::ZERO));
-    }
-    Ok(Trade::new(u256_to_biguint(amount_in), u256_to_biguint(implied_amount_out)))
+    Ok(Trade::new(u256_to_biguint(amount_in), u512_to_biguint(implied_amount_out)))
 }

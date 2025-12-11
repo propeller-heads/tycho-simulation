@@ -462,26 +462,16 @@ mod tests {
 
         let token_in = token_0();
         let token_out = token_1();
-        // Target price is unreachable (should return zero)
+        // Target price is unreachable (should return error)
         // Current pool price: reserve_out/reserve_in = 1000000/2000000 = 0.5 token_out per
         // token_in Target: 1/1 = 1.0 token_out per token_in
         // Selling token_in decreases pool price, so we can't reach 1.0 from 0.5
         let target_price = Price::new(BigUint::from(1u32), BigUint::from(1u32));
 
-        let trade = state
-            .swap_to_price(&SwapToPriceParams::new(token_in, token_out, target_price, None))
-            .unwrap();
+        let result =
+            state.swap_to_price(&SwapToPriceParams::new(token_in, token_out, target_price, None));
 
-        assert_eq!(
-            trade.amount_in,
-            BigUint::ZERO,
-            "Should require zero input amount when target price is unreachable"
-        );
-        assert_eq!(
-            trade.amount_out,
-            BigUint::ZERO,
-            "Should return zero output amount when target price is unreachable"
-        );
+        assert!(result.is_err(), "Should return error when target price is unreachable");
     }
 
     #[test]
@@ -649,7 +639,7 @@ mod tests {
             .unwrap();
 
         // Test 1: Price above reachable limit (more DAI per USDC than pool can provide) -should
-        // return zero Multiply by 1001/1000 to go above reachable limit
+        // return error Multiply by 1001/1000 to go above reachable limit
         let above_limit_num = spot_price_dai_per_usdc_num
             .checked_mul(U256::from(1001u32))
             .unwrap();
@@ -659,14 +649,13 @@ mod tests {
         let target_price =
             Price::new(u256_to_biguint(above_limit_num), u256_to_biguint(above_limit_den));
 
-        let trade_above_limit = pool
-            .swap_to_price(&SwapToPriceParams::new(usdc.clone(), dai.clone(), target_price, None))
-            .unwrap();
-        assert_eq!(
-            trade_above_limit.amount_out,
-            BigUint::ZERO,
-            "Should return zero for price above reachable limit"
-        );
+        let result_above_limit = pool.swap_to_price(&SwapToPriceParams::new(
+            usdc.clone(),
+            dai.clone(),
+            target_price,
+            None,
+        ));
+        assert!(result_above_limit.is_err(), "Should return error for price above reachable limit");
 
         // Test 2: Price just below reachable limit - should return non-zero
         // Multiply by 100_000/100_001 to go slightly below (more reachable)
