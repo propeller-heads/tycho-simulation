@@ -1,4 +1,4 @@
-//! Modified Brent's method for finding swap amounts to reach target prices.
+//! Chandrupatla's method for finding swap amounts to reach target prices.
 //!
 //! This module provides two search modes:
 //! - [`swap_to_price`]: Find amount to move **spot price** to target
@@ -6,34 +6,22 @@
 //!
 //! # Implementation Notes
 //!
-//! This implementation is **modified from classical Brent's method** to better suit
-//! the AMM domain (discrete amounts, expensive EVM simulations).
+//! Chandrupatla's method is a root-finding algorithm that selectively uses
+//! Inverse Quadratic Interpolation (IQI) based on geometric criteria.
+//! Unlike Brent's method which always tries IQI then checks, Chandrupatla
+//! first checks if IQI is likely to help based on the geometry of the points.
 //!
-//! ## Differences from Classical Brent (scipy/Numerical Recipes)
+//! The key insight is that IQI can overshoot when the function curvature
+//! doesn't favor quadratic interpolation. Chandrupatla's criterion avoids
+//! wasting iterations on bad IQI estimates by checking the relative position
+//! of the midpoint before attempting interpolation.
 //!
-//! | Aspect | Classical Brent | This Implementation |
-//! |--------|-----------------|---------------------|
-//! | **IQI acceptance** | `2*|step| < min(|prev_step|, 3*|bisect| - δ)` | `improvement > bracket * 0.01` |
-//! | **Effective tolerance** | `δ = (xtol + rtol*|x|)/2` in acceptance | Not used in acceptance |
-//! | **Step memory** | Tracks previous step for acceptance | No step memory needed |
-//! | **Convergence** | `|bracket| < δ` or `f(x) = 0` | Relative price tolerance |
+//! ## Algorithm
 //!
-//! ## IQI Threshold (1% of bracket)
-//!
-//! Classical Brent accepts an IQI/secant step if it's less than half the previous step.
-//! This prevents the algorithm from taking steps that don't sufficiently reduce the
-//! search space.
-//!
-//! Our implementation instead requires that the IQI estimate improves the bracket by
-//! at least 1% of its current size. This simpler criterion was developed during
-//! benchmarking and showed better performance in the AMM context:
-//!
-//! - **1% threshold**: 3.9 mean iterations
-//! - **Classical half-step**: 4.7-5.0 mean iterations
-//!
-//! The improvement likely comes from the discrete nature of AMM amounts—classical
-//! Brent's step-memory approach assumes continuous functions and small incremental
-//! improvements, while our bracket-based approach works better with discrete jumps.
+//! 1. Check if IQI is geometrically favorable using the xi criterion
+//! 2. If favorable, attempt IQI interpolation
+//! 3. Otherwise, fall back to linear interpolation (secant)
+//! 4. If secant fails, use geometric mean (bisection in log space)
 
 use num_bigint::BigUint;
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -52,22 +40,12 @@ const TOLERANCE: f64 = 0.00001;
 /// Maximum iterations before giving up
 const MAX_ITERATIONS: u32 = 100;
 
-/// IQI acceptance threshold as fraction of bracket size.
-///
-/// **This is NOT from classical Brent.** Classical Brent uses a "half previous step"
-/// criterion: `2*|new_step| < |prev_step|`. Our 1% bracket threshold was developed
-/// during benchmarking and showed better performance in the AMM domain:
-///
-/// | Criterion | Mean Iterations |
-/// |-----------|-----------------|
-/// | 1% bracket (this) | 3.9 |
-/// | 1/2 prev step (classical) | 5.0 |
-/// | 3/4 prev step | 4.8 |
-/// | 9/10 prev step | 4.7 |
-const IQI_THRESHOLD: f64 = 0.01;
-
 /// Minimum divisor to avoid division by zero
 const MIN_DIVISOR: f64 = 1e-12;
+
+/// Threshold for xi criterion. IQI is used if |xi| <= threshold
+/// and |1-xi| <= threshold. Default: 0.5 (classic Chandrupatla)
+const XI_THRESHOLD: f64 = 0.5;
 
 // =============================================================================
 // Types
@@ -138,9 +116,9 @@ pub struct QuerySupplyResult {
     pub iterations: u32,
 }
 
-/// Error types for Brent search operations
+/// Error types for Chandrupatla search operations
 #[derive(Debug, thiserror::Error)]
-pub enum BrentSearchError {
+pub enum ChandrupatlaSearchError {
     #[error("Target price {target} is below spot price {spot}. Cannot reach target by trading in this direction.")]
     TargetBelowSpot { target: f64, spot: f64 },
     #[error("Target price {target} is above limit price {limit} (spot: {spot}). Pool doesn't have enough liquidity to reach target.")]
@@ -224,62 +202,69 @@ fn iqi(a1: f64, p1: f64, a2: f64, p2: f64, a3: f64, p3: f64, target: f64) -> Opt
     }
 }
 
-/// Secant method estimate from 2 points
-fn secant(a1: f64, p1: f64, a2: f64, p2: f64, target: f64) -> Option<f64> {
-    let dp = p2 - p1;
-    if dp.abs() < MIN_DIVISOR {
-        return None;
+/// Decide whether to use IQI based on Chandrupatla's criterion
+///
+/// Returns true if IQI is likely to give a good estimate based on
+/// the geometric relationship between the points.
+fn should_use_iqi(low_p: f64, mid_p: f64, high_p: f64, target: f64) -> bool {
+    // Normalize to [0, 1] interval
+    let range = high_p - low_p;
+    if range.abs() < MIN_DIVISOR {
+        return false;
     }
-    let result = a2 - (p2 - target) * (a2 - a1) / dp;
-    if result.is_finite() && result > 0.0 {
-        Some(result)
-    } else {
-        None
+
+    let t = (target - low_p) / range;
+    let phi = (mid_p - low_p) / range;
+
+    // Use bisection if phi is very close to 0 or 1 (degenerate case)
+    if phi < MIN_DIVISOR || phi > 1.0 - MIN_DIVISOR {
+        return false;
     }
+
+    // Chandrupatla's criterion based on quadratic vertex position
+    let xi = (t - phi) / (1.0 - phi);
+    xi.abs() <= XI_THRESHOLD && (1.0 - xi).abs() <= XI_THRESHOLD
 }
 
-/// Compute the next amount using Brent's method (modified acceptance criterion).
+/// Compute the next amount using Chandrupatla's method.
 ///
-/// # Acceptance Criterion
+/// # Algorithm
 ///
-/// Classical Brent accepts IQI if: `2*|step| < min(|prev_step|, 3*|bisect| - eff_tol)`
-/// This implementation accepts IQI if: `improvement > bracket_size * 0.01` (1% of bracket)
-///
-/// The 1% threshold was developed during benchmarking and outperforms classical Brent
-/// in the AMM domain (see `IQI_THRESHOLD` constant for benchmark results).
-fn brent_next_amount(
+/// 1. Check if IQI is geometrically favorable using the xi criterion
+/// 2. If favorable, attempt IQI interpolation from the last 3 points
+/// 3. Otherwise, fall back to linear interpolation (secant) from last 2 points
+/// 4. If secant fails, use geometric mean (bisection in log space)
+fn chandrupatla_next_amount(
     history: &[HistoryPoint],
     low: &BigUint,
+    low_price: f64,
     high: &BigUint,
+    high_price: f64,
     target: f64,
 ) -> BigUint {
     let fallback = geometric_mean(low, high);
     let low_f64 = low.to_f64().unwrap_or(0.0);
     let high_f64 = high.to_f64().unwrap_or(f64::MAX);
-    let bracket_size = high_f64 - low_f64;
 
-    // Try IQI if we have 3+ points
+    // Need at least 3 points for IQI consideration
     if history.len() >= 3 {
         let n = history.len();
         let p1 = &history[n - 3];
         let p2 = &history[n - 2];
         let p3 = &history[n - 1];
 
-        if let Some(estimate) = iqi(
-            p1.amount_f64,
-            p1.price,
-            p2.amount_f64,
-            p2.price,
-            p3.amount_f64,
-            p3.price,
-            target,
-        ) {
-            // Accept IQI if within bounds AND improves bracket by >1%
-            // (Classical Brent would check: 2*|step| < |prev_step| instead)
-
-            if estimate > low_f64 && estimate < high_f64 {
-                let iqi_improvement = (estimate - low_f64).min(high_f64 - estimate);
-                if iqi_improvement > bracket_size * IQI_THRESHOLD {
+        // Check Chandrupatla's criterion before trying IQI
+        if should_use_iqi(low_price, p2.price, high_price, target) {
+            if let Some(estimate) = iqi(
+                p1.amount_f64,
+                p1.price,
+                p2.amount_f64,
+                p2.price,
+                p3.amount_f64,
+                p3.price,
+                target,
+            ) {
+                if estimate > low_f64 && estimate < high_f64 {
                     if let Some(amount) = BigUint::from_f64(estimate) {
                         if let Some(safe) = safe_next_amount(amount, low, high) {
                             return safe;
@@ -290,14 +275,17 @@ fn brent_next_amount(
         }
     }
 
-    // Try secant if we have 2+ points
+    // Try linear interpolation (secant) as fallback before geometric mean
     if history.len() >= 2 {
         let n = history.len();
         let p1 = &history[n - 2];
         let p2 = &history[n - 1];
 
-        if let Some(estimate) = secant(p1.amount_f64, p1.price, p2.amount_f64, p2.price, target) {
-            if estimate > low_f64 && estimate < high_f64 {
+        let dp = p2.price - p1.price;
+        if dp.abs() > MIN_DIVISOR {
+            let estimate =
+                p1.amount_f64 + (target - p1.price) * (p2.amount_f64 - p1.amount_f64) / dp;
+            if estimate.is_finite() && estimate > low_f64 && estimate < high_f64 {
                 if let Some(amount) = BigUint::from_f64(estimate) {
                     if let Some(safe) = safe_next_amount(amount, low, high) {
                         return safe;
@@ -315,14 +303,14 @@ fn brent_next_amount(
 // Core Search Algorithm
 // =============================================================================
 
-/// Run the search algorithm with Brent's method
+/// Run the search algorithm with Chandrupatla's method
 fn run_search(
     state: &dyn ProtocolSim,
     target_price: f64,
     token_in: &Token,
     token_out: &Token,
     config: SearchConfig,
-) -> Result<SwapToPriceResult, BrentSearchError> {
+) -> Result<SwapToPriceResult, ChandrupatlaSearchError> {
     // Step 1: Get spot price
     let spot_price = state.spot_price(token_out, token_in)?;
 
@@ -345,7 +333,7 @@ fn run_search(
 
     // Step 4: Validate target price is above spot
     if target_price < spot_price {
-        return Err(BrentSearchError::TargetBelowSpot {
+        return Err(ChandrupatlaSearchError::TargetBelowSpot {
             target: target_price,
             spot: spot_price,
         });
@@ -357,7 +345,7 @@ fn run_search(
 
     // Step 6: Validate limit price
     if limit_spot_price <= spot_price {
-        return Err(BrentSearchError::TargetAboveLimit {
+        return Err(ChandrupatlaSearchError::TargetAboveLimit {
             target: target_price,
             spot: spot_price,
             limit: limit_spot_price,
@@ -366,7 +354,7 @@ fn run_search(
 
     // Step 7: Validate target is reachable
     if target_price > limit_spot_price {
-        return Err(BrentSearchError::TargetAboveLimit {
+        return Err(ChandrupatlaSearchError::TargetAboveLimit {
             target: target_price,
             spot: spot_price,
             limit: limit_spot_price,
@@ -375,7 +363,9 @@ fn run_search(
 
     // Step 8: Initialize search
     let mut low = BigUint::from(0u32);
+    let mut low_price = spot_price;
     let mut high = max_amount_in.clone();
+    let mut high_price = limit_spot_price;
     let mut history: Vec<HistoryPoint> = Vec::with_capacity(MAX_ITERATIONS as usize);
 
     // Add initial bounds to history
@@ -396,8 +386,9 @@ fn run_search(
 
     // Step 9: Main search loop
     for iteration in 0..MAX_ITERATIONS {
-        // Calculate next amount using Brent's method
-        let next_amount = brent_next_amount(&history, &low, &high, target_price);
+        // Calculate next amount using Chandrupatla's method
+        let next_amount =
+            chandrupatla_next_amount(&history, &low, low_price, &high, high_price, target_price);
 
         // Simulate the swap
         let result = state.get_amount_out(next_amount.clone(), token_in, token_out)?;
@@ -455,8 +446,10 @@ fn run_search(
         // Update bounds
         if current_price < target_price {
             low = next_amount;
+            low_price = current_price;
         } else {
             high = next_amount;
+            high_price = current_price;
         }
 
         // Check if we've converged to adjacent integers (precision limit)
@@ -477,7 +470,7 @@ fn run_search(
         iterations: MAX_ITERATIONS,
     });
 
-    Err(BrentSearchError::ConvergenceFailure {
+    Err(ChandrupatlaSearchError::ConvergenceFailure {
         iterations: MAX_ITERATIONS,
         target_price,
         best_price: best.actual_price,
@@ -490,7 +483,7 @@ fn run_search(
 // Public API
 // =============================================================================
 
-/// Find the amount of input token needed to reach a target spot price using Brent's method.
+/// Find the amount of input token needed to reach a target spot price using Chandrupatla's method.
 ///
 /// This finds how much `token_in` to sell for `token_out` to reach a target price.
 /// When you sell `token_in` for `token_out`, you make `token_out` more expensive
@@ -515,7 +508,7 @@ pub fn swap_to_price(
     target_price: f64,
     token_in: &Token,
     token_out: &Token,
-) -> Result<SwapToPriceResult, BrentSearchError> {
+) -> Result<SwapToPriceResult, ChandrupatlaSearchError> {
     run_search(state, target_price, token_in, token_out, SearchConfig::swap_to_price())
 }
 
@@ -531,7 +524,7 @@ pub fn query_supply(
     target_price: f64,
     token_in: &Token,
     token_out: &Token,
-) -> Result<QuerySupplyResult, BrentSearchError> {
+) -> Result<QuerySupplyResult, ChandrupatlaSearchError> {
     let result = run_search(state, target_price, token_in, token_out, SearchConfig::query_supply())?;
     Ok(QuerySupplyResult {
         amount_in: result.amount_in,
@@ -585,11 +578,12 @@ mod tests {
     }
 
     #[test]
-    fn test_secant() {
-        // Linear case
-        let result = secant(0.0, 0.0, 2.0, 2.0, 1.0);
-        assert!(result.is_some());
-        let r = result.unwrap();
-        assert!((r - 1.0).abs() < 0.001);
+    fn test_should_use_iqi() {
+        // Well-positioned midpoint should allow IQI
+        assert!(should_use_iqi(0.0, 0.5, 1.0, 0.5));
+
+        // Degenerate cases should reject IQI
+        assert!(!should_use_iqi(0.0, 0.0, 1.0, 0.5)); // mid at low
+        assert!(!should_use_iqi(0.0, 1.0, 1.0, 0.5)); // mid at high
     }
 }
