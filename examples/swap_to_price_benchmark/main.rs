@@ -42,18 +42,20 @@ pub const TARGET_TOKENS: &[&str] = &[
 ];
 
 pub const TARGET_PROTOCOLS: &[&str] = &[
-    "uniswap_v2",
-    "uniswap_v3",
-    "sushiswap_v2",
-    "pancakeswap_v2",
-    "pancakeswap_v3",
-    "uniswap_v4",
+    // "uniswap_v2",
+    // "sushiswap_v2",
+    // "pancakeswap_v2",
+    // "uniswap_v3",
+    // "pancakeswap_v3",
+    // "uniswap_v4",
+    "vm:balancer_v2",
     "uniswap_v4_hooks",
     "ekubo_v2",
-    // "balancer_v3", // Currently throwing Unknown extractor
-    "vm:balancer_v2",
     "vm:curve",
     "vm:maverick_v2",
+    "fluid_v1",
+    // "erc4626", // still experimental
+    // "rocketpool", // still experimental
 ];
 
 /// Finds the latest snapshot file in a directory
@@ -107,7 +109,7 @@ enum Commands {
         output_folder: PathBuf,
 
         /// Tycho API URL
-        #[arg(long, env = "TYCHO_URL", default_value = "tycho-beta.propellerheads.xyz")]
+        #[arg(long, env = "TYCHO_URL", default_value = "tycho-dev.propellerheads.xyz")]
         tycho_url: String,
 
         /// Tycho API key
@@ -115,7 +117,7 @@ enum Commands {
         api_key: Option<String>,
 
         /// Minimum TVL filter (ETH)
-        #[arg(long, default_value = "40")]
+        #[arg(long, default_value = "10")]
         min_tvl: f64,
 
         /// Maximum number of pools per protocol to include in snapshot

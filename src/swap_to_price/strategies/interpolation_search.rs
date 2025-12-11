@@ -7,6 +7,9 @@ use crate::swap_to_price::{
     SWAP_TO_PRICE_MAX_ITERATIONS,
 };
 
+/// Minimum threshold for denominators and differences to avoid division by near-zero.
+const MIN_DIVISOR: f64 = 1e-12;
+
 /// Debug assertions for interpolation function invariants
 #[inline]
 fn debug_assert_interpolation_invariants(
@@ -389,7 +392,7 @@ impl InterpolationFunction for SecantMethod {
         let price_range = high_price - low_price;
         let price_offset = target_price - low_price;
 
-        if price_range.abs() < f64::EPSILON {
+        if price_range.abs() < MIN_DIVISOR {
             return binary_midpoint;
         }
 

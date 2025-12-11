@@ -7,8 +7,9 @@ use tycho_common::models::token::Token;
 #[cfg(feature = "swap_to_price")]
 use tycho_simulation::swap_to_price::{
     strategies::{
-        BrentStrategy, ChandrupatlaStrategy, IqiStrategy, IqiV2Strategy, NewtonCentralStrategy,
-        NewtonLogStrategy, QuadraticRegressionStrategy,
+        BrentStrategy, ChandrupatlaStrategy, BlendedIqiSecantStrategy, BlendedIqiSecantV2Strategy, BrentV2Strategy,
+        PrecisionLimitAwareStrategy,
+        StableSwapAwareStrategy,
     },
     within_tolerance, ProtocolSimExt, SWAP_TO_PRICE_MAX_ITERATIONS,
 };
@@ -70,30 +71,26 @@ pub async fn run_benchmark(
         // Filter for specific pool (None = all pools)
         const DEBUG_POOL_FILTER: Option<&str> = None;
 
-        // Define all strategies to benchmark (only history-based strategies support query_supply)
-        let strategies: Vec<(&str, Box<dyn ProtocolSimExt>)> = if use_query_supply {
-            // Only history-based strategies support query_supply
-            vec![
-                ("iqi", Box::new(IqiStrategy)),
-                ("iqi_v2", Box::new(IqiV2Strategy)),
-                ("brent", Box::new(BrentStrategy)),
-                ("chandrupatla", Box::new(ChandrupatlaStrategy)),
-                ("newton_cd", Box::new(NewtonCentralStrategy)),
-                ("newton_log", Box::new(NewtonLogStrategy)),
-                ("quad_regr", Box::new(QuadraticRegressionStrategy)),
-            ]
-        } else {
-            // All strategies for swap_to_price
-            vec![
-                ("iqi", Box::new(IqiStrategy)),
-                ("iqi_v2", Box::new(IqiV2Strategy)),
-                ("brent", Box::new(BrentStrategy)),
-                ("chandrupatla", Box::new(ChandrupatlaStrategy)),
-                ("newton_cd", Box::new(NewtonCentralStrategy)),
-                ("newton_log", Box::new(NewtonLogStrategy)),
-                ("quad_regr", Box::new(QuadraticRegressionStrategy)),
-            ]
-        };
+        // Define all strategies to benchmark
+        let strategies: Vec<(&str, Box<dyn ProtocolSimExt>)> = vec![
+            ("brent", Box::new(BrentStrategy)),
+            ("chandrupatla", Box::new(ChandrupatlaStrategy)),
+            // ("iqi", Box::new(IqiStrategy)),
+            // ("iqi_v2", Box::new(IqiV2Strategy)),
+            // ("hybrid", Box::new(HybridStrategy)),
+            // ("newton_cd", Box::new(NewtonCentralStrategy)),
+            // ("newton_log", Box::new(NewtonLogStrategy)),
+            // ("itp", Box::new(ItpStrategy::default())),
+            // ("quad_regr", Box::new(QuadraticRegressionStrategy)),
+            // ("curvature", Box::new(CurvatureAdaptiveStrategy)),
+            // ("elasticity", Box::new(ElasticityNewtonStrategy)),
+            ("stableswap", Box::new(StableSwapAwareStrategy)),
+            ("blended", Box::new(BlendedIqiSecantStrategy)),
+            ("blended_v2", Box::new(BlendedIqiSecantV2Strategy)), // Improved version
+            ("prec_limit", Box::new(PrecisionLimitAwareStrategy)),
+            ("brent_v2", Box::new(BrentV2Strategy)),
+        ];
+        let _ = use_query_supply; // silence unused warning
 
         println!("Testing {} strategies: {}", strategies.len(),
             strategies.iter().map(|(name, _)| *name).collect::<Vec<_>>().join(", "));

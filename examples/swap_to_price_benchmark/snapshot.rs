@@ -60,8 +60,11 @@ use tycho_simulation::{
         decoder::TychoStreamDecoder,
         engine_db::tycho_db::PreCachedDB,
         protocol::{
+            erc4626::state::ERC4626State,
             filters::{balancer_v2_pool_filter, balancer_v3_pool_filter, curve_pool_filter},
+            fluid::FluidV1,
             pancakeswap_v2::state::PancakeswapV2State,
+            rocketpool::state::RocketpoolState,
             uniswap_v2::state::UniswapV2State,
             uniswap_v3::state::UniswapV3State,
             uniswap_v4::state::UniswapV4State,
@@ -641,11 +644,24 @@ async fn create_decoder_for_protocols(
                 info!("Registering decoder for vm:maverick_v2");
                 decoder.register_decoder::<EVMPoolState<PreCachedDB>>("vm:maverick_v2");
             }
+            "fluid_v1" => {
+                info!("Registering decoder for fluid_v1");
+                decoder.register_decoder::<FluidV1>("fluid_v1");
+            }
+            "erc4626" => {
+                info!("Registering decoder for erc4626");
+                decoder.register_decoder::<ERC4626State>("erc4626");
+            }
+            "rocketpool" => {
+                info!("Registering decoder for rocketpool");
+                decoder.register_decoder::<RocketpoolState>("rocketpool");
+            }
             protocol_name => {
                 warn!("Unsupported protocol in snapshot: {}", protocol_name);
                 warn!("  Supported protocols: uniswap_v2, sushiswap_v2, pancakeswap_v2,");
                 warn!("  uniswap_v3, pancakeswap_v3, uniswap_v4, uniswap_v4_hooks,");
-                warn!("  balancer_v3, vm:balancer_v2, vm:curve, vm:maverick_v2");
+                warn!("  balancer_v3, vm:balancer_v2, vm:curve, vm:maverick_v2,");
+                warn!("  fluid_v1, erc4626, rocketpool, ekubo_v2");
             }
         }
     }
