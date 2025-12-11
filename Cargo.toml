@@ -91,8 +91,8 @@ foundry-config = { git = "https://github.com/foundry-rs/foundry", rev = "d6daa0a
 foundry-evm = { git = "https://github.com/foundry-rs/foundry", rev = "d6daa0ac83fe6b3883072436bb3f95ba7820e5d9", optional = true }
 solar-config = "=0.1.7"
 solar-data-structures = "=0.1.7"
-alloy = { workspace = true, features = ["sol-types"], optional = true }
-revm = { version = "29.0.1", features = ["alloydb", "serde"], optional = true }
+alloy = { workspace = true, features = ["sol-types", "asm-keccak"], optional = true }
+revm = { version = "29.0.1", features = ["alloydb", "serde", "asm-keccak"], optional = true }
 revm-inspectors = { version = "0.30.0", features = ["serde"], optional = true }
 num-bigint = { workspace = true }
 tokio-stream = "0.1.16"
