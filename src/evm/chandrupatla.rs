@@ -36,7 +36,7 @@
 //! 4. Otherwise, use bisection (t = 0.5)
 
 use num_bigint::BigUint;
-use num_traits::{FromPrimitive, ToPrimitive};
+use num_traits::{FromPrimitive, One, ToPrimitive, Zero};
 use tycho_common::{
     models::token::Token,
     simulation::{errors::SimulationError, protocol_sim::ProtocolSim},
@@ -150,7 +150,7 @@ impl SearchConfig {
 /// - `x3, f3`: Previous contrapoint (for IQI interpolation)
 ///
 /// Invariant: f1 and f2 have opposite signs (bracket the root)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 struct ChandrupatlaState {
     x1: f64,
     f1: f64,
@@ -159,6 +159,10 @@ struct ChandrupatlaState {
     x3: f64,
     f3: f64,
 }
+
+/// Result of evaluating the objective function at a given amount.
+/// Contains: (price, f_value, amount_out, gas, new_state)
+type ObjectiveResult = (f64, f64, BigUint, BigUint, Box<dyn ProtocolSim>);
 
 /// Result of a swap_to_price operation
 #[derive(Debug, Clone)]
@@ -278,10 +282,8 @@ pub fn should_use_iqi(xi: f64, phi: f64) -> bool {
     // Chandrupatla's criterion (equivalent formulations):
     // Original: phi^2 < xi AND (1-phi)^2 < (1-xi)
     // TensorFlow/SciPy: (1 - sqrt(1 - xi)) < phi < sqrt(xi)
-    let lower_bound = 1.0 - (1.0 - xi).sqrt();
-    let upper_bound = xi.sqrt();
-
-    phi > lower_bound && phi < upper_bound
+    // We use the multiplication form (no sqrt) for efficiency
+    phi * phi < xi && (1.0 - phi) * (1.0 - phi) < (1.0 - xi)
 }
 
 /// Compute the IQI interpolation parameter t.
@@ -370,7 +372,7 @@ fn evaluate_objective(
     token_out: &Token,
     target_price: f64,
     config: &SearchConfig,
-) -> Result<(f64, f64, BigUint, BigUint, Box<dyn ProtocolSim>), ChandrupatlaSearchError> {
+) -> Result<ObjectiveResult, ChandrupatlaSearchError> {
     let result = state.get_amount_out(amount.clone(), token_in, token_out)?;
 
     let price = match config.metric {
@@ -411,12 +413,12 @@ fn run_search(
     if search_config.metric == PriceMetric::SpotPrice
         && within_tolerance(spot_price, target_price, config.tolerance)
     {
-        let minimal_result = state.get_amount_out(BigUint::from(1u32), token_in, token_out)?;
+        let minimal_result = state.get_amount_out(BigUint::one(), token_in, token_out)?;
         return Ok(SwapToPriceResult {
-            amount_in: BigUint::from(0u32),
-            amount_out: BigUint::from(0u32),
+            amount_in: BigUint::zero(),
+            amount_out: BigUint::zero(),
             actual_price: spot_price,
-            gas: BigUint::from(0u32),
+            gas: BigUint::zero(),
             new_state: minimal_result.new_state,
             iterations: 0,
         });
@@ -483,13 +485,17 @@ fn run_search(
         f3: f1,
     };
 
-    // Track best result for discrete (BigUint) precision
-    let mut best_result: Option<SwapToPriceResult> = None;
+    // Track best result metadata only (avoid cloning Box<dyn ProtocolSim> every iteration)
+    let mut best_amount: Option<BigUint> = None;
+    let mut best_price = spot_price;
     let mut best_error = f64::MAX;
 
     // Also track bracket in BigUint for precision
-    let mut low = BigUint::from(0u32);
+    let mut low = BigUint::zero();
     let mut high = max_amount_in.clone();
+
+    // Pre-allocate constant for bounds checking
+    let one = BigUint::one();
 
     // Step 9: Main Chandrupatla loop
     for iteration in 0..config.max_iterations {
@@ -501,24 +507,39 @@ fn run_search(
 
         // Convert to BigUint (our discrete domain)
         let amount_new = if x_new <= 0.0 {
-            BigUint::from(1u32)
+            one.clone()
         } else {
             BigUint::from_f64(x_new).unwrap_or_else(|| geometric_mean(&low, &high))
         };
 
         // Ensure we're within bounds and making progress
-        let amount_new = if &amount_new <= &low {
-            &low + BigUint::from(1u32)
-        } else if &amount_new >= &high {
-            &high - BigUint::from(1u32)
+        let amount_new = if amount_new <= low {
+            &low + &one
+        } else if amount_new >= high {
+            &high - &one
         } else {
             amount_new
         };
 
-        // Check if we've hit precision limit
-        if &high - &low <= BigUint::from(1u32) {
-            if let Some(best) = best_result {
-                return Ok(best);
+        // Check if we've hit precision limit - re-evaluate best amount if needed
+        if &high - &low <= one {
+            if let Some(best_amt) = best_amount {
+                let (price, _, amount_out, gas, new_state) = evaluate_objective(
+                    state,
+                    &best_amt,
+                    token_in,
+                    token_out,
+                    target_price,
+                    &search_config,
+                )?;
+                return Ok(SwapToPriceResult {
+                    amount_in: best_amt,
+                    amount_out,
+                    actual_price: price,
+                    gas,
+                    new_state,
+                    iterations: iteration + 1,
+                });
             }
         }
 
@@ -534,21 +555,15 @@ fn run_search(
 
         let x_new_f64 = amount_new.to_f64().unwrap_or(x_new);
 
-        // Calculate error and track best
+        // Calculate error and track best (metadata only, no cloning)
         let error = (price_new - target_price).abs() / target_price;
         if error < best_error {
             best_error = error;
-            best_result = Some(SwapToPriceResult {
-                amount_in: amount_new.clone(),
-                amount_out: amount_out.clone(),
-                actual_price: price_new,
-                gas: gas.clone(),
-                new_state: new_state.clone(),
-                iterations: iteration + 1,
-            });
+            best_price = price_new;
+            best_amount = Some(amount_new.clone());
         }
 
-        // Check convergence
+        // Check convergence - return immediately with current evaluation results
         if within_tolerance(price_new, target_price, config.tolerance) {
             return Ok(SwapToPriceResult {
                 amount_in: amount_new,
@@ -587,22 +602,13 @@ fn run_search(
         }
     }
 
-    // Return convergence failure with best result info
-    let best = best_result.unwrap_or(SwapToPriceResult {
-        amount_in: BigUint::from(0u32),
-        amount_out: BigUint::from(0u32),
-        actual_price: spot_price,
-        gas: BigUint::from(0u32),
-        new_state: state.clone_box(),
-        iterations: config.max_iterations,
-    });
-
+    // Convergence failure - construct error with tracked metadata
     Err(ChandrupatlaSearchError::ConvergenceFailure {
         iterations: config.max_iterations,
         target_price,
-        best_price: best.actual_price,
+        best_price,
         error_bps: best_error * 10000.0,
-        amount: best.amount_in.to_string(),
+        amount: best_amount.map(|a| a.to_string()).unwrap_or_default(),
     })
 }
 
