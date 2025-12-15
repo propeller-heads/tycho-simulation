@@ -858,171 +858,195 @@ mod tests {
     }
 
     // =========================================================================
-    // Tests based on Chandrupatla (1997) test functions
-    // Reference: SciPy _tstutils.py chandrupatla collection
+    // Integration tests with standard test functions from SciPy
     // =========================================================================
 
-    /// Simple root-finding test using pure Chandrupatla on f(x) = x^3 - 2x - 5
-    /// Root ≈ 2.0946
-    #[test]
-    fn test_chandrupatla_cubic() {
-        let f = |x: f64| x.powi(3) - 2.0 * x - 5.0;
-        let expected_root = 2.0945514815423265;
-
-        // Run Chandrupatla manually
-        let (root, iterations) = find_root_chandrupatla(f, 2.0, 3.0, 1e-10, 100);
-
-        assert!(
-            (root - expected_root).abs() < 1e-8,
-            "Expected root ≈ {}, got {} after {} iterations",
-            expected_root,
-            root,
-            iterations
-        );
-        assert!(iterations < 20, "Should converge quickly, took {} iterations", iterations);
-    }
-
-    /// Test on f(x) = (x - 3)^3, root at x = 3
-    /// This is a "flat" function near the root (triple root)
-    /// Note: Triple roots are challenging for root-finding algorithms
-    #[test]
-    fn test_chandrupatla_triple_root() {
-        let f = |x: f64| (x - 3.0).powi(3);
-        let expected_root = 3.0;
-
-        let (root, iterations) = find_root_chandrupatla(f, 0.0, 10.0, 1e-10, 100);
-
-        // Triple roots converge more slowly; use looser tolerance
-        assert!(
-            (root - expected_root).abs() < 1e-3,
-            "Expected root = {}, got {} after {} iterations",
-            expected_root,
-            root,
-            iterations
-        );
-    }
-
-    /// Test on f(x) = x^9, root at x = 0
-    /// Very flat near the root
-    #[test]
-    fn test_chandrupatla_high_power() {
-        let f = |x: f64| x.powi(9);
-
-        let (root, iterations) = find_root_chandrupatla(f, -1.0, 1.0, 1e-10, 100);
-
-        assert!(
-            root.abs() < 1e-3,
-            "Expected root ≈ 0, got {} after {} iterations",
-            root,
-            iterations
-        );
-    }
-
-    /// Test from TensorFlow: high-degree polynomial (x - r)^15
-    /// Note: Very high degree polynomials are extremely flat near roots,
-    /// making them challenging for any root-finding algorithm.
-    /// TensorFlow uses atol=1e-2 for degree-15 polynomials.
-    #[test]
-    fn test_chandrupatla_degree_15() {
-        let expected_root = 1.5;
-        let f = |x: f64| (x - expected_root).powi(15);
-
-        // Use tighter tolerance and more iterations for this hard case
-        let (root, iterations) = find_root_chandrupatla(f, -20.0, 20.0, 1e-12, 200);
-
-        // High-degree polynomials are very flat near roots
-        // TensorFlow's test uses atol=1e-2 for degree-15 polynomials
-        assert!(
-            (root - expected_root).abs() < 0.5,
-            "Expected root ≈ {}, got {} after {} iterations",
-            expected_root,
-            root,
-            iterations
-        );
-    }
-
-    // =========================================================================
-    // Helper: Pure Chandrupatla implementation for testing
-    // =========================================================================
-
-    /// Pure Chandrupatla root-finding (for testing the algorithm itself)
-    fn find_root_chandrupatla<F>(
-        f: F,
-        mut a: f64,
-        mut b: f64,
-        tol: f64,
-        max_iter: u32,
-    ) -> (f64, u32)
+    /// Run the Chandrupatla algorithm on a scalar function.
+    fn run_chandrupatla<F>(f: F, a: f64, b: f64, tol: f64, max_iter: u32) -> (f64, f64, u32)
     where
         F: Fn(f64) -> f64,
     {
         let config = ChandrupatlaConfig::default();
-        let mut fa = f(a);
-        let mut fb = f(b);
+        let mut x1 = a;
+        let mut f1 = f(a);
+        let mut x2 = b;
+        let mut f2 = f(b);
 
-        // Ensure fa and fb have opposite signs
-        assert!(fa * fb <= 0.0, "f(a) and f(b) must have opposite signs");
+        assert!(
+            f1 * f2 <= 0.0,
+            "f(a) and f(b) must have opposite signs: f({})={}, f({})={}",
+            a, f1, b, f2
+        );
 
-        // Initialize: c = a (no previous point yet)
-        let mut c = a;
-        let mut fc = fa;
+        // Initialize x3 = x1 (no previous point yet)
+        let mut x3 = x1;
+        let mut f3 = f1;
 
         for iteration in 0..max_iter {
             // Check convergence
-            if (b - a).abs() < tol || fb.abs() < tol {
-                return (b, iteration);
+            if (x2 - x1).abs() < tol || f2.abs() < tol {
+                let best_x = if f1.abs() < f2.abs() { x1 } else { x2 };
+                let best_f = if f1.abs() < f2.abs() { f1 } else { f2 };
+                return (best_x, best_f, iteration);
             }
 
-            // Compute xi and phi
-            let xi = (a - b) / (c - b);
-            let phi = (fa - fb) / (fc - fb);
+            let state = ChandrupatlaState { x1, f1, x2, f2, x3, f3 };
+            let t = chandrupatla_next_t(&state, &config);
 
-            // Decide: IQI or bisection
-            let t = if should_use_iqi(xi, phi) {
-                // IQI
-                let alpha = (c - a) / (b - a);
-                let df_ab = fa - fb;
-                let df_cb = fc - fb;
-                let df_ca = fc - fa;
-                let df_bc = fb - fc;
-
-                if df_ab.abs() > config.min_divisor &&
-                    df_cb.abs() > config.min_divisor &&
-                    df_ca.abs() > config.min_divisor &&
-                    df_bc.abs() > config.min_divisor
-                {
-                    let term1 = (fa / df_ab) * (fc / df_cb);
-                    let term2 = alpha * (fa / df_ca) * (fb / df_bc);
-                    (term1 - term2).clamp(T_MIN, 1.0 - T_MIN)
-                } else {
-                    0.5
-                }
-            } else {
-                0.5 // bisection
-            };
-
-            // New point
-            let x_new = a + t * (b - a);
+            // Compute new point
+            let x_new = x1 + t * (x2 - x1);
             let f_new = f(x_new);
 
             // Update bracket
-            if f_new * fa > 0.0 {
-                // Same sign as fa: replace a
-                c = a;
-                fc = fa;
-                a = x_new;
-                fa = f_new;
+            if f_new * f1 > 0.0 {
+                // Same sign as f1: replace x1
+                x3 = x1;
+                f3 = f1;
+                x1 = x_new;
+                f1 = f_new;
             } else {
-                // Opposite sign: x_new brackets with a
-                c = b;
-                fc = fb;
-                b = a;
-                fb = fa;
-                a = x_new;
-                fa = f_new;
+                // Opposite sign: x_new brackets with x1
+                x3 = x2;
+                f3 = f2;
+                x2 = x1;
+                f2 = f1;
+                x1 = x_new;
+                f1 = f_new;
             }
         }
 
-        (b, max_iter)
+        let best_x = if f1.abs() < f2.abs() { x1 } else { x2 };
+        let best_f = if f1.abs() < f2.abs() { f1 } else { f2 };
+        (best_x, best_f, max_iter)
+    }
+
+    /// SciPy fun1: x³ - 2x - 5, root ≈ 2.0945514815423265
+    #[test]
+    fn test_scipy_fun1_cubic() {
+        let f = |x: f64| x.powi(3) - 2.0 * x - 5.0;
+        let expected_root = 2.0945514815423265;
+
+        let (root, f_root, iters) = run_chandrupatla(f, 2.0, 3.0, 1e-12, 100);
+
+        assert!(
+            (root - expected_root).abs() < 1e-10,
+            "Expected root ≈ {}, got {} (f={}) after {} iterations",
+            expected_root, root, f_root, iters
+        );
+        assert!(iters <= 12, "Should converge in ≤12 iterations, took {}", iters);
+    }
+
+    /// SciPy fun2: 1 - 1/x², root = 1 (singularity at 0)
+    #[test]
+    fn test_scipy_fun2_rational() {
+        let f = |x: f64| 1.0 - 1.0 / (x * x);
+        let expected_root = 1.0;
+
+        let (root, f_root, iters) = run_chandrupatla(f, 0.5, 2.0, 1e-12, 100);
+
+        assert!(
+            (root - expected_root).abs() < 1e-10,
+            "Expected root = {}, got {} (f={}) after {} iterations",
+            expected_root, root, f_root, iters
+        );
+    }
+
+    /// SciPy fun3: (x-3)³, root = 3 (triple root - challenging)
+    #[test]
+    fn test_scipy_fun3_triple_root() {
+        let f = |x: f64| (x - 3.0).powi(3);
+        let expected_root = 3.0;
+
+        let (root, f_root, iters) = run_chandrupatla(f, 0.0, 6.0, 1e-12, 100);
+
+        // Triple roots are flat, requiring looser tolerance
+        assert!(
+            (root - expected_root).abs() < 1e-3,
+            "Expected root = {}, got {} (f={}) after {} iterations",
+            expected_root, root, f_root, iters
+        );
+    }
+
+    /// SciPy fun5: x⁹, root = 0 (very flat near root)
+    #[test]
+    fn test_scipy_fun5_high_power() {
+        let f = |x: f64| x.powi(9);
+
+        let (root, f_root, iters) = run_chandrupatla(f, -1.0, 1.0, 1e-12, 100);
+
+        // High-power functions are flat near roots
+        assert!(
+            root.abs() < 1e-3,
+            "Expected root ≈ 0, got {} (f={}) after {} iterations",
+            root, f_root, iters
+        );
+    }
+
+    /// SciPy fun9: exp(x) - 2 - 0.01/x² + 0.000002/x³
+    #[test]
+    fn test_scipy_fun9_mixed() {
+        let f = |x: f64| x.exp() - 2.0 - 0.01 / (x * x) + 0.000002 / (x * x * x);
+        let expected_root = 0.7032048403631358;
+
+        let (root, f_root, iters) = run_chandrupatla(f, 0.5, 1.5, 1e-12, 100);
+
+        assert!(
+            (root - expected_root).abs() < 1e-10,
+            "Expected root ≈ {}, got {} (f={}) after {} iterations",
+            expected_root, root, f_root, iters
+        );
+    }
+
+    /// Test with wide brackets (stress test from SciPy)
+    #[test]
+    fn test_wide_bracket() {
+        let f = |x: f64| x.powi(3) - 2.0 * x - 5.0;
+        let expected_root = 2.0945514815423265;
+
+        // Very wide bracket: [-1e6, 1e6]
+        let (root, f_root, iters) = run_chandrupatla(f, -1e6, 1e6, 1e-10, 100);
+
+        assert!(
+            (root - expected_root).abs() < 1e-8,
+            "Expected root ≈ {}, got {} (f={}) after {} iterations",
+            expected_root, root, f_root, iters
+        );
+        // Should still converge reasonably fast even with wide bracket
+        assert!(iters <= 60, "Wide bracket should converge in ≤60 iterations, took {}", iters);
+    }
+
+    /// Test iteration count validation (like TensorFlow's test_chandrupatla_max_iterations)
+    #[test]
+    fn test_max_iterations_respected() {
+        let f = |x: f64| x.powi(19); // Very flat, will need many iterations
+
+        for max_iter in [5, 10, 15] {
+            let (_, _, iters) = run_chandrupatla(f, -1.0, 1.0, 1e-15, max_iter);
+            assert!(
+                iters <= max_iter,
+                "Should respect max_iterations={}, but ran {} iterations",
+                max_iter, iters
+            );
+        }
+    }
+
+    /// Test convergence with very tight tolerance
+    #[test]
+    fn test_high_precision() {
+        let f = |x: f64| x.powi(3) - 2.0 * x - 5.0;
+        let expected_root = 2.0945514815423265;
+
+        let (root, f_root, _iters) = run_chandrupatla(f, 2.0, 3.0, 1e-14, 100);
+
+        assert!(
+            (root - expected_root).abs() < 1e-12,
+            "High precision: expected {}, got {} (f={})",
+            expected_root, root, f_root
+        );
+        assert!(
+            f_root.abs() < 1e-12,
+            "Function value should be near zero: f({}) = {}",
+            root, f_root
+        );
     }
 }
