@@ -90,7 +90,7 @@ where
     factory.set_balance(*MAX_BALANCE, *EXTERNAL_ACCOUNT);
     let token_overwrites = factory.get_overwrites();
 
-    let caller = AlloyAddress::from_slice(&*EXTERNAL_ACCOUNT.0);
+    let caller: AlloyAddress = *EXTERNAL_ACCOUNT;
 
     // Assume the caller has sufficient tokens. In simulation we only care about
     // the protocol limits, not the caller’s actual token balance.

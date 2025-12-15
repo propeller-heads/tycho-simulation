@@ -151,9 +151,7 @@ impl TokenProxyOverwriteFactory {
     }
 
     pub(crate) fn get_overwrites(&self) -> HashMap<Address, Overwrites> {
-        let mut result = HashMap::new();
-        result.insert(self.token_address, self.overwrites.clone());
-        result
+        HashMap::from([(self.token_address, self.overwrites.clone())])
     }
 }
 
