@@ -43,6 +43,18 @@ use tycho_common::{
 };
 
 // =============================================================================
+// Constants
+// =============================================================================
+
+/// Minimum value for the interpolation parameter t.
+/// Keeps the next estimate away from bracket endpoints.
+/// The parameter t is clamped to [T_MIN, 1 - T_MIN].
+const T_MIN: f64 = 0.05;
+
+/// Fallback value for t when IQI cannot be computed (bisection).
+const T_FALLBACK: f64 = 0.5;
+
+// =============================================================================
 // Configuration
 // =============================================================================
 
@@ -64,21 +76,11 @@ pub struct ChandrupatlaConfig {
     /// Minimum divisor to avoid division by zero in numerical computations.
     /// Default: 1e-12
     pub min_divisor: f64,
-
-    /// Minimum value for the interpolation parameter t.
-    /// Keeps the next estimate away from bracket endpoints.
-    /// The parameter t is clamped to [t_min, 1 - t_min].
-    /// Default: 0.05
-    pub t_min: f64,
-
-    /// Fallback value for t when IQI cannot be computed.
-    /// Default: 0.5 (bisection)
-    pub t_fallback: f64,
 }
 
 impl Default for ChandrupatlaConfig {
     fn default() -> Self {
-        Self { tolerance: 0.00001, max_iterations: 100, min_divisor: 1e-12, t_min: 0.05, t_fallback: 0.5}
+        Self { tolerance: 0.00001, max_iterations: 100, min_divisor: 1e-12 }
     }
 }
 
@@ -103,12 +105,6 @@ impl ChandrupatlaConfig {
     /// Sets the minimum divisor for numerical stability.
     pub fn with_min_divisor(mut self, min_divisor: f64) -> Self {
         self.min_divisor = min_divisor;
-        self
-    }
-
-    /// Sets the minimum interpolation parameter.
-    pub fn with_t_min(mut self, t_min: f64) -> Self {
-        self.t_min = t_min;
         self
     }
 }
@@ -309,7 +305,7 @@ fn iqi_parameter(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -> f64 
     // Compute alpha = (x3 - x1) / (x2 - x1)
     let dx21 = x2 - x1;
     if dx21.abs() < config.min_divisor {
-        return config.t_fallback;
+        return T_FALLBACK;
     }
     let alpha = (x3 - x1) / dx21;
 
@@ -325,7 +321,7 @@ fn iqi_parameter(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -> f64 
         df31.abs() < config.min_divisor ||
         df23.abs() < config.min_divisor
     {
-        return config.t_fallback;
+        return T_FALLBACK;
     }
 
     let term1 = (f1 / df12) * (f3 / df32);
@@ -334,7 +330,7 @@ fn iqi_parameter(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -> f64 
     let t = term1 - term2;
 
     // Clamp t to [t_min, 1 - t_min] to avoid getting too close to endpoints
-    t.clamp(config.t_min, 1.0 - config.t_min)
+    t.clamp(T_MIN, 1.0 - T_MIN)
 }
 
 /// Compute the next evaluation point using Chandrupatla's method.
@@ -355,7 +351,7 @@ fn chandrupatla_next_t(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -
     let df = f3 - f2;
 
     if dx.abs() < config.min_divisor || df.abs() < config.min_divisor {
-        return config.t_fallback;
+        return T_FALLBACK;
     }
 
     let xi = (x1 - x2) / dx;
@@ -365,7 +361,7 @@ fn chandrupatla_next_t(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -
     if should_use_iqi(xi, phi) {
         iqi_parameter(state, config)
     } else {
-        config.t_fallback
+        T_FALLBACK
     }
 }
 
@@ -997,7 +993,7 @@ mod tests {
                 {
                     let term1 = (fa / df_ab) * (fc / df_cb);
                     let term2 = alpha * (fa / df_ca) * (fb / df_bc);
-                    (term1 - term2).clamp(config.t_min, 1.0 - config.t_min)
+                    (term1 - term2).clamp(T_MIN, 1.0 - T_MIN)
                 } else {
                     0.5
                 }
