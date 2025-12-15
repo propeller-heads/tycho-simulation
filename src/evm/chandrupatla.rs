@@ -70,11 +70,15 @@ pub struct ChandrupatlaConfig {
     /// The parameter t is clamped to [t_min, 1 - t_min].
     /// Default: 0.05
     pub t_min: f64,
+
+    /// Fallback value for t when IQI cannot be computed.
+    /// Default: 0.5 (bisection)
+    pub t_fallback: f64,
 }
 
 impl Default for ChandrupatlaConfig {
     fn default() -> Self {
-        Self { tolerance: 0.00001, max_iterations: 100, min_divisor: 1e-12, t_min: 0.05 }
+        Self { tolerance: 0.00001, max_iterations: 100, min_divisor: 1e-12, t_min: 0.05, t_fallback: 0.5}
     }
 }
 
@@ -305,7 +309,7 @@ fn iqi_parameter(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -> f64 
     // Compute alpha = (x3 - x1) / (x2 - x1)
     let dx21 = x2 - x1;
     if dx21.abs() < config.min_divisor {
-        return 0.5; // fallback to bisection
+        return config.t_fallback;
     }
     let alpha = (x3 - x1) / dx21;
 
@@ -321,7 +325,7 @@ fn iqi_parameter(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -> f64 
         df31.abs() < config.min_divisor ||
         df23.abs() < config.min_divisor
     {
-        return 0.5; // fallback to bisection
+        return config.t_fallback;
     }
 
     let term1 = (f1 / df12) * (f3 / df32);
@@ -342,7 +346,7 @@ fn iqi_parameter(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -> f64 
 ///
 /// 1. Compute xi = (x1 - x2) / (x3 - x2) and phi = (f1 - f2) / (f3 - f2)
 /// 2. If IQI criterion is satisfied: use IQI to compute t
-/// 3. Otherwise: use bisection (t = 0.5)
+/// 3. Otherwise: use t fallback (default 0.5 for bisection)
 fn chandrupatla_next_t(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -> f64 {
     let ChandrupatlaState { x1, f1, x2, f2, x3, f3 } = *state;
 
@@ -351,7 +355,7 @@ fn chandrupatla_next_t(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -
     let df = f3 - f2;
 
     if dx.abs() < config.min_divisor || df.abs() < config.min_divisor {
-        return 0.5; // bisection
+        return config.t_fallback;
     }
 
     let xi = (x1 - x2) / dx;
@@ -361,7 +365,7 @@ fn chandrupatla_next_t(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -
     if should_use_iqi(xi, phi) {
         iqi_parameter(state, config)
     } else {
-        0.5 // bisection
+        config.t_fallback
     }
 }
 
