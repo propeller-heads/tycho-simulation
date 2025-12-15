@@ -427,12 +427,7 @@ where
         max_amount: U256,
     ) -> Result<HashMap<Address, Overwrites>, SimulationError> {
         let token_overwrites = self.get_token_overwrites(tokens, max_amount)?;
-
-        // Merge `block_lasting_overwrites` with `token_overwrites`
-        let merged_overwrites =
-            self.merge(&self.block_lasting_overwrites.clone(), &token_overwrites);
-
-        Ok(merged_overwrites)
+        Ok(Self::merge_overwrites(token_overwrites, &self.block_lasting_overwrites))
     }
 
     fn get_token_overwrites(
@@ -440,28 +435,23 @@ where
         tokens: Vec<Address>,
         max_amount: U256,
     ) -> Result<HashMap<Address, Overwrites>, SimulationError> {
-        let sell_token = &tokens[0].clone(); //TODO: need to make it clearer from the interface
-        let mut res: Vec<HashMap<Address, Overwrites>> = Vec::new();
-        if !self
+        let sell_token = tokens[0];
+
+        // Start with balance overwrites if needed, otherwise empty
+        let result = if !self
             .capabilities
             .contains(&Capability::TokenBalanceIndependent)
         {
-            res.push(self.get_balance_overwrites()?);
-        }
+            self.get_balance_overwrites()?
+        } else {
+            HashMap::new()
+        };
 
-        let mut overwrites = TokenProxyOverwriteFactory::new(*sell_token, None);
+        let mut token_overwrites = TokenProxyOverwriteFactory::new(sell_token, None);
+        token_overwrites.set_balance(max_amount, *EXTERNAL_ACCOUNT);
+        token_overwrites.set_allowance(max_amount, self.adapter_contract.address, *EXTERNAL_ACCOUNT);
 
-        overwrites.set_balance(max_amount, Address::from_slice(&*EXTERNAL_ACCOUNT.0));
-
-        // Set allowance for adapter_address to max_amount
-        overwrites.set_allowance(max_amount, self.adapter_contract.address, *EXTERNAL_ACCOUNT);
-
-        res.push(overwrites.get_overwrites());
-
-        // Merge all overwrites into a single HashMap
-        Ok(res
-            .into_iter()
-            .fold(HashMap::new(), |acc, overwrite| self.merge(&acc, &overwrite)))
+        Ok(Self::merge_overwrites(result, &token_overwrites.get_overwrites()))
     }
 
     /// Gets all balance overwrites for the pool's tokens.
@@ -516,21 +506,16 @@ where
         Ok(balance_overwrites)
     }
 
-    fn merge(
-        &self,
-        target: &HashMap<Address, Overwrites>,
+    fn merge_overwrites(
+        mut target: HashMap<Address, Overwrites>,
         source: &HashMap<Address, Overwrites>,
     ) -> HashMap<Address, Overwrites> {
-        let mut merged = target.clone();
-
-        for (key, source_inner) in source {
-            merged
-                .entry(*key)
+        for (address, overwrites) in source {
+            target.entry(*address)
                 .or_default()
-                .extend(source_inner.clone());
+                .extend(overwrites.clone());
         }
-
-        merged
+        target
     }
 
     #[cfg(test)]
@@ -605,7 +590,7 @@ where
 
         let overwrites_with_sell_limit =
             self.get_overwrites(vec![sell_token_address, buy_token_address], sell_amount_limit)?;
-        let complete_overwrites = self.merge(&overwrites, &overwrites_with_sell_limit);
+        let complete_overwrites = Self::merge_overwrites(overwrites_with_sell_limit, &overwrites);
 
         let (trade, state_changes) = self.adapter_contract.swap(
             &self.id,
