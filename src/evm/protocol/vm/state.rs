@@ -9,13 +9,14 @@ use std::{
 use alloy::primitives::{Address, U256};
 use itertools::Itertools;
 use num_bigint::BigUint;
+use num_traits::ToPrimitive;
 use revm::DatabaseRef;
 use tycho_common::{
     dto::ProtocolStateDelta,
-    models::token::Token,
+    models::{token::Token, Chain},
     simulation::{
         errors::{SimulationError, TransitionError},
-        protocol_sim::{Balances, GetAmountOutResult, ProtocolSim},
+        protocol_sim::{Balances, GetAmountOutResult, Price, ProtocolSim, Trade},
     },
     Bytes,
 };
@@ -27,6 +28,7 @@ use super::{
     tycho_simulation_contract::TychoSimulationContract,
 };
 use crate::evm::{
+    chandrupatla,
     engine_db::{engine_db_interface::EngineDatabaseInterface, tycho_db::PreCachedDB},
     protocol::{
         u256_num::{u256_to_biguint, u256_to_f64},
@@ -554,28 +556,12 @@ where
         &self.balances
     }
 
-    /// Find the amount of input token needed to reach a target spot price using Chandrupatla's method.
+    /// Creates a minimal Token from an address for internal use.
     ///
-    /// See [`crate::evm::chandrupatla::swap_to_price`] for details.
-    pub fn swap_to_price(
-        &self,
-        target_price: f64,
-        token_in: &Token,
-        token_out: &Token,
-    ) -> Result<crate::evm::chandrupatla::SwapToPriceResult, crate::evm::chandrupatla::ChandrupatlaSearchError> {
-        crate::evm::chandrupatla::swap_to_price(self, target_price, token_in, token_out, None)
-    }
-
-    /// Find the maximum trade where the trade price stays at or below the target.
-    ///
-    /// See [`crate::evm::brent::query_supply`] for details.
-    pub fn query_supply(
-        &self,
-        target_price: f64,
-        token_in: &Token,
-        token_out: &Token,
-    ) -> Result<crate::evm::chandrupatla::QuerySupplyResult, crate::evm::chandrupatla::ChandrupatlaSearchError> {
-        crate::evm::chandrupatla::query_supply(self, target_price, token_in, token_out, None)
+    /// This is used by swap_to_price and query_supply which only need the address field.
+    /// TODO: Remove this function once ProtocolSim has Token in those functions.
+    fn minimal_token_from_address(&self, address: &Bytes) -> Token {
+        Token::new(address, "", 18, 0, &[], Chain::Ethereum, 0)
     }
 }
 
@@ -722,6 +708,67 @@ where
         }
 
         Ok(())
+    }
+
+    /// Find the amount of input token needed to reach a target spot price using Chandrupatla's
+    /// method.
+    ///
+    /// See [`chandrupatla::swap_to_price`] for details.
+    fn swap_to_price(
+        &self,
+        token_in: &Bytes,
+        token_out: &Bytes,
+        target_price: Price,
+    ) -> Result<Trade, SimulationError> {
+        let target_price_f64 = target_price
+            .numerator
+            .to_f64()
+            .ok_or_else(|| SimulationError::FatalError("Price numerator overflow".into()))? /
+            target_price
+                .denominator
+                .to_f64()
+                .ok_or_else(|| {
+                    SimulationError::FatalError("Price denominator overflow".into())
+                })?;
+
+        let token_in = self.minimal_token_from_address(token_in);
+        let token_out = self.minimal_token_from_address(token_out);
+
+        let result =
+            chandrupatla::swap_to_price(self, target_price_f64, &token_in, &token_out, None)
+                .map_err(|e| SimulationError::FatalError(e.to_string()))?;
+
+        Ok(Trade::new(result.amount_in, result.amount_out))
+    }
+
+    /// Find the maximum trade where the trade price stays at or below the target.
+    ///
+    /// See [`chandrupatla::query_supply`] for details.
+    fn query_supply(
+        &self,
+        token_in: &Bytes,
+        token_out: &Bytes,
+        target_price: Price,
+    ) -> Result<Trade, SimulationError> {
+        let target_price_f64 = target_price
+            .numerator
+            .to_f64()
+            .ok_or_else(|| SimulationError::FatalError("Price numerator overflow".into()))? /
+            target_price
+                .denominator
+                .to_f64()
+                .ok_or_else(|| {
+                    SimulationError::FatalError("Price denominator overflow".into())
+                })?;
+
+        let token_in = self.minimal_token_from_address(token_in);
+        let token_out = self.minimal_token_from_address(token_out);
+
+        let result =
+            chandrupatla::query_supply(self, target_price_f64, &token_in, &token_out, None)
+                .map_err(|e| SimulationError::FatalError(e.to_string()))?;
+
+        Ok(Trade::new(result.amount_in, result.amount_out))
     }
 
     fn clone_box(&self) -> Box<dyn ProtocolSim> {
