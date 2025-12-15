@@ -43,6 +43,18 @@ use tycho_common::{
 };
 
 // =============================================================================
+// Constants
+// =============================================================================
+
+/// Minimum value for the interpolation parameter t.
+/// Keeps the next estimate away from bracket endpoints.
+/// The parameter t is clamped to [T_MIN, 1 - T_MIN].
+const T_MIN: f64 = 0.05;
+
+/// Fallback value for t when IQI cannot be computed (bisection).
+const T_FALLBACK: f64 = 0.5;
+
+// =============================================================================
 // Configuration
 // =============================================================================
 
@@ -64,21 +76,11 @@ pub struct ChandrupatlaConfig {
     /// Minimum divisor to avoid division by zero in numerical computations.
     /// Default: 1e-12
     pub min_divisor: f64,
-
-    /// Minimum value for the interpolation parameter t.
-    /// Keeps the next estimate away from bracket endpoints.
-    /// The parameter t is clamped to [t_min, 1 - t_min].
-    /// Default: 0.05
-    pub t_min: f64,
-
-    /// Fallback value for t when IQI cannot be computed.
-    /// Default: 0.5 (bisection)
-    pub t_fallback: f64,
 }
 
 impl Default for ChandrupatlaConfig {
     fn default() -> Self {
-        Self { tolerance: 0.00001, max_iterations: 100, min_divisor: 1e-12, t_min: 0.05, t_fallback: 0.5}
+        Self { tolerance: 0.00001, max_iterations: 100, min_divisor: 1e-12 }
     }
 }
 
@@ -103,12 +105,6 @@ impl ChandrupatlaConfig {
     /// Sets the minimum divisor for numerical stability.
     pub fn with_min_divisor(mut self, min_divisor: f64) -> Self {
         self.min_divisor = min_divisor;
-        self
-    }
-
-    /// Sets the minimum interpolation parameter.
-    pub fn with_t_min(mut self, t_min: f64) -> Self {
-        self.t_min = t_min;
         self
     }
 }
@@ -139,6 +135,27 @@ impl SearchConfig {
     fn query_supply() -> Self {
         Self { metric: PriceMetric::TradePrice }
     }
+}
+
+/// Calculate trade price (execution price) normalized by token decimals.
+///
+/// Trade price = (amount_in / amount_out) * 10^(decimals_out - decimals_in)
+///
+/// This normalizes raw token amounts to a human-readable price.
+/// For example, swapping 1000 USDC (6 dec) for 0.5 WETH (18 dec):
+/// - Raw: 1000e6 / 0.5e18 = 2e-9
+/// - Normalized: 2e-9 * 10^(18-6) = 2000 USDC per WETH
+fn calculate_trade_price(
+    amount_in: f64,
+    amount_out: f64,
+    decimals_in: u32,
+    decimals_out: u32,
+) -> f64 {
+    if amount_out <= 0.0 {
+        return f64::MAX;
+    }
+    let decimal_adjustment = 10_f64.powi(decimals_out as i32 - decimals_in as i32);
+    (amount_in / amount_out) * decimal_adjustment
 }
 
 /// Chandrupatla bracket state
@@ -309,7 +326,7 @@ fn iqi_parameter(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -> f64 
     // Compute alpha = (x3 - x1) / (x2 - x1)
     let dx21 = x2 - x1;
     if dx21.abs() < config.min_divisor {
-        return config.t_fallback;
+        return T_FALLBACK;
     }
     let alpha = (x3 - x1) / dx21;
 
@@ -325,7 +342,7 @@ fn iqi_parameter(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -> f64 
         df31.abs() < config.min_divisor ||
         df23.abs() < config.min_divisor
     {
-        return config.t_fallback;
+        return T_FALLBACK;
     }
 
     let term1 = (f1 / df12) * (f3 / df32);
@@ -334,7 +351,7 @@ fn iqi_parameter(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -> f64 
     let t = term1 - term2;
 
     // Clamp t to [t_min, 1 - t_min] to avoid getting too close to endpoints
-    t.clamp(config.t_min, 1.0 - config.t_min)
+    t.clamp(T_MIN, 1.0 - T_MIN)
 }
 
 /// Compute the next evaluation point using Chandrupatla's method.
@@ -355,7 +372,7 @@ fn chandrupatla_next_t(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -
     let df = f3 - f2;
 
     if dx.abs() < config.min_divisor || df.abs() < config.min_divisor {
-        return config.t_fallback;
+        return T_FALLBACK;
     }
 
     let xi = (x1 - x2) / dx;
@@ -365,7 +382,7 @@ fn chandrupatla_next_t(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -
     if should_use_iqi(xi, phi) {
         iqi_parameter(state, config)
     } else {
-        config.t_fallback
+        T_FALLBACK
     }
 }
 
@@ -391,13 +408,14 @@ fn evaluate_objective(
             .new_state
             .spot_price(token_out, token_in)?,
         PriceMetric::TradePrice => {
-            let amount_in_f64 = amount.to_f64().unwrap(); // `.to_f64()` never returns None
-            let amount_out_f64 = result.amount.to_f64().unwrap(); // `.to_f64()` never returns None
-            if amount_out_f64 > 0.0 {
-                amount_in_f64 / amount_out_f64
-            } else {
-                f64::MAX
-            }
+            let amount_in_f64 = amount.to_f64().unwrap_or(f64::MAX);
+            let amount_out_f64 = result.amount.to_f64().unwrap_or(f64::MAX);
+            calculate_trade_price(
+                amount_in_f64,
+                amount_out_f64,
+                token_in.decimals,
+                token_out.decimals,
+            )
         }
     };
 
@@ -452,13 +470,17 @@ fn run_search(
     // Step 5: Calculate limit price (price at max trade)
     let limit_price = match search_config.metric {
         PriceMetric::TradePrice => {
-            // Trade price at max trade = max_in / max_out
             if max_amount_out.is_zero() {
                 return Err(ChandrupatlaSearchError::ZeroOutputAmountAtLimit);
             }
-            let max_in_f64 = max_amount_in.to_f64().unwrap(); // `.to_f64()` never returns None
-            let max_out_f64 = max_amount_out.to_f64().unwrap(); // `.to_f64()` never returns None
-            max_in_f64 / max_out_f64
+            let max_in_f64 = max_amount_in.to_f64().unwrap_or(f64::MAX);
+            let max_out_f64 = max_amount_out.to_f64().unwrap_or(f64::MAX);
+            calculate_trade_price(
+                max_in_f64,
+                max_out_f64,
+                token_in.decimals,
+                token_out.decimals,
+            )
         }
         PriceMetric::SpotPrice => {
             // Spot price after max trade requires simulation
@@ -862,171 +884,489 @@ mod tests {
     }
 
     // =========================================================================
-    // Tests based on Chandrupatla (1997) test functions
-    // Reference: SciPy _tstutils.py chandrupatla collection
+    // Integration tests with standard test functions from SciPy
     // =========================================================================
 
-    /// Simple root-finding test using pure Chandrupatla on f(x) = x^3 - 2x - 5
-    /// Root ≈ 2.0946
-    #[test]
-    fn test_chandrupatla_cubic() {
-        let f = |x: f64| x.powi(3) - 2.0 * x - 5.0;
-        let expected_root = 2.0945514815423265;
-
-        // Run Chandrupatla manually
-        let (root, iterations) = find_root_chandrupatla(f, 2.0, 3.0, 1e-10, 100);
-
-        assert!(
-            (root - expected_root).abs() < 1e-8,
-            "Expected root ≈ {}, got {} after {} iterations",
-            expected_root,
-            root,
-            iterations
-        );
-        assert!(iterations < 20, "Should converge quickly, took {} iterations", iterations);
-    }
-
-    /// Test on f(x) = (x - 3)^3, root at x = 3
-    /// This is a "flat" function near the root (triple root)
-    /// Note: Triple roots are challenging for root-finding algorithms
-    #[test]
-    fn test_chandrupatla_triple_root() {
-        let f = |x: f64| (x - 3.0).powi(3);
-        let expected_root = 3.0;
-
-        let (root, iterations) = find_root_chandrupatla(f, 0.0, 10.0, 1e-10, 100);
-
-        // Triple roots converge more slowly; use looser tolerance
-        assert!(
-            (root - expected_root).abs() < 1e-3,
-            "Expected root = {}, got {} after {} iterations",
-            expected_root,
-            root,
-            iterations
-        );
-    }
-
-    /// Test on f(x) = x^9, root at x = 0
-    /// Very flat near the root
-    #[test]
-    fn test_chandrupatla_high_power() {
-        let f = |x: f64| x.powi(9);
-
-        let (root, iterations) = find_root_chandrupatla(f, -1.0, 1.0, 1e-10, 100);
-
-        assert!(
-            root.abs() < 1e-3,
-            "Expected root ≈ 0, got {} after {} iterations",
-            root,
-            iterations
-        );
-    }
-
-    /// Test from TensorFlow: high-degree polynomial (x - r)^15
-    /// Note: Very high degree polynomials are extremely flat near roots,
-    /// making them challenging for any root-finding algorithm.
-    /// TensorFlow uses atol=1e-2 for degree-15 polynomials.
-    #[test]
-    fn test_chandrupatla_degree_15() {
-        let expected_root = 1.5;
-        let f = |x: f64| (x - expected_root).powi(15);
-
-        // Use tighter tolerance and more iterations for this hard case
-        let (root, iterations) = find_root_chandrupatla(f, -20.0, 20.0, 1e-12, 200);
-
-        // High-degree polynomials are very flat near roots
-        // TensorFlow's test uses atol=1e-2 for degree-15 polynomials
-        assert!(
-            (root - expected_root).abs() < 0.5,
-            "Expected root ≈ {}, got {} after {} iterations",
-            expected_root,
-            root,
-            iterations
-        );
-    }
-
-    // =========================================================================
-    // Helper: Pure Chandrupatla implementation for testing
-    // =========================================================================
-
-    /// Pure Chandrupatla root-finding (for testing the algorithm itself)
-    fn find_root_chandrupatla<F>(
-        f: F,
-        mut a: f64,
-        mut b: f64,
-        tol: f64,
-        max_iter: u32,
-    ) -> (f64, u32)
+    /// Run the Chandrupatla algorithm on a scalar function.
+    fn run_chandrupatla<F>(f: F, a: f64, b: f64, tol: f64, max_iter: u32) -> (f64, f64, u32)
     where
         F: Fn(f64) -> f64,
     {
         let config = ChandrupatlaConfig::default();
-        let mut fa = f(a);
-        let mut fb = f(b);
+        let mut x1 = a;
+        let mut f1 = f(a);
+        let mut x2 = b;
+        let mut f2 = f(b);
 
-        // Ensure fa and fb have opposite signs
-        assert!(fa * fb <= 0.0, "f(a) and f(b) must have opposite signs");
+        assert!(
+            f1 * f2 <= 0.0,
+            "f(a) and f(b) must have opposite signs: f({})={}, f({})={}",
+            a, f1, b, f2
+        );
 
-        // Initialize: c = a (no previous point yet)
-        let mut c = a;
-        let mut fc = fa;
+        // Initialize x3 = x1 (no previous point yet)
+        let mut x3 = x1;
+        let mut f3 = f1;
 
         for iteration in 0..max_iter {
             // Check convergence
-            if (b - a).abs() < tol || fb.abs() < tol {
-                return (b, iteration);
+            if (x2 - x1).abs() < tol || f2.abs() < tol {
+                let best_x = if f1.abs() < f2.abs() { x1 } else { x2 };
+                let best_f = if f1.abs() < f2.abs() { f1 } else { f2 };
+                return (best_x, best_f, iteration);
             }
 
-            // Compute xi and phi
-            let xi = (a - b) / (c - b);
-            let phi = (fa - fb) / (fc - fb);
+            let state = ChandrupatlaState { x1, f1, x2, f2, x3, f3 };
+            let t = chandrupatla_next_t(&state, &config);
 
-            // Decide: IQI or bisection
-            let t = if should_use_iqi(xi, phi) {
-                // IQI
-                let alpha = (c - a) / (b - a);
-                let df_ab = fa - fb;
-                let df_cb = fc - fb;
-                let df_ca = fc - fa;
-                let df_bc = fb - fc;
-
-                if df_ab.abs() > config.min_divisor &&
-                    df_cb.abs() > config.min_divisor &&
-                    df_ca.abs() > config.min_divisor &&
-                    df_bc.abs() > config.min_divisor
-                {
-                    let term1 = (fa / df_ab) * (fc / df_cb);
-                    let term2 = alpha * (fa / df_ca) * (fb / df_bc);
-                    (term1 - term2).clamp(config.t_min, 1.0 - config.t_min)
-                } else {
-                    0.5
-                }
-            } else {
-                0.5 // bisection
-            };
-
-            // New point
-            let x_new = a + t * (b - a);
+            // Compute new point
+            let x_new = x1 + t * (x2 - x1);
             let f_new = f(x_new);
 
             // Update bracket
-            if f_new * fa > 0.0 {
-                // Same sign as fa: replace a
-                c = a;
-                fc = fa;
-                a = x_new;
-                fa = f_new;
+            if f_new * f1 > 0.0 {
+                // Same sign as f1: replace x1
+                x3 = x1;
+                f3 = f1;
+                x1 = x_new;
+                f1 = f_new;
             } else {
-                // Opposite sign: x_new brackets with a
-                c = b;
-                fc = fb;
-                b = a;
-                fb = fa;
-                a = x_new;
-                fa = f_new;
+                // Opposite sign: x_new brackets with x1
+                x3 = x2;
+                f3 = f2;
+                x2 = x1;
+                f2 = f1;
+                x1 = x_new;
+                f1 = f_new;
             }
         }
 
-        (b, max_iter)
+        let best_x = if f1.abs() < f2.abs() { x1 } else { x2 };
+        let best_f = if f1.abs() < f2.abs() { f1 } else { f2 };
+        (best_x, best_f, max_iter)
+    }
+
+    /// SciPy fun1: x³ - 2x - 5, root ≈ 2.0945514815423265
+    #[test]
+    fn test_scipy_fun1_cubic() {
+        let f = |x: f64| x.powi(3) - 2.0 * x - 5.0;
+        let expected_root = 2.0945514815423265;
+
+        let (root, f_root, iters) = run_chandrupatla(f, 2.0, 3.0, 1e-12, 100);
+
+        assert!(
+            (root - expected_root).abs() < 1e-10,
+            "Expected root ≈ {}, got {} (f={}) after {} iterations",
+            expected_root, root, f_root, iters
+        );
+        assert!(iters <= 12, "Should converge in ≤12 iterations, took {}", iters);
+    }
+
+    /// SciPy fun2: 1 - 1/x², root = 1 (singularity at 0)
+    #[test]
+    fn test_scipy_fun2_rational() {
+        let f = |x: f64| 1.0 - 1.0 / (x * x);
+        let expected_root = 1.0;
+
+        let (root, f_root, iters) = run_chandrupatla(f, 0.5, 2.0, 1e-12, 100);
+
+        assert!(
+            (root - expected_root).abs() < 1e-10,
+            "Expected root = {}, got {} (f={}) after {} iterations",
+            expected_root, root, f_root, iters
+        );
+    }
+
+    /// SciPy fun3: (x-3)³, root = 3 (triple root - challenging)
+    #[test]
+    fn test_scipy_fun3_triple_root() {
+        let f = |x: f64| (x - 3.0).powi(3);
+        let expected_root = 3.0;
+
+        let (root, f_root, iters) = run_chandrupatla(f, 0.0, 6.0, 1e-12, 100);
+
+        // Triple roots are flat, requiring looser tolerance
+        assert!(
+            (root - expected_root).abs() < 1e-3,
+            "Expected root = {}, got {} (f={}) after {} iterations",
+            expected_root, root, f_root, iters
+        );
+    }
+
+    /// SciPy fun5: x⁹, root = 0 (very flat near root)
+    #[test]
+    fn test_scipy_fun5_high_power() {
+        let f = |x: f64| x.powi(9);
+
+        let (root, f_root, iters) = run_chandrupatla(f, -1.0, 1.0, 1e-12, 100);
+
+        // High-power functions are flat near roots
+        assert!(
+            root.abs() < 1e-3,
+            "Expected root ≈ 0, got {} (f={}) after {} iterations",
+            root, f_root, iters
+        );
+    }
+
+    /// SciPy fun9: exp(x) - 2 - 0.01/x² + 0.000002/x³
+    #[test]
+    fn test_scipy_fun9_mixed() {
+        let f = |x: f64| x.exp() - 2.0 - 0.01 / (x * x) + 0.000002 / (x * x * x);
+        let expected_root = 0.7032048403631358;
+
+        let (root, f_root, iters) = run_chandrupatla(f, 0.5, 1.5, 1e-12, 100);
+
+        assert!(
+            (root - expected_root).abs() < 1e-10,
+            "Expected root ≈ {}, got {} (f={}) after {} iterations",
+            expected_root, root, f_root, iters
+        );
+    }
+
+    /// Test with wide brackets (stress test from SciPy)
+    #[test]
+    fn test_wide_bracket() {
+        let f = |x: f64| x.powi(3) - 2.0 * x - 5.0;
+        let expected_root = 2.0945514815423265;
+
+        // Very wide bracket: [-1e6, 1e6]
+        let (root, f_root, iters) = run_chandrupatla(f, -1e6, 1e6, 1e-10, 100);
+
+        assert!(
+            (root - expected_root).abs() < 1e-8,
+            "Expected root ≈ {}, got {} (f={}) after {} iterations",
+            expected_root, root, f_root, iters
+        );
+        // Should still converge reasonably fast even with wide bracket
+        assert!(iters <= 60, "Wide bracket should converge in ≤60 iterations, took {}", iters);
+    }
+
+    /// Test iteration count validation (like TensorFlow's test_chandrupatla_max_iterations)
+    #[test]
+    fn test_max_iterations_respected() {
+        let f = |x: f64| x.powi(19); // Very flat, will need many iterations
+
+        for max_iter in [5, 10, 15] {
+            let (_, _, iters) = run_chandrupatla(f, -1.0, 1.0, 1e-15, max_iter);
+            assert!(
+                iters <= max_iter,
+                "Should respect max_iterations={}, but ran {} iterations",
+                max_iter, iters
+            );
+        }
+    }
+
+    /// Test convergence with very tight tolerance
+    #[test]
+    fn test_high_precision() {
+        let f = |x: f64| x.powi(3) - 2.0 * x - 5.0;
+        let expected_root = 2.0945514815423265;
+
+        let (root, f_root, _iters) = run_chandrupatla(f, 2.0, 3.0, 1e-14, 100);
+
+        assert!(
+            (root - expected_root).abs() < 1e-12,
+            "High precision: expected {}, got {} (f={})",
+            expected_root, root, f_root
+        );
+        assert!(
+            f_root.abs() < 1e-12,
+            "Function value should be near zero: f({}) = {}",
+            root, f_root
+        );
+    }
+
+    // =========================================================================
+    // Tests for trade price calculation (query_supply decimal normalization)
+    // =========================================================================
+
+    #[test]
+    fn test_calculate_trade_price_same_decimals() {
+        // Both tokens have 18 decimals (e.g., WETH <-> DAI)
+        // 1e18 in for 2e18 out = 0.5 price
+        let price = calculate_trade_price(1e18, 2e18, 18, 18);
+        assert!((price - 0.5).abs() < 1e-10, "Expected 0.5, got {}", price);
+
+        // 2e18 in for 1e18 out = 2.0 price
+        let price = calculate_trade_price(2e18, 1e18, 18, 18);
+        assert!((price - 2.0).abs() < 1e-10, "Expected 2.0, got {}", price);
+    }
+
+    #[test]
+    fn test_calculate_trade_price_usdc_to_weth() {
+        // USDC (6 dec) -> WETH (18 dec)
+        // Swap 2000 USDC for 1 WETH
+        // Raw amounts: 2000e6 in, 1e18 out
+        // Expected price: 2000 USDC per WETH
+        let amount_in = 2000.0 * 1e6; // 2000 USDC in raw
+        let amount_out = 1.0 * 1e18; // 1 WETH in raw
+
+        let price = calculate_trade_price(amount_in, amount_out, 6, 18);
+        assert!(
+            (price - 2000.0).abs() < 1e-6,
+            "Expected 2000, got {}",
+            price
+        );
+    }
+
+    #[test]
+    fn test_calculate_trade_price_weth_to_usdc() {
+        // WETH (18 dec) -> USDC (6 dec)
+        // Swap 1 WETH for 2000 USDC
+        // Raw amounts: 1e18 in, 2000e6 out
+        // Expected price: 0.0005 WETH per USDC
+        let amount_in = 1.0 * 1e18; // 1 WETH in raw
+        let amount_out = 2000.0 * 1e6; // 2000 USDC in raw
+
+        let price = calculate_trade_price(amount_in, amount_out, 18, 6);
+        assert!(
+            (price - 0.0005).abs() < 1e-10,
+            "Expected 0.0005, got {}",
+            price
+        );
+    }
+
+    #[test]
+    fn test_calculate_trade_price_wbtc_to_usdc() {
+        // WBTC (8 dec) -> USDC (6 dec)
+        // Swap 1 WBTC for 50000 USDC
+        // Raw amounts: 1e8 in, 50000e6 out
+        // Expected price: 0.00002 WBTC per USDC
+        let amount_in = 1.0 * 1e8; // 1 WBTC in raw
+        let amount_out = 50000.0 * 1e6; // 50000 USDC in raw
+
+        let price = calculate_trade_price(amount_in, amount_out, 8, 6);
+        assert!(
+            (price - 0.00002).abs() < 1e-12,
+            "Expected 0.00002, got {}",
+            price
+        );
+    }
+
+    #[test]
+    fn test_calculate_trade_price_zero_output() {
+        let price = calculate_trade_price(1e18, 0.0, 18, 18);
+        assert_eq!(price, f64::MAX);
+
+        let price = calculate_trade_price(1e18, -1.0, 18, 18);
+        assert_eq!(price, f64::MAX);
+    }
+
+    #[test]
+    fn test_search_config_metrics() {
+        let swap_config = SearchConfig::swap_to_price();
+        assert_eq!(swap_config.metric, PriceMetric::SpotPrice);
+
+        let query_config = SearchConfig::query_supply();
+        assert_eq!(query_config.metric, PriceMetric::TradePrice);
+    }
+
+    // =========================================================================
+    // Integration tests using UniswapV2 ProtocolSim
+    // =========================================================================
+
+    use crate::evm::protocol::uniswap_v2::state::UniswapV2State;
+    use alloy::primitives::U256;
+    use std::str::FromStr;
+    use tycho_common::{models::Chain, Bytes};
+
+    fn create_test_token(address: &str, symbol: &str, decimals: u32) -> Token {
+        Token::new(
+            &Bytes::from_str(address).unwrap(),
+            symbol,
+            decimals,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        )
+    }
+
+    #[test]
+    fn test_swap_to_price_uniswap_v2_same_decimals() {
+        // Pool: 1000 WETH / 2,000,000 DAI (both 18 decimals)
+        // WETH is token0 (lower address), DAI is token1
+        let state = UniswapV2State::new(
+            U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)), // 1000 WETH (token0)
+            U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(18u64)), // 2M DAI (token1)
+        );
+
+        let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
+        let dai = create_test_token("0x0000000000000000000000000000000000000001", "DAI", 18);
+
+        // spot_price(base, quote) = price of base in quote units
+        // spot_price(WETH, DAI) = how much DAI per WETH = 2000
+        let spot_price = state.spot_price(&weth, &dai).unwrap();
+        assert!(
+            (spot_price - 2000.0).abs() < 1.0,
+            "Spot price should be ~2000, got {}",
+            spot_price
+        );
+
+        // Target: increase price by 1% (WETH becomes more expensive in DAI terms)
+        // This means selling DAI for WETH
+        let target_price = spot_price * 1.01;
+
+        let result = swap_to_price(&state, target_price, &dai, &weth, None);
+        assert!(result.is_ok(), "swap_to_price failed: {:?}", result.err());
+
+        let result = result.unwrap();
+        assert!(result.amount_in > BigUint::zero(), "Should have non-zero amount_in");
+
+        // Verify the new spot price is close to target
+        let new_spot = result.new_state.spot_price(&weth, &dai).unwrap();
+        let error_bps = ((new_spot - target_price) / target_price).abs() * 10000.0;
+        assert!(
+            error_bps < 10.0,
+            "New spot price {} should be within 10bps of target {}, error={}bps",
+            new_spot,
+            target_price,
+            error_bps
+        );
+    }
+
+    #[test]
+    fn test_swap_to_price_uniswap_v2_different_decimals() {
+        // Pool: 1000 WETH (18 dec) / 2,000,000 USDC (6 dec)
+        // WETH is token0 (lower address), USDC is token1
+        let state = UniswapV2State::new(
+            U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)), // 1000 WETH (token0)
+            U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(6u64)), // 2M USDC (token1)
+        );
+
+        let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
+        let usdc = create_test_token("0x0000000000000000000000000000000000000001", "USDC", 6);
+
+        // spot_price(WETH, USDC) = how much USDC per WETH = 2000
+        let spot_price = state.spot_price(&weth, &usdc).unwrap();
+        assert!(
+            (spot_price - 2000.0).abs() < 1.0,
+            "Spot price should be ~2000, got {}",
+            spot_price
+        );
+
+        // Target: increase price by 5% (WETH becomes more expensive)
+        let target_price = spot_price * 1.05;
+
+        let result = swap_to_price(&state, target_price, &usdc, &weth, None);
+        assert!(result.is_ok(), "swap_to_price failed: {:?}", result.err());
+
+        let result = result.unwrap();
+        let new_spot = result.new_state.spot_price(&weth, &usdc).unwrap();
+        let error_bps = ((new_spot - target_price) / target_price).abs() * 10000.0;
+        assert!(
+            error_bps < 10.0,
+            "Error should be <10bps, got {}bps",
+            error_bps
+        );
+    }
+
+    #[test]
+    fn test_query_supply_uniswap_v2_same_decimals() {
+        // Pool: 1000 WETH / 2,000,000 DAI
+        let state = UniswapV2State::new(
+            U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
+            U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(18u64)),
+        );
+
+        let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
+        let dai = create_test_token("0x0000000000000000000000000000000000000001", "DAI", 18);
+
+        // spot_price(WETH, DAI) = how much DAI per WETH = 2000
+        let spot_price = state.spot_price(&weth, &dai).unwrap();
+
+        // Target trade price: 1% above spot (willing to pay up to 2020 DAI per WETH)
+        // Selling DAI to buy WETH
+        let target_price = spot_price * 1.01;
+
+        let result = query_supply(&state, target_price, &dai, &weth, None);
+        assert!(result.is_ok(), "query_supply failed: {:?}", result.err());
+
+        let result = result.unwrap();
+        assert!(result.amount_in > BigUint::zero(), "Should have non-zero amount_in");
+        assert!(result.amount_out > BigUint::zero(), "Should have non-zero amount_out");
+
+        // Verify the trade price is at or below target
+        let trade_price = calculate_trade_price(
+            result.amount_in.to_f64().unwrap_or(0.0),
+            result.amount_out.to_f64().unwrap_or(0.0),
+            dai.decimals,
+            weth.decimals,
+        );
+        assert!(
+            trade_price <= target_price * 1.001,
+            "Trade price {} should be <= target {}",
+            trade_price,
+            target_price
+        );
+    }
+
+    #[test]
+    fn test_query_supply_uniswap_v2_different_decimals() {
+        // Pool: 1000 WETH (18 dec) / 2,000,000 USDC (6 dec)
+        let state = UniswapV2State::new(
+            U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
+            U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(6u64)),
+        );
+
+        let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
+        let usdc = create_test_token("0x0000000000000000000000000000000000000001", "USDC", 6);
+
+        // spot_price(WETH, USDC) = how much USDC per WETH = 2000
+        let spot_price = state.spot_price(&weth, &usdc).unwrap();
+
+        // Target trade price: 5% above spot (willing to pay up to 2100 USDC per WETH)
+        let target_price = spot_price * 1.05;
+
+        let result = query_supply(&state, target_price, &usdc, &weth, None);
+        assert!(result.is_ok(), "query_supply failed: {:?}", result.err());
+
+        let result = result.unwrap();
+
+        // Verify the trade price is at or below target
+        let trade_price = calculate_trade_price(
+            result.amount_in.to_f64().unwrap_or(0.0),
+            result.amount_out.to_f64().unwrap_or(0.0),
+            usdc.decimals,
+            weth.decimals,
+        );
+        assert!(
+            trade_price <= target_price * 1.001,
+            "Trade price {} should be <= target {}",
+            trade_price,
+            target_price
+        );
+    }
+
+    #[test]
+    fn test_query_supply_maximizes_trade() {
+        // Test that query_supply finds the maximum trade within price limit
+        let state = UniswapV2State::new(
+            U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
+            U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(18u64)),
+        );
+
+        let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
+        let dai = create_test_token("0x0000000000000000000000000000000000000001", "DAI", 18);
+
+        // spot_price(WETH, DAI) = how much DAI per WETH = 2000
+        let spot_price = state.spot_price(&weth, &dai).unwrap();
+
+        // Test with increasing price limits - larger limits should yield larger trades
+        let mut prev_amount = BigUint::zero();
+        for multiplier in [1.01, 1.05, 1.10, 1.20] {
+            let target_price = spot_price * multiplier;
+            let result = query_supply(&state, target_price, &dai, &weth, None);
+            assert!(result.is_ok(), "query_supply failed at multiplier {}", multiplier);
+
+            let amount = result.unwrap().amount_in;
+            assert!(
+                amount >= prev_amount,
+                "Higher price limit should allow larger trade: {} vs {}",
+                amount,
+                prev_amount
+            );
+            prev_amount = amount;
+        }
     }
 }
