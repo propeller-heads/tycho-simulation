@@ -137,6 +137,27 @@ impl SearchConfig {
     }
 }
 
+/// Calculate trade price (execution price) normalized by token decimals.
+///
+/// Trade price = (amount_in / amount_out) * 10^(decimals_out - decimals_in)
+///
+/// This normalizes raw token amounts to a human-readable price.
+/// For example, swapping 1000 USDC (6 dec) for 0.5 WETH (18 dec):
+/// - Raw: 1000e6 / 0.5e18 = 2e-9
+/// - Normalized: 2e-9 * 10^(18-6) = 2000 USDC per WETH
+fn calculate_trade_price(
+    amount_in: f64,
+    amount_out: f64,
+    decimals_in: u32,
+    decimals_out: u32,
+) -> f64 {
+    if amount_out <= 0.0 {
+        return f64::MAX;
+    }
+    let decimal_adjustment = 10_f64.powi(decimals_out as i32 - decimals_in as i32);
+    (amount_in / amount_out) * decimal_adjustment
+}
+
 /// Chandrupatla bracket state
 ///
 /// Maintains three points for the algorithm:
@@ -387,13 +408,14 @@ fn evaluate_objective(
             .new_state
             .spot_price(token_out, token_in)?,
         PriceMetric::TradePrice => {
-            let amount_in_f64 = amount.to_f64().unwrap(); // `.to_f64()` never returns None
-            let amount_out_f64 = result.amount.to_f64().unwrap(); // `.to_f64()` never returns None
-            if amount_out_f64 > 0.0 {
-                amount_in_f64 / amount_out_f64
-            } else {
-                f64::MAX
-            }
+            let amount_in_f64 = amount.to_f64().unwrap_or(f64::MAX);
+            let amount_out_f64 = result.amount.to_f64().unwrap_or(f64::MAX);
+            calculate_trade_price(
+                amount_in_f64,
+                amount_out_f64,
+                token_in.decimals,
+                token_out.decimals,
+            )
         }
     };
 
@@ -448,13 +470,17 @@ fn run_search(
     // Step 5: Calculate limit price (price at max trade)
     let limit_price = match search_config.metric {
         PriceMetric::TradePrice => {
-            // Trade price at max trade = max_in / max_out
             if max_amount_out.is_zero() {
                 return Err(ChandrupatlaSearchError::ZeroOutputAmountAtLimit);
             }
-            let max_in_f64 = max_amount_in.to_f64().unwrap(); // `.to_f64()` never returns None
-            let max_out_f64 = max_amount_out.to_f64().unwrap(); // `.to_f64()` never returns None
-            max_in_f64 / max_out_f64
+            let max_in_f64 = max_amount_in.to_f64().unwrap_or(f64::MAX);
+            let max_out_f64 = max_amount_out.to_f64().unwrap_or(f64::MAX);
+            calculate_trade_price(
+                max_in_f64,
+                max_out_f64,
+                token_in.decimals,
+                token_out.decimals,
+            )
         }
         PriceMetric::SpotPrice => {
             // Spot price after max trade requires simulation
@@ -1048,5 +1074,90 @@ mod tests {
             "Function value should be near zero: f({}) = {}",
             root, f_root
         );
+    }
+
+    // =========================================================================
+    // Tests for trade price calculation (query_supply decimal normalization)
+    // =========================================================================
+
+    #[test]
+    fn test_calculate_trade_price_same_decimals() {
+        // Both tokens have 18 decimals (e.g., WETH <-> DAI)
+        // 1e18 in for 2e18 out = 0.5 price
+        let price = calculate_trade_price(1e18, 2e18, 18, 18);
+        assert!((price - 0.5).abs() < 1e-10, "Expected 0.5, got {}", price);
+
+        // 2e18 in for 1e18 out = 2.0 price
+        let price = calculate_trade_price(2e18, 1e18, 18, 18);
+        assert!((price - 2.0).abs() < 1e-10, "Expected 2.0, got {}", price);
+    }
+
+    #[test]
+    fn test_calculate_trade_price_usdc_to_weth() {
+        // USDC (6 dec) -> WETH (18 dec)
+        // Swap 2000 USDC for 1 WETH
+        // Raw amounts: 2000e6 in, 1e18 out
+        // Expected price: 2000 USDC per WETH
+        let amount_in = 2000.0 * 1e6; // 2000 USDC in raw
+        let amount_out = 1.0 * 1e18; // 1 WETH in raw
+
+        let price = calculate_trade_price(amount_in, amount_out, 6, 18);
+        assert!(
+            (price - 2000.0).abs() < 1e-6,
+            "Expected 2000, got {}",
+            price
+        );
+    }
+
+    #[test]
+    fn test_calculate_trade_price_weth_to_usdc() {
+        // WETH (18 dec) -> USDC (6 dec)
+        // Swap 1 WETH for 2000 USDC
+        // Raw amounts: 1e18 in, 2000e6 out
+        // Expected price: 0.0005 WETH per USDC
+        let amount_in = 1.0 * 1e18; // 1 WETH in raw
+        let amount_out = 2000.0 * 1e6; // 2000 USDC in raw
+
+        let price = calculate_trade_price(amount_in, amount_out, 18, 6);
+        assert!(
+            (price - 0.0005).abs() < 1e-10,
+            "Expected 0.0005, got {}",
+            price
+        );
+    }
+
+    #[test]
+    fn test_calculate_trade_price_wbtc_to_usdc() {
+        // WBTC (8 dec) -> USDC (6 dec)
+        // Swap 1 WBTC for 50000 USDC
+        // Raw amounts: 1e8 in, 50000e6 out
+        // Expected price: 0.00002 WBTC per USDC
+        let amount_in = 1.0 * 1e8; // 1 WBTC in raw
+        let amount_out = 50000.0 * 1e6; // 50000 USDC in raw
+
+        let price = calculate_trade_price(amount_in, amount_out, 8, 6);
+        assert!(
+            (price - 0.00002).abs() < 1e-12,
+            "Expected 0.00002, got {}",
+            price
+        );
+    }
+
+    #[test]
+    fn test_calculate_trade_price_zero_output() {
+        let price = calculate_trade_price(1e18, 0.0, 18, 18);
+        assert_eq!(price, f64::MAX);
+
+        let price = calculate_trade_price(1e18, -1.0, 18, 18);
+        assert_eq!(price, f64::MAX);
+    }
+
+    #[test]
+    fn test_search_config_metrics() {
+        let swap_config = SearchConfig::swap_to_price();
+        assert_eq!(swap_config.metric, PriceMetric::SpotPrice);
+
+        let query_config = SearchConfig::query_supply();
+        assert_eq!(query_config.metric, PriceMetric::TradePrice);
     }
 }
