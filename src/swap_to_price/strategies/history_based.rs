@@ -1200,36 +1200,7 @@ impl ProtocolSimExt for EVMChandrupatlaStrategy {
             token_out,
             Some(self.config),
         )
-        .map_err(|e| match e {
-            crate::evm::chandrupatla::ChandrupatlaSearchError::TargetBelowSpot { target, spot } => {
-                SwapToPriceError::TargetBelowSpot { target, spot }
-            }
-            crate::evm::chandrupatla::ChandrupatlaSearchError::TargetAboveLimit {
-                target,
-                spot,
-                limit,
-            } => SwapToPriceError::TargetAboveLimit {
-                target,
-                spot,
-                limit,
-            },
-            crate::evm::chandrupatla::ChandrupatlaSearchError::ConvergenceFailure {
-                iterations,
-                target_price,
-                best_price,
-                error_bps,
-                amount,
-            } => SwapToPriceError::ConvergenceFailure {
-                iterations,
-                target_price,
-                best_price,
-                error_bps,
-                amount,
-            },
-            crate::evm::chandrupatla::ChandrupatlaSearchError::SimulationError(e) => {
-                SwapToPriceError::SimulationError(e)
-            }
-        })?;
+        .map_err(|e| SwapToPriceError::Other(e.to_string()))?;
 
         Ok(SwapToPriceResult {
             amount_in: result.amount_in,
@@ -1255,36 +1226,7 @@ impl ProtocolSimExt for EVMChandrupatlaStrategy {
             token_out,
             Some(self.config),
         )
-        .map_err(|e| match e {
-            crate::evm::chandrupatla::ChandrupatlaSearchError::TargetBelowSpot { target, spot } => {
-                SwapToPriceError::TargetBelowSpot { target, spot }
-            }
-            crate::evm::chandrupatla::ChandrupatlaSearchError::TargetAboveLimit {
-                target,
-                spot,
-                limit,
-            } => SwapToPriceError::TargetAboveLimit {
-                target,
-                spot,
-                limit,
-            },
-            crate::evm::chandrupatla::ChandrupatlaSearchError::ConvergenceFailure {
-                iterations,
-                target_price,
-                best_price,
-                error_bps,
-                amount,
-            } => SwapToPriceError::ConvergenceFailure {
-                iterations,
-                target_price,
-                best_price,
-                error_bps,
-                amount,
-            },
-            crate::evm::chandrupatla::ChandrupatlaSearchError::SimulationError(e) => {
-                SwapToPriceError::SimulationError(e)
-            }
-        })?;
+        .map_err(|e| SwapToPriceError::Other(e.to_string()))?;
 
         Ok(QuerySupplyResult {
             amount_in: result.amount_in,

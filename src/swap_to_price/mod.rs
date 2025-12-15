@@ -147,6 +147,8 @@ pub enum SwapToPriceError {
     },
     #[error("Simulation error: {0}")]
     SimulationError(#[from] SimulationError),
+    #[error("Other error: {0}")]
+    Other(String),
 }
 
 /// Extension trait for ProtocolSim with price-targeting search strategies
