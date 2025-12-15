@@ -213,6 +213,10 @@ pub enum ChandrupatlaSearchError {
     TargetBelowSpot { target: f64, spot: f64 },
     #[error("Target price {target} is above limit price {limit} (spot: {spot}). Pool doesn't have enough liquidity to reach target.")]
     TargetAboveLimit { target: f64, spot: f64, limit: f64 },
+    #[error("Limit price {limit} is at or below spot price {spot}. Trading in this direction does not increase price.")]
+    LimitBelowSpot { limit: f64, spot: f64 },
+    #[error("Maximum output amount at limit is zero. Pool has no liquidity for output token.")]
+    ZeroOutputAmountAtLimit,
     #[error("Failed to converge within {iterations} iterations. Target: {target_price:.6e}, best: {best_price:.6e} (diff: {error_bps:.2}bps), amount: {amount}")]
     ConvergenceFailure {
         iterations: u32,
@@ -343,15 +347,15 @@ fn chandrupatla_next_t(state: &ChandrupatlaState, config: &ChandrupatlaConfig) -
     let ChandrupatlaState { x1, f1, x2, f2, x3, f3 } = *state;
 
     // Compute xi (position ratio) and phi (function value ratio)
-    let dx32 = x3 - x2;
-    let df32 = f3 - f2;
+    let dx = x3 - x2;
+    let df = f3 - f2;
 
-    if dx32.abs() < config.min_divisor || df32.abs() < config.min_divisor {
+    if dx.abs() < config.min_divisor || df.abs() < config.min_divisor {
         return 0.5; // bisection
     }
 
-    let xi = (x1 - x2) / dx32;
-    let phi = (f1 - f2) / df32;
+    let xi = (x1 - x2) / dx;
+    let phi = (f1 - f2) / df;
 
     // Check Chandrupatla's criterion
     if should_use_iqi(xi, phi) {
@@ -383,8 +387,8 @@ fn evaluate_objective(
             .new_state
             .spot_price(token_out, token_in)?,
         PriceMetric::TradePrice => {
-            let amount_in_f64 = amount.to_f64().unwrap_or(0.0);
-            let amount_out_f64 = result.amount.to_f64().unwrap_or(1.0);
+            let amount_in_f64 = amount.to_f64().unwrap(); // `.to_f64()` never returns None
+            let amount_out_f64 = result.amount.to_f64().unwrap(); // `.to_f64()` never returns None
             if amount_out_f64 > 0.0 {
                 amount_in_f64 / amount_out_f64
             } else {
@@ -429,11 +433,7 @@ fn run_search(
         });
     }
 
-    // Step 3: Get limits
-    let (max_amount_in, _) =
-        state.get_limits(token_in.address.clone(), token_out.address.clone())?;
-
-    // Step 4: Validate target price is above spot
+    // Step 3: Validate target price is above spot
     if target_price < spot_price {
         return Err(ChandrupatlaSearchError::TargetBelowSpot {
             target: target_price,
@@ -441,27 +441,39 @@ fn run_search(
         });
     }
 
-    // Step 5: Calculate limit price (spot price at max trade)
-    let limit_result = state.get_amount_out(max_amount_in.clone(), token_in, token_out)?;
-    let limit_spot_price = limit_result
-        .new_state
-        .spot_price(token_out, token_in)?;
+    // Step 4: Get limits
+    let (max_amount_in, max_amount_out) =
+        state.get_limits(token_in.address.clone(), token_out.address.clone())?;
+
+    // Step 5: Calculate limit price (price at max trade)
+    let limit_price = match search_config.metric {
+        PriceMetric::TradePrice => {
+            // Trade price at max trade = max_in / max_out
+            if max_amount_out.is_zero() {
+                return Err(ChandrupatlaSearchError::ZeroOutputAmountAtLimit);
+            }
+            let max_in_f64 = max_amount_in.to_f64().unwrap(); // `.to_f64()` never returns None
+            let max_out_f64 = max_amount_out.to_f64().unwrap(); // `.to_f64()` never returns None
+            max_in_f64 / max_out_f64
+        }
+        PriceMetric::SpotPrice => {
+            // Spot price after max trade requires simulation
+            let limit_result = state.get_amount_out(max_amount_in.clone(), token_in, token_out)?;
+            limit_result.new_state.spot_price(token_out, token_in)?
+        }
+    };
 
     // Step 6: Validate limit price
-    if limit_spot_price <= spot_price {
-        return Err(ChandrupatlaSearchError::TargetAboveLimit {
-            target: target_price,
-            spot: spot_price,
-            limit: limit_spot_price,
-        });
+    if limit_price <= spot_price {
+        return Err(ChandrupatlaSearchError::LimitBelowSpot { limit: limit_price, spot: spot_price });
     }
 
     // Step 7: Validate target is reachable
-    if target_price > limit_spot_price {
+    if target_price > limit_price {
         return Err(ChandrupatlaSearchError::TargetAboveLimit {
             target: target_price,
             spot: spot_price,
-            limit: limit_spot_price,
+            limit: limit_price,
         });
     }
 
@@ -482,12 +494,12 @@ fn run_search(
     let x2 = max_amount_in
         .to_f64()
         .unwrap_or(f64::MAX);
-    let f2 = limit_spot_price - target_price; // positive
+    let f2 = limit_price - target_price; // positive
 
     // Initially x3 = x1 (no previous point yet)
     let mut chandru_state = ChandrupatlaState { x1, f1, x2, f2, x3: x1, f3: f1 };
 
-    // Track best result metadata only (avoid cloning Box<dyn ProtocolSim> every iteration)
+    // Track best result metadata
     let mut best_amount: Option<BigUint> = None;
     let mut best_price = spot_price;
     let mut best_error = f64::MAX;
@@ -507,9 +519,9 @@ fn run_search(
         // x_new = x1 + t * (x2 - x1)
         let x_new = chandru_state.x1 + t * (chandru_state.x2 - chandru_state.x1);
 
-        // Convert to BigUint (our discrete domain)
+        // Convert to BigUint
         let amount_new = if x_new <= 0.0 {
-            one.clone()
+            BigUint::one()
         } else {
             BigUint::from_f64(x_new).unwrap_or_else(|| geometric_mean(&low, &high))
         };
@@ -524,7 +536,7 @@ fn run_search(
         };
 
         // Check if we've hit precision limit - re-evaluate best amount if needed
-        if &high - &low <= one {
+        if (&high - &low).is_one() {
             let final_amount = best_amount.unwrap_or(amount_new.clone());
             let (price, _, amount_out, gas, new_state) = evaluate_objective(
                 state,
