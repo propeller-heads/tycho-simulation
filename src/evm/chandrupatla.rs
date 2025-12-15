@@ -1160,4 +1160,213 @@ mod tests {
         let query_config = SearchConfig::query_supply();
         assert_eq!(query_config.metric, PriceMetric::TradePrice);
     }
+
+    // =========================================================================
+    // Integration tests using UniswapV2 ProtocolSim
+    // =========================================================================
+
+    use crate::evm::protocol::uniswap_v2::state::UniswapV2State;
+    use alloy::primitives::U256;
+    use std::str::FromStr;
+    use tycho_common::{models::Chain, Bytes};
+
+    fn create_test_token(address: &str, symbol: &str, decimals: u32) -> Token {
+        Token::new(
+            &Bytes::from_str(address).unwrap(),
+            symbol,
+            decimals,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        )
+    }
+
+    #[test]
+    fn test_swap_to_price_uniswap_v2_same_decimals() {
+        // Pool: 1000 WETH / 2,000,000 DAI (both 18 decimals)
+        // WETH is token0 (lower address), DAI is token1
+        let state = UniswapV2State::new(
+            U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)), // 1000 WETH (token0)
+            U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(18u64)), // 2M DAI (token1)
+        );
+
+        let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
+        let dai = create_test_token("0x0000000000000000000000000000000000000001", "DAI", 18);
+
+        // spot_price(base, quote) = price of base in quote units
+        // spot_price(WETH, DAI) = how much DAI per WETH = 2000
+        let spot_price = state.spot_price(&weth, &dai).unwrap();
+        assert!(
+            (spot_price - 2000.0).abs() < 1.0,
+            "Spot price should be ~2000, got {}",
+            spot_price
+        );
+
+        // Target: increase price by 1% (WETH becomes more expensive in DAI terms)
+        // This means selling DAI for WETH
+        let target_price = spot_price * 1.01;
+
+        let result = swap_to_price(&state, target_price, &dai, &weth, None);
+        assert!(result.is_ok(), "swap_to_price failed: {:?}", result.err());
+
+        let result = result.unwrap();
+        assert!(result.amount_in > BigUint::zero(), "Should have non-zero amount_in");
+
+        // Verify the new spot price is close to target
+        let new_spot = result.new_state.spot_price(&weth, &dai).unwrap();
+        let error_bps = ((new_spot - target_price) / target_price).abs() * 10000.0;
+        assert!(
+            error_bps < 10.0,
+            "New spot price {} should be within 10bps of target {}, error={}bps",
+            new_spot,
+            target_price,
+            error_bps
+        );
+    }
+
+    #[test]
+    fn test_swap_to_price_uniswap_v2_different_decimals() {
+        // Pool: 1000 WETH (18 dec) / 2,000,000 USDC (6 dec)
+        // WETH is token0 (lower address), USDC is token1
+        let state = UniswapV2State::new(
+            U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)), // 1000 WETH (token0)
+            U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(6u64)), // 2M USDC (token1)
+        );
+
+        let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
+        let usdc = create_test_token("0x0000000000000000000000000000000000000001", "USDC", 6);
+
+        // spot_price(WETH, USDC) = how much USDC per WETH = 2000
+        let spot_price = state.spot_price(&weth, &usdc).unwrap();
+        assert!(
+            (spot_price - 2000.0).abs() < 1.0,
+            "Spot price should be ~2000, got {}",
+            spot_price
+        );
+
+        // Target: increase price by 5% (WETH becomes more expensive)
+        let target_price = spot_price * 1.05;
+
+        let result = swap_to_price(&state, target_price, &usdc, &weth, None);
+        assert!(result.is_ok(), "swap_to_price failed: {:?}", result.err());
+
+        let result = result.unwrap();
+        let new_spot = result.new_state.spot_price(&weth, &usdc).unwrap();
+        let error_bps = ((new_spot - target_price) / target_price).abs() * 10000.0;
+        assert!(
+            error_bps < 10.0,
+            "Error should be <10bps, got {}bps",
+            error_bps
+        );
+    }
+
+    #[test]
+    fn test_query_supply_uniswap_v2_same_decimals() {
+        // Pool: 1000 WETH / 2,000,000 DAI
+        let state = UniswapV2State::new(
+            U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
+            U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(18u64)),
+        );
+
+        let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
+        let dai = create_test_token("0x0000000000000000000000000000000000000001", "DAI", 18);
+
+        // spot_price(WETH, DAI) = how much DAI per WETH = 2000
+        let spot_price = state.spot_price(&weth, &dai).unwrap();
+
+        // Target trade price: 1% above spot (willing to pay up to 2020 DAI per WETH)
+        // Selling DAI to buy WETH
+        let target_price = spot_price * 1.01;
+
+        let result = query_supply(&state, target_price, &dai, &weth, None);
+        assert!(result.is_ok(), "query_supply failed: {:?}", result.err());
+
+        let result = result.unwrap();
+        assert!(result.amount_in > BigUint::zero(), "Should have non-zero amount_in");
+        assert!(result.amount_out > BigUint::zero(), "Should have non-zero amount_out");
+
+        // Verify the trade price is at or below target
+        let trade_price = calculate_trade_price(
+            result.amount_in.to_f64().unwrap_or(0.0),
+            result.amount_out.to_f64().unwrap_or(0.0),
+            dai.decimals,
+            weth.decimals,
+        );
+        assert!(
+            trade_price <= target_price * 1.001,
+            "Trade price {} should be <= target {}",
+            trade_price,
+            target_price
+        );
+    }
+
+    #[test]
+    fn test_query_supply_uniswap_v2_different_decimals() {
+        // Pool: 1000 WETH (18 dec) / 2,000,000 USDC (6 dec)
+        let state = UniswapV2State::new(
+            U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
+            U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(6u64)),
+        );
+
+        let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
+        let usdc = create_test_token("0x0000000000000000000000000000000000000001", "USDC", 6);
+
+        // spot_price(WETH, USDC) = how much USDC per WETH = 2000
+        let spot_price = state.spot_price(&weth, &usdc).unwrap();
+
+        // Target trade price: 5% above spot (willing to pay up to 2100 USDC per WETH)
+        let target_price = spot_price * 1.05;
+
+        let result = query_supply(&state, target_price, &usdc, &weth, None);
+        assert!(result.is_ok(), "query_supply failed: {:?}", result.err());
+
+        let result = result.unwrap();
+
+        // Verify the trade price is at or below target
+        let trade_price = calculate_trade_price(
+            result.amount_in.to_f64().unwrap_or(0.0),
+            result.amount_out.to_f64().unwrap_or(0.0),
+            usdc.decimals,
+            weth.decimals,
+        );
+        assert!(
+            trade_price <= target_price * 1.001,
+            "Trade price {} should be <= target {}",
+            trade_price,
+            target_price
+        );
+    }
+
+    #[test]
+    fn test_query_supply_maximizes_trade() {
+        // Test that query_supply finds the maximum trade within price limit
+        let state = UniswapV2State::new(
+            U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
+            U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(18u64)),
+        );
+
+        let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
+        let dai = create_test_token("0x0000000000000000000000000000000000000001", "DAI", 18);
+
+        // spot_price(WETH, DAI) = how much DAI per WETH = 2000
+        let spot_price = state.spot_price(&weth, &dai).unwrap();
+
+        // Test with increasing price limits - larger limits should yield larger trades
+        let mut prev_amount = BigUint::zero();
+        for multiplier in [1.01, 1.05, 1.10, 1.20] {
+            let target_price = spot_price * multiplier;
+            let result = query_supply(&state, target_price, &dai, &weth, None);
+            assert!(result.is_ok(), "query_supply failed at multiplier {}", multiplier);
+
+            let amount = result.unwrap().amount_in;
+            assert!(
+                amount >= prev_amount,
+                "Higher price limit should allow larger trade: {} vs {}",
+                amount,
+                prev_amount
+            );
+            prev_amount = amount;
+        }
+    }
 }
