@@ -1,6 +1,5 @@
 use crate::snapshot;
-use num_bigint::BigUint;
-use num_traits::{One, ToPrimitive};
+use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Instant;
@@ -13,7 +12,7 @@ use tycho_simulation::swap_to_price::{
         BrentStrategy, ChandrupatlaStrategy, ConvexSearchStrategy, EVMBrentStrategy,
         EVMChandrupatlaStrategy, HybridStrategy, IqiStrategy,
     },
-    within_tolerance, ProtocolSimExt, SWAP_TO_PRICE_MAX_ITERATIONS,
+    ProtocolSimExt,
 };
 
 /// Calculate trade price in token_out per token_in units.
@@ -74,10 +73,11 @@ pub async fn run_benchmark(
     let loaded = snapshot::load_and_process_snapshot(snapshot_path).await?;
 
     let mode_str = if use_query_supply { "query_supply" } else { "swap_to_price" };
+    let metric_str = if use_query_supply { "TradePrice" } else { "SpotPrice" };
     println!("Loaded snapshot with {} pools", loaded.states.len());
     println!("Block: {}", loaded.metadata.block_number);
     println!("Chain: {}", loaded.metadata.chain);
-    println!("Mode: {}", mode_str);
+    println!("Mode: {} (metric: {})", mode_str, metric_str);
 
     let mut results = Vec::new();
 
@@ -88,16 +88,14 @@ pub async fn run_benchmark(
 
         // Compare strategies with various parameter values
         let strategies: Vec<(&str, Box<dyn ProtocolSimExt>)> = vec![
-            // Brent variants - testing different acceptance criteria
             ("evm_brent", Box::new(EVMBrentStrategy::default())),  // EVM Brent (classic Brent-Dekker)
             ("evm_chandru", Box::new(EVMChandrupatlaStrategy::default())), // EVM Chandrupatla (TF/SciPy-based)
             // ("brent_1%_bracket", Box::new(BrentStrategy)),           // 1% bracket only
-            // ("chandrupatla", Box::new(ChandrupatlaStrategy::default())), // Chandrupatla's method (archived)
+            // ("chandrupatla", Box::new(ChandrupatlaStrategy)), // Chandrupatla's method (archived)
             // ("blended_iqi", Box::new(BlendedIqiSecantStrategy)),   // Blended IQI + secant
             // ("brent_step_1/2", Box::new(BrentOriginalStrategy)),  // half prev step only (classical)
             // ("brkt_AND_step", Box::new(BrentAndStrategy)),  // both criteria (AND)
             // ("brkt_OR_step", Box::new(BrentOrStrategy)),    // either criterion (OR)
-            // Other strategies for comparison
             // ("iqi", Box::new(IqiStrategy)),                        // Simple IQI
             // ("hybrid", Box::new(HybridStrategy)),                  // IQI + secant + bisection
             // ("convex", Box::new(ConvexSearchStrategy)),            // Convex-aware search

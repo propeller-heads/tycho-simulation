@@ -88,11 +88,11 @@ pub fn save_results(
     Ok(output_path)
 }
 
-pub fn print_summary(results: &[BenchmarkResult]) {
+pub fn print_summary(results: &[BenchmarkResult], metric: &str) {
     let summary = calculate_summary(results);
 
     println!("\n{}", "=".repeat(80));
-    println!("BENCHMARK SUMMARY");
+    println!("BENCHMARK SUMMARY - {}", metric);
     println!("{}", "=".repeat(80));
 
     #[cfg(feature = "evm")]

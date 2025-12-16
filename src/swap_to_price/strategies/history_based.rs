@@ -80,6 +80,9 @@ impl SearchConfig {
 }
 
 /// Calculate trade price from amounts with decimal normalization
+///
+/// Trade price = (amount_out / amount_in) * 10^(decimals_in - decimals_out)
+/// This gives price in units of token_out per token_in.
 fn calc_trade_price(
     amount_in: &BigUint,
     amount_out: &BigUint,
@@ -88,11 +91,11 @@ fn calc_trade_price(
 ) -> Option<f64> {
     let in_f64 = amount_in.to_f64()?;
     let out_f64 = amount_out.to_f64()?;
-    if out_f64 <= 0.0 {
+    if in_f64 <= 0.0 {
         return None;
     }
-    let decimal_adjustment = 10_f64.powi(decimals_out as i32 - decimals_in as i32);
-    Some((in_f64 / out_f64) * decimal_adjustment)
+    let decimal_adjustment = 10_f64.powi(decimals_in as i32 - decimals_out as i32);
+    Some((out_f64 / in_f64) * decimal_adjustment)
 }
 
 /// Tracked result during search
@@ -124,8 +127,8 @@ where
 {
     let max_iterations = SWAP_TO_PRICE_MAX_ITERATIONS;
 
-    // Step 1: Get spot price
-    let spot_price = state.spot_price(token_out, token_in)?;
+    // Step 1: Get spot price (token_out per token_in)
+    let spot_price = state.spot_price(token_in, token_out)?;
 
     // Step 2: Check if we're already at target (for spot price metric)
     if config.metric == PriceMetric::SpotPrice && within_tolerance(spot_price, target_price) {
@@ -144,8 +147,10 @@ where
     let (max_amount_in, _) =
         state.get_limits(token_in.address.clone(), token_out.address.clone())?;
 
-    // Step 4: Validate target price is below spot
-    // With prices in token_out/token_in units, prices DECREASE as amount increases.
+    // Step 4: Validate target price is below spot price
+    // For BOTH metrics, spot_price is the upper bound:
+    // - SpotPrice: spot_price at amount=0 is the maximum
+    // - TradePrice: as amount→0, trade_price approaches spot_price
     if target_price > spot_price {
         return Err(SwapToPriceError::TargetAboveSpot {
             target: target_price,
@@ -153,43 +158,63 @@ where
         });
     }
 
-    // Step 5: Calculate limit price (spot price at max trade)
+    // Step 5: Calculate limit price (price at max trade)
     let limit_result = state.get_amount_out(max_amount_in.clone(), token_in, token_out)?;
-    let limit_spot_price = limit_result.new_state.spot_price(token_in, token_out)?;
+
+    let limit_price = match config.metric {
+        PriceMetric::SpotPrice => limit_result.new_state.spot_price(token_in, token_out)?,
+        PriceMetric::TradePrice => {
+            if limit_result.amount.is_zero() {
+                return Err(SwapToPriceError::Other(
+                    "Zero output amount at max trade".to_string(),
+                ));
+            }
+            calc_trade_price(
+                &max_amount_in,
+                &limit_result.amount,
+                token_in.decimals,
+                token_out.decimals,
+            )
+            .unwrap_or(0.0)
+        }
+    };
 
     // Step 6: Validate limit price (should be below spot since prices decrease)
-    if limit_spot_price >= spot_price {
+    if limit_price >= spot_price {
         return Err(SwapToPriceError::LimitAboveSpot {
-            limit: limit_spot_price,
+            limit: limit_price,
             spot: spot_price,
         });
     }
 
     // Step 7: Validate target is reachable (must be >= limit_price)
-    if target_price < limit_spot_price {
+    if target_price < limit_price {
         return Err(SwapToPriceError::TargetBelowLimit {
             target: target_price,
             spot: spot_price,
-            limit: limit_spot_price,
+            limit: limit_price,
         });
     }
 
-    // Step 8: Initialize search
-    let mut low = BigUint::from(0u32);
-    let mut low_price = spot_price; // This is spot price for bounds tracking
-    let mut high = max_amount_in.clone();
-    let mut high_price = limit_spot_price;
+    // Step 8: Initialize search bounds
+    // For BOTH metrics: bracket is [0, max] with prices [spot, limit]
+    // For TradePrice at amount=0, use spot_price as approximation (limit as amount→0)
     let mut history: Vec<HistoryPoint> = Vec::with_capacity(max_iterations as usize);
+
+    let mut low = BigUint::zero();
+    let mut low_price = spot_price;
+    let mut high = max_amount_in.clone();
+    let mut high_price = limit_price;
 
     // Add initial bounds to history
     history.push(HistoryPoint {
         amount_f64: 0.0,
-        price: low_price,
+        price: spot_price,
     });
     if let Some(high_f64) = high.to_f64() {
         history.push(HistoryPoint {
             amount_f64: high_f64,
-            price: high_price,
+            price: limit_price,
         });
     }
 
@@ -212,7 +237,7 @@ where
 
         // Calculate result at mid
         let result = state.get_amount_out(mid.clone(), token_in, token_out)?;
-        let new_spot_price = result.new_state.spot_price(token_out, token_in)?;
+        let new_spot_price = result.new_state.spot_price(token_in, token_out)?;
         let trade_price = calc_trade_price(
             &mid,
             &result.amount,
@@ -247,11 +272,11 @@ where
             });
         }
 
-        // Add to history (always use spot price for interpolation - it's monotonic)
+        // Add to history using the tracked price metric for correct interpolation
         if let Some(mid_f64) = mid.to_f64() {
             history.push(HistoryPoint {
                 amount_f64: mid_f64,
-                price: new_spot_price,
+                price: tracked_price,
             });
         }
 
@@ -267,13 +292,16 @@ where
             });
         }
 
-        // Update bounds (always based on spot price for monotonicity)
-        if new_spot_price < target_price {
+        // Update bounds based on tracked price metric
+        // Both spot and trade prices DECREASE as amount increases:
+        // - price > target → need more amount (increase lower bound)
+        // - price < target → need less amount (decrease upper bound)
+        if tracked_price > target_price {
             low = mid;
-            low_price = new_spot_price;
+            low_price = tracked_price;
         } else {
             high = mid;
-            high_price = new_spot_price;
+            high_price = tracked_price;
         }
 
         // Check for convergence to adjacent amounts
@@ -284,9 +312,20 @@ where
 
     // Search ended without convergence
     // Get best result from boundaries if we have them
-    let low_result = if low > BigUint::from(0u32) {
+    let low_result = if low.is_zero() {
+        // For amount=0: spot_price is the theoretical best price (both metrics)
+        // For TradePrice, as amount→0, trade_price approaches spot_price
+        Some(TrackedResult {
+            amount_in: BigUint::zero(),
+            amount_out: BigUint::zero(),
+            spot_price,
+            trade_price: spot_price, // Theoretical limit
+            gas: BigUint::zero(),
+            new_state: state.clone_box(),
+        })
+    } else {
         let res = state.get_amount_out(low.clone(), token_in, token_out)?;
-        let spot = res.new_state.spot_price(token_out, token_in)?;
+        let spot = res.new_state.spot_price(token_in, token_out)?;
         let trade = calc_trade_price(
             &low,
             &res.amount,
@@ -302,13 +341,11 @@ where
             gas: res.gas,
             new_state: res.new_state,
         })
-    } else {
-        None
     };
 
     let high_result = if high != low && high > BigUint::from(0u32) {
         let res = state.get_amount_out(high.clone(), token_in, token_out)?;
-        let spot = res.new_state.spot_price(token_out, token_in)?;
+        let spot = res.new_state.spot_price(token_in, token_out)?;
         let trade = calc_trade_price(
             &high,
             &res.amount,

@@ -1,5 +1,4 @@
 mod benchmark;
-mod debug_iteration;
 mod reporting;
 mod snapshot;
 
@@ -43,14 +42,14 @@ pub const TARGET_TOKENS: &[&str] = &[
 ];
 
 pub const TARGET_PROTOCOLS: &[&str] = &[
-    // "uniswap_v2",
-    // "sushiswap_v2",
-    // "pancakeswap_v2",
-    // "uniswap_v3",
-    // "pancakeswap_v3",
-    // "uniswap_v4",
-    // "uniswap_v4_hooks",
-    // "ekubo_v2",
+    "uniswap_v2",
+    "sushiswap_v2",
+    "pancakeswap_v2",
+    "uniswap_v3",
+    "pancakeswap_v3",
+    "uniswap_v4",
+    "uniswap_v4_hooks",
+    "ekubo_v2",
     "vm:balancer_v2",
     "vm:curve",
     "vm:maverick_v2", // TODO: Tycho indexer bug - 0xb40afd... has no code indexed
@@ -118,7 +117,7 @@ enum Commands {
         api_key: Option<String>,
 
         /// Minimum TVL filter (ETH)
-        #[arg(long, default_value = "100")]
+        #[arg(long, default_value = "10")]
         min_tvl: f64,
 
         /// Maximum number of pools per protocol to include in snapshot
@@ -147,13 +146,6 @@ enum Commands {
         /// Path to output JSON file (defaults to same name with .json extension)
         #[arg(long)]
         output: Option<PathBuf>,
-    },
-
-    /// Debug: Compare swap_to_price vs query_supply iteration behavior
-    Debug {
-        /// Path to snapshot file (defaults to latest in examples/benchmark/data)
-        #[arg(long)]
-        snapshot: Option<PathBuf>,
     },
 }
 
@@ -225,7 +217,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Save and print results
             let output_path = reporting::save_results(&results, &output_dir)?;
-            reporting::print_summary(&results);
+            let metric = if query_supply { "TradePrice" } else { "SpotPrice" };
+            reporting::print_summary(&results, metric);
 
             println!("\nResults saved to: {}", output_path.display());
         }
@@ -261,22 +254,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("   Block: {}", loaded_snapshot.metadata.block_number);
             println!("   Components: {}", loaded_snapshot.metadata.total_components);
             println!("   Tokens: {}", loaded_snapshot.tokens.len());
-        }
-
-        Commands::Debug { snapshot } => {
-            // Find snapshot file (use provided or find latest)
-            let snapshot_path = match snapshot {
-                Some(path) => path,
-                None => {
-                    let default_dir = std::path::PathBuf::from("examples/swap_to_price_benchmark/data");
-                    find_latest_snapshot(&default_dir)?
-                }
-            };
-
-            println!("Running debug comparison...");
-            println!("   File: {}", snapshot_path.display());
-
-            debug_iteration::run_debug_comparison(&snapshot_path).await?;
         }
     }
 

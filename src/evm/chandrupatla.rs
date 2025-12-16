@@ -461,7 +461,7 @@ fn run_search(
     }
 
     // Step 3: Get limits (needed for marginal price calculation)
-    let (max_amount_in, max_amount_out) =
+    let (max_amount_in, _max_amount_out) =
         state.get_limits(token_in.address.clone(), token_out.address.clone())?;
 
     // Step 4: Validate target price is below spot price
