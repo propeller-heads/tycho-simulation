@@ -1,4 +1,5 @@
 mod benchmark;
+mod debug_iteration;
 mod reporting;
 mod snapshot;
 
@@ -147,6 +148,13 @@ enum Commands {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+
+    /// Debug: Compare swap_to_price vs query_supply iteration behavior
+    Debug {
+        /// Path to snapshot file (defaults to latest in examples/benchmark/data)
+        #[arg(long)]
+        snapshot: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -253,6 +261,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("   Block: {}", loaded_snapshot.metadata.block_number);
             println!("   Components: {}", loaded_snapshot.metadata.total_components);
             println!("   Tokens: {}", loaded_snapshot.tokens.len());
+        }
+
+        Commands::Debug { snapshot } => {
+            // Find snapshot file (use provided or find latest)
+            let snapshot_path = match snapshot {
+                Some(path) => path,
+                None => {
+                    let default_dir = std::path::PathBuf::from("examples/swap_to_price_benchmark/data");
+                    find_latest_snapshot(&default_dir)?
+                }
+            };
+
+            println!("Running debug comparison...");
+            println!("   File: {}", snapshot_path.display());
+
+            debug_iteration::run_debug_comparison(&snapshot_path).await?;
         }
     }
 

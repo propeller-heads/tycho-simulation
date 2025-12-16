@@ -22,14 +22,25 @@ use tycho_common::{
 pub const SWAP_TO_PRICE_TOLERANCE: f64 = 0.00001; // 0.001%
 pub const SWAP_TO_PRICE_MAX_ITERATIONS: u32 = 30;
 
-/// Which price metric to track during the search
+/// Which price metric to track during the search.
+///
+/// **Critical difference**: These metrics behave oppositely as amount_in increases:
+/// - SpotPrice INCREASES (selling depletes token_in, making it more valuable)
+/// - TradePrice DECREASES (more volume = more slippage = worse average rate)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PriceMetric {
-    /// Track the resulting spot price after the swap
-    /// Used by `swap_to_price` - we want to move the pool's marginal price to target
+    /// Track the resulting spot price after the swap.
+    /// Used by `swap_to_price` - finds amount to move pool's marginal price to target.
+    ///
+    /// **Behavior**: SpotPrice INCREASES as amount_in increases (selling pushes price up).
+    /// Valid targets: `spot_price < target <= limit_spot_price` (positive price movements)
     SpotPrice,
-    /// Track the trade price (execution price = amount_in / amount_out)
-    /// Used by `query_supply` - we want to find max trade at/below target price
+
+    /// Track the trade price (execution price = amount_out / amount_in * decimal_adjustment).
+    /// Used by `query_supply` - finds max trade at or above target price.
+    ///
+    /// **Behavior**: TradePrice DECREASES as amount_in increases (more slippage).
+    /// Valid targets: `limit_trade_price <= target < spot_price` (negative price movements)
     TradePrice,
 }
 

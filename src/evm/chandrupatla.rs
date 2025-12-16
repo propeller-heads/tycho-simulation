@@ -113,12 +113,18 @@ impl ChandrupatlaConfig {
 // Types
 // =============================================================================
 
-/// Which price metric to track during the search
+/// Which price metric to track during the search.
+///
+/// **Critical difference**: These metrics behave oppositely as amount_in increases:
+/// - SpotPrice INCREASES (selling depletes token_in, making it more valuable)
+/// - TradePrice DECREASES (more volume = more slippage = worse average rate)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PriceMetric {
-    /// Track the resulting spot price after the swap
+    /// Track the resulting spot price after the swap.
+    /// **Behavior**: INCREASES as amount_in increases. Valid targets: target > spot_price
     SpotPrice,
-    /// Track the trade price (execution price = amount_in / amount_out)
+    /// Track the trade price (execution price = amount_out / amount_in * decimal_adj).
+    /// **Behavior**: DECREASES as amount_in increases. Valid targets: target < spot_price
     TradePrice,
 }
 
