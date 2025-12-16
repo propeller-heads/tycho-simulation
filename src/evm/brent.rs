@@ -449,7 +449,10 @@ fn run_search(
     let (max_amount_in, _) =
         state.get_limits(token_in.address.clone(), token_out.address.clone())?;
 
-    // Step 4: Validate target price is above spot
+    // Step 4: Validate target price is above spot price
+    // For both metrics, spot_price is used as the theoretical minimum:
+    // - SpotPrice: target must be above current spot
+    // - TradePrice: spot_price is a good approximation of trade price of 0 amount
     if target_price < spot_price {
         return Err(BrentSearchError::TargetBelowSpot {
             target: target_price,
@@ -457,25 +460,33 @@ fn run_search(
         });
     }
 
-    // Step 5: Calculate limit price (spot price at max trade)
+    // Step 5: Calculate limit price (metric-specific)
     let limit_result = state.get_amount_out(max_amount_in.clone(), token_in, token_out)?;
-    let limit_spot_price = limit_result.new_state.spot_price(token_out, token_in)?;
+
+    let limit_price = match search_config.metric {
+        PriceMetric::SpotPrice => limit_result.new_state.spot_price(token_out, token_in)?,
+        PriceMetric::TradePrice => {
+            let max_in_f64 = max_amount_in.to_f64().unwrap_or(f64::MAX);
+            let max_out_f64 = limit_result.amount.to_f64().unwrap_or(0.0);
+            calculate_trade_price(max_in_f64, max_out_f64, token_in.decimals, token_out.decimals)
+        }
+    };
 
     // Step 6: Validate limit price
-    if limit_spot_price <= spot_price {
+    if limit_price <= spot_price {
         return Err(BrentSearchError::TargetAboveLimit {
             target: target_price,
             spot: spot_price,
-            limit: limit_spot_price,
+            limit: limit_price,
         });
     }
 
     // Step 7: Validate target is reachable
-    if target_price > limit_spot_price {
+    if target_price > limit_price {
         return Err(BrentSearchError::TargetAboveLimit {
             target: target_price,
             spot: spot_price,
-            limit: limit_spot_price,
+            limit: limit_price,
         });
     }
 
@@ -483,13 +494,14 @@ fn run_search(
     let mut low = BigUint::zero();
     let mut low_price = spot_price;
     let mut high = max_amount_in.clone();
-    let mut high_price = limit_spot_price;
+    let mut high_price = limit_price;
     let mut history = RecentHistory::new();
 
     // Add initial bounds to history
+    // For amount=0, use spot_price as approximation (once low moves, we get real trade prices)
     history.push(0.0, spot_price);
     if let Some(high_f64) = high.to_f64() {
-        history.push(high_f64, limit_spot_price);
+        history.push(high_f64, limit_price);
     }
 
     // Track best result
@@ -572,6 +584,18 @@ fn run_search(
 
             for boundary_amount in [&low, &high] {
                 if boundary_amount.is_zero() {
+                    // For TradePrice metric, amount=0 means target is at or below spot price.
+                    // Return spot_price as the theoretical best trade price.
+                    if search_config.metric == PriceMetric::TradePrice {
+                        return Ok(SwapToPriceResult {
+                            amount_in: BigUint::zero(),
+                            amount_out: BigUint::zero(),
+                            actual_price: spot_price,
+                            gas: BigUint::zero(),
+                            new_state: state.clone_box(),
+                            iterations: iteration + 1,
+                        });
+                    }
                     continue;
                 }
                 let result = state.get_amount_out(boundary_amount.clone(), token_in, token_out)?;

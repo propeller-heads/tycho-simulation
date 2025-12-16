@@ -1,4 +1,6 @@
 use crate::snapshot;
+use num_bigint::BigUint;
+use num_traits::{One, ToPrimitive};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Instant;
@@ -13,6 +15,20 @@ use tycho_simulation::swap_to_price::{
     },
     within_tolerance, ProtocolSimExt, SWAP_TO_PRICE_MAX_ITERATIONS,
 };
+
+/// Calculate trade price (execution price) normalized by token decimals.
+fn calculate_trade_price(
+    amount_in: f64,
+    amount_out: f64,
+    decimals_in: u32,
+    decimals_out: u32,
+) -> f64 {
+    if amount_out <= 0.0 {
+        return f64::MAX;
+    }
+    let decimal_adjustment = 10_f64.powi(decimals_out as i32 - decimals_in as i32);
+    (amount_in / amount_out) * decimal_adjustment
+}
 
 // Price movements to test (as multipliers)
 // Combined range covering both regular and stable pair scenarios
@@ -213,34 +229,59 @@ pub async fn run_benchmark(
                     //     println!();
                     // }
 
-                    // Calculate limit price for this direction
-                    let (limit_price, max_amount_in_debug) = match state.get_limits(token_in.address.clone(), token_out.address.clone()) {
-                        Ok((max_amount_in, _)) => {
-                            let limit = state.get_amount_out(max_amount_in.clone(), token_in, token_out)
-                                .ok()
-                                .and_then(|result| result.new_state.spot_price(token_out, token_in).ok());
-                            (limit, Some(max_amount_in))
+                    // Calculate bounds for this direction (metric-specific)
+                    let (lower_bound, upper_bound, max_amount_in_debug) = match state.get_limits(token_in.address.clone(), token_out.address.clone()) {
+                        Ok((max_amount_in, _max_amount_out)) => {
+                            let limit_result = state.get_amount_out(max_amount_in.clone(), token_in, token_out).ok();
+
+                            if use_query_supply {
+                                // TradePrice mode: bounds are [spot_price, limit_trade_price]
+                                let limit_trade = limit_result.map(|result| {
+                                    let max_in_f64 = max_amount_in.to_f64().unwrap_or(f64::MAX);
+                                    let max_out_f64 = result.amount.to_f64().unwrap_or(0.0);
+                                    calculate_trade_price(
+                                        max_in_f64,
+                                        max_out_f64,
+                                        token_in.decimals,
+                                        token_out.decimals,
+                                    )
+                                });
+
+                                (Some(spot_price), limit_trade, Some(max_amount_in))
+                            } else {
+                                // SpotPrice mode: bounds are [spot_price, limit_spot_price]
+                                let limit_spot = limit_result
+                                    .and_then(|result| result.new_state.spot_price(token_out, token_in).ok());
+                                (Some(spot_price), limit_spot, Some(max_amount_in))
+                            }
                         }
                         Err(e) => {
                             println!(
                                 "  ⚠ get_limits failed for {} -> {}: {:?}",
                                 token_in.symbol, token_out.symbol, e
                             );
-                            (None, None)
+                            (None, None, None)
                         }
                     };
 
-                    // Filter price movements to only include those within the limit
-                    let valid_movements: Vec<f64> = if let Some(limit) = limit_price {
-                        PRICE_MOVEMENTS
-                            .iter()
-                            .copied()
-                            .filter(|&multiplier| spot_price * multiplier <= limit)
-                            .collect()
-                    } else {
-                        // If we can't determine limit, skip all movements
-                        Vec::new()
+                    // Filter price movements to only include those within valid bounds
+                    let valid_movements: Vec<f64> = match (lower_bound, upper_bound) {
+                        (Some(lower), Some(upper)) => {
+                            PRICE_MOVEMENTS
+                                .iter()
+                                .copied()
+                                .filter(|&multiplier| {
+                                    let target = spot_price * multiplier;
+                                    target >= lower && target <= upper
+                                })
+                                .collect()
+                        }
+                        _ => {
+                            // If we can't determine bounds, skip all movements
+                            Vec::new()
+                        }
                     };
+                    let limit_price = upper_bound; // For display
 
                     if valid_movements.is_empty() {
                         let limit_info = if let Some(limit) = limit_price {

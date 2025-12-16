@@ -440,9 +440,10 @@ fn run_search(
     // Step 1: Get spot price
     let spot_price = state.spot_price(token_out, token_in)?;
 
-    // Step 2: Check if we're already at target (for spot price metric)
-    if search_config.metric == PriceMetric::SpotPrice &&
-        within_tolerance(spot_price, target_price, config.tolerance)
+    // Step 2: Check if we're already at target (for spot price metric only)
+    // For TradePrice, we need marginal_price which requires limits, so we check later
+    if search_config.metric == PriceMetric::SpotPrice
+        && within_tolerance(spot_price, target_price, config.tolerance)
     {
         let minimal_result = state.get_amount_out(BigUint::one(), token_in, token_out)?;
         return Ok(SwapToPriceResult {
@@ -455,7 +456,14 @@ fn run_search(
         });
     }
 
-    // Step 3: Validate target price is above spot
+    // Step 3: Get limits (needed for marginal price calculation)
+    let (max_amount_in, max_amount_out) =
+        state.get_limits(token_in.address.clone(), token_out.address.clone())?;
+
+    // Step 4: Validate target price is above spot price
+    // For both metrics, spot_price is used as the theoretical minimum:
+    // - SpotPrice: target must be above current spot
+    // - TradePrice: spot_price is a good approximation of the best trade price (no slippage)
     if target_price < spot_price {
         return Err(ChandrupatlaSearchError::TargetBelowSpot {
             target: target_price,
@@ -463,18 +471,16 @@ fn run_search(
         });
     }
 
-    // Step 4: Get limits
-    let (max_amount_in, max_amount_out) =
-        state.get_limits(token_in.address.clone(), token_out.address.clone())?;
-
     // Step 5: Calculate limit price (price at max trade)
+    let limit_result = state.get_amount_out(max_amount_in.clone(), token_in, token_out)?;
+
     let limit_price = match search_config.metric {
         PriceMetric::TradePrice => {
-            if max_amount_out.is_zero() {
+            if limit_result.amount.is_zero() {
                 return Err(ChandrupatlaSearchError::ZeroOutputAmountAtLimit);
             }
             let max_in_f64 = max_amount_in.to_f64().unwrap_or(f64::MAX);
-            let max_out_f64 = max_amount_out.to_f64().unwrap_or(f64::MAX);
+            let max_out_f64 = limit_result.amount.to_f64().unwrap_or(f64::MAX);
             calculate_trade_price(
                 max_in_f64,
                 max_out_f64,
@@ -483,18 +489,19 @@ fn run_search(
             )
         }
         PriceMetric::SpotPrice => {
-            // Spot price after max trade requires simulation
-            let limit_result = state.get_amount_out(max_amount_in.clone(), token_in, token_out)?;
             limit_result.new_state.spot_price(token_out, token_in)?
         }
     };
 
-    // Step 6: Validate limit price
+    // Step 5: Validate limit price
     if limit_price <= spot_price {
-        return Err(ChandrupatlaSearchError::LimitBelowSpot { limit: limit_price, spot: spot_price });
+        return Err(ChandrupatlaSearchError::LimitBelowSpot {
+            limit: limit_price,
+            spot: spot_price,
+        });
     }
 
-    // Step 7: Validate target is reachable
+    // Step 6: Validate target is reachable
     if target_price > limit_price {
         return Err(ChandrupatlaSearchError::TargetAboveLimit {
             target: target_price,
@@ -503,24 +510,25 @@ fn run_search(
         });
     }
 
-    // Step 8: Initialize Chandrupatla state
+    // Step 7: Initialize Chandrupatla state
     // We frame this as root-finding: f(x) = price(x) - target_price = 0
     //
     // Initial bracket: [0, max_amount_in]
     // f(0) = spot_price - target_price < 0  (spot is below target)
     // f(max) = limit_price - target_price > 0  (limit is above target)
     //
+    // For TradePrice metric, spot_price at amount=0 is a good approximation.
+    // Once low bound moves away from 0, we'll have actual trade prices.
+    //
     // Following TensorFlow/SciPy naming:
     // x1, x2 bracket the root (f1 and f2 have opposite signs)
     // x3 is the previous contrapoint
 
     let x1 = 0.0_f64;
-    let f1 = spot_price - target_price; // negative
+    let f1 = spot_price - target_price; // negative (spot < target)
 
-    let x2 = max_amount_in
-        .to_f64()
-        .unwrap_or(f64::MAX);
-    let f2 = limit_price - target_price; // positive
+    let x2 = max_amount_in.to_f64().unwrap_or(f64::MAX);
+    let f2 = limit_price - target_price; // positive (limit > target)
 
     // Initially x3 = x1 (no previous point yet)
     let mut chandru_state = ChandrupatlaState { x1, f1, x2, f2, x3: x1, f3: f1 };
@@ -537,7 +545,7 @@ fn run_search(
     // Pre-allocate constant for bounds checking
     let one = BigUint::one();
 
-    // Step 9: Main Chandrupatla loop
+    // Step 8: Main Chandrupatla loop
     for iteration in 0..config.max_iterations {
         // Compute next point using Chandrupatla's method
         let t = chandrupatla_next_t(&chandru_state, config);
@@ -569,6 +577,18 @@ fn run_search(
 
             for boundary_amount in [&low, &high] {
                 if boundary_amount.is_zero() {
+                    // For TradePrice metric, amount=0 means target is at or below spot price.
+                    // Return spot_price as the theoretical best trade price.
+                    if search_config.metric == PriceMetric::TradePrice {
+                        return Ok(SwapToPriceResult {
+                            amount_in: BigUint::zero(),
+                            amount_out: BigUint::zero(),
+                            actual_price: spot_price,
+                            gas: BigUint::zero(),
+                            new_state: state.clone_box(),
+                            iterations: iteration + 1,
+                        });
+                    }
                     continue;
                 }
                 let (price, _, amount_out, gas, new_state) = evaluate_objective(

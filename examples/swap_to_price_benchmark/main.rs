@@ -136,6 +136,17 @@ enum Commands {
         #[arg(long, default_value = "false")]
         query_supply: bool,
     },
+
+    /// Convert a binary snapshot to JSON format
+    ToJson {
+        /// Path to input snapshot file (defaults to latest in examples/benchmark/data)
+        #[arg(long)]
+        snapshot: Option<PathBuf>,
+
+        /// Path to output JSON file (defaults to same name with .json extension)
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -209,6 +220,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             reporting::print_summary(&results);
 
             println!("\nResults saved to: {}", output_path.display());
+        }
+
+        Commands::ToJson { snapshot, output } => {
+            // Find snapshot file (use provided or find latest)
+            let snapshot_path = match snapshot {
+                Some(path) => path,
+                None => {
+                    let default_dir = std::path::PathBuf::from("examples/swap_to_price_benchmark/data");
+                    find_latest_snapshot(&default_dir)?
+                }
+            };
+
+            println!("Converting snapshot to JSON...");
+            println!("   Input: {}", snapshot_path.display());
+
+            // Load the binary snapshot
+            let loaded_snapshot = snapshot::load_snapshot(&snapshot_path)?;
+
+            // Determine output path
+            let output_path = match output {
+                Some(path) => path,
+                None => snapshot_path.with_extension("json"),
+            };
+
+            // Write to JSON
+            let json_file = std::fs::File::create(&output_path)?;
+            serde_json::to_writer_pretty(json_file, &loaded_snapshot)?;
+
+            println!("\n✅ Snapshot converted to JSON successfully!");
+            println!("   Output: {}", output_path.display());
+            println!("   Block: {}", loaded_snapshot.metadata.block_number);
+            println!("   Components: {}", loaded_snapshot.metadata.total_components);
+            println!("   Tokens: {}", loaded_snapshot.tokens.len());
         }
     }
 
