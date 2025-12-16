@@ -24,10 +24,10 @@ const PRICE_MOVEMENTS: &[f64] = &[
     1.001,   // +0.1% = +10 bps
     1.005,   // +0.5% = +50 bps
     1.01,    // +1% = +100 bps
-    1.05,    // +5% = +500 bps
-    1.1,     // +10% = +1000 bps
-    1.5,     // +50% = +5000 bps
-    2.0,     // +100% = +10000 bps
+    // 1.05,    // +5% = +500 bps
+    // 1.1,     // +10% = +1000 bps
+    // 1.5,     // +50% = +5000 bps
+    // 2.0,     // +100% = +10000 bps
 ];
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -75,11 +75,11 @@ pub async fn run_benchmark(
         let strategies: Vec<(&str, Box<dyn ProtocolSimExt>)> = vec![
             // Brent variants - testing different acceptance criteria
             ("evm_brent", Box::new(EVMBrentStrategy::default())),  // EVM Brent (classic Brent-Dekker)
-            ("brent_1%_bracket", Box::new(BrentStrategy)),           // 1% bracket only
-            ("chandrupatla", Box::new(ChandrupatlaStrategy::default())), // Chandrupatla's method (archived)
             ("evm_chandru", Box::new(EVMChandrupatlaStrategy::default())), // EVM Chandrupatla (TF/SciPy-based)
-            ("blended_iqi", Box::new(BlendedIqiSecantStrategy)),   // Blended IQI + secant
-            ("brent_step_1/2", Box::new(BrentOriginalStrategy)),  // half prev step only (classical)
+            // ("brent_1%_bracket", Box::new(BrentStrategy)),           // 1% bracket only
+            // ("chandrupatla", Box::new(ChandrupatlaStrategy::default())), // Chandrupatla's method (archived)
+            // ("blended_iqi", Box::new(BlendedIqiSecantStrategy)),   // Blended IQI + secant
+            // ("brent_step_1/2", Box::new(BrentOriginalStrategy)),  // half prev step only (classical)
             // ("brkt_AND_step", Box::new(BrentAndStrategy)),  // both criteria (AND)
             // ("brkt_OR_step", Box::new(BrentOrStrategy)),    // either criterion (OR)
             // Other strategies for comparison

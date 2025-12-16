@@ -39,7 +39,7 @@
 //! 2. The discrete precision limit is reached: `high - low <= 1` (BigUint)
 
 use num_bigint::BigUint;
-use num_traits::{FromPrimitive, ToPrimitive};
+use num_traits::{FromPrimitive, One, ToPrimitive, Zero};
 use tycho_common::{
     models::token::Token,
     simulation::{errors::SimulationError, protocol_sim::ProtocolSim},
@@ -78,7 +78,7 @@ impl Default for BrentConfig {
     fn default() -> Self {
         Self {
             tolerance: 0.00001,
-            max_iterations: 100,
+            max_iterations: 30,
             min_divisor: 1e-12,
             iqi_threshold: 0.01,
         }
@@ -125,7 +125,7 @@ impl BrentConfig {
 enum PriceMetric {
     /// Track the resulting spot price after the swap
     SpotPrice,
-    /// Track the trade price (execution price = amount_in / amount_out)
+    /// Track the trade price (execution price = amount_in / amount_out scaled by decimals)
     TradePrice,
 }
 
@@ -142,6 +142,22 @@ impl SearchConfig {
     fn query_supply() -> Self {
         Self { metric: PriceMetric::TradePrice }
     }
+}
+
+/// Calculate trade price (execution price) normalized by token decimals.
+///
+/// Trade price = (amount_in / amount_out) * 10^(decimals_out - decimals_in)
+fn calculate_trade_price(
+    amount_in: f64,
+    amount_out: f64,
+    decimals_in: u32,
+    decimals_out: u32,
+) -> f64 {
+    if amount_out <= 0.0 {
+        return f64::MAX;
+    }
+    let decimal_adjustment = 10_f64.powi(decimals_out as i32 - decimals_in as i32);
+    (amount_in / amount_out) * decimal_adjustment
 }
 
 /// A point in the search history (amount, price)
@@ -418,12 +434,12 @@ fn run_search(
     if search_config.metric == PriceMetric::SpotPrice
         && within_tolerance(spot_price, target_price, config.tolerance)
     {
-        let minimal_result = state.get_amount_out(BigUint::from(1u32), token_in, token_out)?;
+        let minimal_result = state.get_amount_out(BigUint::one(), token_in, token_out)?;
         return Ok(SwapToPriceResult {
-            amount_in: BigUint::from(0u32),
-            amount_out: BigUint::from(0u32),
+            amount_in: BigUint::zero(),
+            amount_out: BigUint::zero(),
             actual_price: spot_price,
-            gas: BigUint::from(0u32),
+            gas: BigUint::zero(),
             new_state: minimal_result.new_state,
             iterations: 0,
         });
@@ -464,7 +480,7 @@ fn run_search(
     }
 
     // Step 8: Initialize search state
-    let mut low = BigUint::from(0u32);
+    let mut low = BigUint::zero();
     let mut low_price = spot_price;
     let mut high = max_amount_in.clone();
     let mut high_price = limit_spot_price;
@@ -493,12 +509,13 @@ fn run_search(
             PriceMetric::SpotPrice => result.new_state.spot_price(token_out, token_in)?,
             PriceMetric::TradePrice => {
                 let amount_in_f64 = next_amount.to_f64().unwrap_or(0.0);
-                let amount_out_f64 = result.amount.to_f64().unwrap_or(1.0);
-                if amount_out_f64 > 0.0 {
-                    amount_in_f64 / amount_out_f64
-                } else {
-                    f64::MAX
-                }
+                let amount_out_f64 = result.amount.to_f64().unwrap_or(0.0);
+                calculate_trade_price(
+                    amount_in_f64,
+                    amount_out_f64,
+                    token_in.decimals,
+                    token_out.decimals,
+                )
             }
         };
 
@@ -548,7 +565,65 @@ fn run_search(
         let _ = (low_price, high_price);
 
         // Check if we've converged to adjacent integers (precision limit)
-        if &high - &low <= BigUint::from(1u32) {
+        // Evaluate both boundaries to find if either is within tolerance
+        if &high - &low <= BigUint::one() {
+            let mut best_boundary: Option<SwapToPriceResult> = None;
+            let mut best_boundary_error = f64::MAX;
+
+            for boundary_amount in [&low, &high] {
+                if boundary_amount.is_zero() {
+                    continue;
+                }
+                let result = state.get_amount_out(boundary_amount.clone(), token_in, token_out)?;
+                let price = match search_config.metric {
+                    PriceMetric::SpotPrice => result.new_state.spot_price(token_out, token_in)?,
+                    PriceMetric::TradePrice => {
+                        let amount_in_f64 = boundary_amount.to_f64().unwrap_or(0.0);
+                        let amount_out_f64 = result.amount.to_f64().unwrap_or(0.0);
+                        calculate_trade_price(
+                            amount_in_f64,
+                            amount_out_f64,
+                            token_in.decimals,
+                            token_out.decimals,
+                        )
+                    }
+                };
+
+                // Check if this boundary is within tolerance - return immediately
+                if within_tolerance(price, target_price, config.tolerance) {
+                    return Ok(SwapToPriceResult {
+                        amount_in: boundary_amount.clone(),
+                        amount_out: result.amount,
+                        actual_price: price,
+                        gas: result.gas,
+                        new_state: result.new_state,
+                        iterations: iteration + 1,
+                    });
+                }
+
+                // Track the best boundary (closest to target without exceeding)
+                let error = if price <= target_price {
+                    (target_price - price) / target_price
+                } else {
+                    (price - target_price) / target_price + 1000.0
+                };
+                if error < best_boundary_error {
+                    best_boundary_error = error;
+                    best_boundary = Some(SwapToPriceResult {
+                        amount_in: boundary_amount.clone(),
+                        amount_out: result.amount,
+                        actual_price: price,
+                        gas: result.gas,
+                        new_state: result.new_state,
+                        iterations: iteration + 1,
+                    });
+                }
+            }
+
+            // Return the best boundary result, or the tracked best_result
+            if let Some(result) = best_boundary {
+                return Ok(result);
+            }
             if let Some(best) = best_result {
                 return Ok(best);
             }
@@ -557,10 +632,10 @@ fn run_search(
 
     // Return convergence failure with best result info
     let best = best_result.unwrap_or(SwapToPriceResult {
-        amount_in: BigUint::from(0u32),
-        amount_out: BigUint::from(0u32),
+        amount_in: BigUint::zero(),
+        amount_out: BigUint::zero(),
         actual_price: spot_price,
-        gas: BigUint::from(0u32),
+        gas: BigUint::zero(),
         new_state: state.clone_box(),
         iterations: config.max_iterations,
     });

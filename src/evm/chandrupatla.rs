@@ -80,7 +80,7 @@ pub struct ChandrupatlaConfig {
 
 impl Default for ChandrupatlaConfig {
     fn default() -> Self {
-        Self { tolerance: 0.00001, max_iterations: 100, min_divisor: 1e-12 }
+        Self { tolerance: 0.00001, max_iterations: 30, min_divisor: 1e-12 }
     }
 }
 
@@ -561,8 +561,62 @@ fn run_search(
             amount_new
         };
 
-        // Check if we've hit precision limit - re-evaluate best amount if needed
-        if (&high - &low).is_one() {
+        // Check if we've hit precision limit - check both boundaries for convergence
+        if &high - &low <= one {
+            // Evaluate both low and high to find if either is within tolerance
+            let mut best_boundary: Option<SwapToPriceResult> = None;
+            let mut best_boundary_error = f64::MAX;
+
+            for boundary_amount in [&low, &high] {
+                if boundary_amount.is_zero() {
+                    continue;
+                }
+                let (price, _, amount_out, gas, new_state) = evaluate_objective(
+                    state,
+                    boundary_amount,
+                    token_in,
+                    token_out,
+                    target_price,
+                    &search_config,
+                )?;
+
+                // Check if this boundary is within tolerance - return immediately
+                if within_tolerance(price, target_price, config.tolerance) {
+                    return Ok(SwapToPriceResult {
+                        amount_in: boundary_amount.clone(),
+                        amount_out,
+                        actual_price: price,
+                        gas,
+                        new_state,
+                        iterations: iteration + 1,
+                    });
+                }
+
+                // Track the best boundary (closest to target without exceeding)
+                let error = if price <= target_price {
+                    (target_price - price) / target_price
+                } else {
+                    (price - target_price) / target_price + 1000.0
+                };
+                if error < best_boundary_error {
+                    best_boundary_error = error;
+                    best_boundary = Some(SwapToPriceResult {
+                        amount_in: boundary_amount.clone(),
+                        amount_out,
+                        actual_price: price,
+                        gas,
+                        new_state,
+                        iterations: iteration + 1,
+                    });
+                }
+            }
+
+            // Return the best boundary result
+            if let Some(result) = best_boundary {
+                return Ok(result);
+            }
+
+            // Fallback to best_amount if no boundary was valid (shouldn't happen)
             let final_amount = best_amount.unwrap_or(amount_new.clone());
             let (price, _, amount_out, gas, new_state) = evaluate_objective(
                 state,

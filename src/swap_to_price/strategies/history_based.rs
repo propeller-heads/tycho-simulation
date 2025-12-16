@@ -79,14 +79,20 @@ impl SearchConfig {
     }
 }
 
-/// Calculate trade price from amounts
-fn calc_trade_price(amount_in: &BigUint, amount_out: &BigUint) -> Option<f64> {
+/// Calculate trade price from amounts with decimal normalization
+fn calc_trade_price(
+    amount_in: &BigUint,
+    amount_out: &BigUint,
+    decimals_in: u32,
+    decimals_out: u32,
+) -> Option<f64> {
     let in_f64 = amount_in.to_f64()?;
     let out_f64 = amount_out.to_f64()?;
-    if out_f64 == 0.0 {
+    if out_f64 <= 0.0 {
         return None;
     }
-    Some(in_f64 / out_f64)
+    let decimal_adjustment = 10_f64.powi(decimals_out as i32 - decimals_in as i32);
+    Some((in_f64 / out_f64) * decimal_adjustment)
 }
 
 /// Tracked result during search
@@ -207,7 +213,13 @@ where
         // Calculate result at mid
         let result = state.get_amount_out(mid.clone(), token_in, token_out)?;
         let new_spot_price = result.new_state.spot_price(token_out, token_in)?;
-        let trade_price = calc_trade_price(&mid, &result.amount).unwrap_or(f64::MAX);
+        let trade_price = calc_trade_price(
+            &mid,
+            &result.amount,
+            token_in.decimals,
+            token_out.decimals,
+        )
+        .unwrap_or(f64::MAX);
 
         // Get the price we're tracking based on metric
         let tracked_price = match config.metric {
@@ -275,7 +287,13 @@ where
     let low_result = if low > BigUint::from(0u32) {
         let res = state.get_amount_out(low.clone(), token_in, token_out)?;
         let spot = res.new_state.spot_price(token_out, token_in)?;
-        let trade = calc_trade_price(&low, &res.amount).unwrap_or(f64::MAX);
+        let trade = calc_trade_price(
+            &low,
+            &res.amount,
+            token_in.decimals,
+            token_out.decimals,
+        )
+        .unwrap_or(f64::MAX);
         Some(TrackedResult {
             amount_in: low.clone(),
             amount_out: res.amount.clone(),
@@ -291,7 +309,13 @@ where
     let high_result = if high != low && high > BigUint::from(0u32) {
         let res = state.get_amount_out(high.clone(), token_in, token_out)?;
         let spot = res.new_state.spot_price(token_out, token_in)?;
-        let trade = calc_trade_price(&high, &res.amount).unwrap_or(f64::MAX);
+        let trade = calc_trade_price(
+            &high,
+            &res.amount,
+            token_in.decimals,
+            token_out.decimals,
+        )
+        .unwrap_or(f64::MAX);
         Some(TrackedResult {
             amount_in: high.clone(),
             amount_out: res.amount.clone(),
@@ -1371,6 +1395,195 @@ impl ProtocolSimExt for EVMBrentStrategy {
             amount_in: result.amount_in,
             amount_out: result.amount_out,
             trade_price: result.trade_price,
+            gas: result.gas,
+            new_state: result.new_state,
+            iterations: result.iterations,
+        })
+    }
+}
+
+// =============================================================================
+// Strategy 5: Chandrupatla (history-based with correct criterion)
+// =============================================================================
+
+/// Chandrupatla's method using the correct xi/phi criterion.
+///
+/// This strategy implements Chandrupatla's 1997 algorithm criterion for deciding
+/// between Inverse Quadratic Interpolation (IQI) and bisection, using a
+/// history-based approach compatible with the `run_search` infrastructure.
+///
+/// ## Criterion
+///
+/// Uses the correct Chandrupatla criterion from TensorFlow Probability and SciPy:
+/// ```text
+/// Use IQI when: phi² < xi AND (1-phi)² < (1-xi)
+/// Equivalently: (1 - √(1-ξ)) < φ < √ξ
+/// ```
+///
+/// Where:
+/// - xi = position ratio in the bracket
+/// - phi = function value ratio
+///
+/// ## References
+///
+/// - Chandrupatla, T.R. (1997). "A new hybrid quadratic/bisection algorithm"
+/// - TensorFlow Probability: root_search.py
+/// - SciPy: _chandrupatla.py
+pub struct ChandrupatlaStrategy;
+
+impl ChandrupatlaStrategy {
+    /// Decide whether to use IQI based on Chandrupatla's criterion.
+    ///
+    /// This implements the criterion from Chandrupatla (1997):
+    /// ```text
+    /// Use IQI when: phi² < xi AND (1-phi)² < (1-xi)
+    /// ```
+    fn should_use_iqi(xi: f64, phi: f64) -> bool {
+        if !xi.is_finite() || !phi.is_finite() {
+            return false;
+        }
+        if xi <= 0.0 || xi >= 1.0 {
+            return false;
+        }
+        if phi <= 0.0 || phi >= 1.0 {
+            return false;
+        }
+        phi * phi < xi && (1.0 - phi) * (1.0 - phi) < (1.0 - xi)
+    }
+
+    /// Compute xi and phi from history points for Chandrupatla's criterion
+    fn compute_xi_phi(history: &[HistoryPoint]) -> Option<(f64, f64)> {
+        if history.len() < 3 {
+            return None;
+        }
+
+        let n = history.len();
+        let p1 = &history[n - 3];
+        let p2 = &history[n - 2];
+        let p3 = &history[n - 1];
+
+        // Compute position and function value ratios
+        // xi = (x1 - x2) / (x3 - x2)
+        // phi = (f1 - f2) / (f3 - f2)
+        let dx = p3.amount_f64 - p2.amount_f64;
+        let df = p3.price - p2.price;
+
+        if dx.abs() < MIN_DIVISOR || df.abs() < MIN_DIVISOR {
+            return None;
+        }
+
+        let xi = (p1.amount_f64 - p2.amount_f64) / dx;
+        let phi = (p1.price - p2.price) / df;
+
+        Some((xi, phi))
+    }
+
+    fn next_amount(
+        history: &[HistoryPoint],
+        low: &BigUint,
+        _low_price: f64,
+        high: &BigUint,
+        _high_price: f64,
+        target: f64,
+    ) -> BigUint {
+        let fallback = geometric_mean(low, high);
+        let low_f64 = low.to_f64().unwrap_or(0.0);
+        let high_f64 = high.to_f64().unwrap_or(f64::MAX);
+
+        // Check Chandrupatla's criterion
+        let use_iqi = if let Some((xi, phi)) = Self::compute_xi_phi(history) {
+            Self::should_use_iqi(xi, phi)
+        } else {
+            false
+        };
+
+        // Try IQI if criterion is satisfied and we have enough points
+        if use_iqi && history.len() >= 3 {
+            let n = history.len();
+            let p1 = &history[n - 3];
+            let p2 = &history[n - 2];
+            let p3 = &history[n - 1];
+
+            if let Some(estimate) = IqiStrategy::iqi(
+                p1.amount_f64,
+                p1.price,
+                p2.amount_f64,
+                p2.price,
+                p3.amount_f64,
+                p3.price,
+                target,
+            ) {
+                if estimate > low_f64 && estimate < high_f64 {
+                    if let Some(amount) = BigUint::from_f64(estimate) {
+                        if let Some(safe) = safe_next_amount(amount, low, high) {
+                            return safe;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try secant as fallback
+        if history.len() >= 2 {
+            let n = history.len();
+            let p1 = &history[n - 2];
+            let p2 = &history[n - 1];
+
+            let dp = p2.price - p1.price;
+            if dp.abs() > MIN_DIVISOR {
+                let estimate =
+                    p1.amount_f64 + (target - p1.price) * (p2.amount_f64 - p1.amount_f64) / dp;
+                if estimate.is_finite() && estimate > low_f64 && estimate < high_f64 {
+                    if let Some(amount) = BigUint::from_f64(estimate) {
+                        if let Some(safe) = safe_next_amount(amount, low, high) {
+                            return safe;
+                        }
+                    }
+                }
+            }
+        }
+
+        fallback
+    }
+}
+
+impl ProtocolSimExt for ChandrupatlaStrategy {
+    fn swap_to_price(
+        &self,
+        state: &dyn ProtocolSim,
+        target_price: f64,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<SwapToPriceResult, SwapToPriceError> {
+        run_search(
+            state,
+            target_price,
+            token_in,
+            token_out,
+            SearchConfig::swap_to_price(),
+            Self::next_amount,
+        )
+    }
+
+    fn query_supply(
+        &self,
+        state: &dyn ProtocolSim,
+        target_price: f64,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<QuerySupplyResult, SwapToPriceError> {
+        let result = run_search(
+            state,
+            target_price,
+            token_in,
+            token_out,
+            SearchConfig::query_supply(),
+            Self::next_amount,
+        )?;
+        Ok(QuerySupplyResult {
+            amount_in: result.amount_in,
+            amount_out: result.amount_out,
+            trade_price: result.actual_price,
             gas: result.gas,
             new_state: result.new_state,
             iterations: result.iterations,
