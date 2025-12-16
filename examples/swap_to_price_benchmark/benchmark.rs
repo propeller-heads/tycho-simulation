@@ -16,34 +16,33 @@ use tycho_simulation::swap_to_price::{
     within_tolerance, ProtocolSimExt, SWAP_TO_PRICE_MAX_ITERATIONS,
 };
 
-/// Calculate trade price (execution price) normalized by token decimals.
+/// Calculate trade price in token_out per token_in units.
 fn calculate_trade_price(
     amount_in: f64,
     amount_out: f64,
     decimals_in: u32,
     decimals_out: u32,
 ) -> f64 {
-    if amount_out <= 0.0 {
+    if amount_in <= 0.0 {
         return f64::MAX;
     }
-    let decimal_adjustment = 10_f64.powi(decimals_out as i32 - decimals_in as i32);
-    (amount_in / amount_out) * decimal_adjustment
+    let decimal_adjustment = 10_f64.powi(decimals_in as i32 - decimals_out as i32);
+    (amount_out / amount_in) * decimal_adjustment
 }
 
 // Price movements to test (as multipliers)
-// Combined range covering both regular and stable pair scenarios
-// DEBUG: Just +1bps for now
+// Prices DECREASE with amount (token_out/token_in units), so targets are BELOW spot.
+// These are negative movements (multiplier < 1).
 const PRICE_MOVEMENTS: &[f64] = &[
-    1.00005, // +0.005% = +0.5 bps
-    1.0001,  // +0.01% = +1 bps
-    1.0005,  // +0.05% = +5 bps
-    1.001,   // +0.1% = +10 bps
-    1.005,   // +0.5% = +50 bps
-    1.01,    // +1% = +100 bps
-    // 1.05,    // +5% = +500 bps
-    // 1.1,     // +10% = +1000 bps
-    // 1.5,     // +50% = +5000 bps
-    // 2.0,     // +100% = +10000 bps
+    0.99995, // -0.005% = -0.5 bps
+    0.9999,  // -0.01% = -1 bps
+    0.9995,  // -0.05% = -5 bps
+    0.999,   // -0.1% = -10 bps
+    0.995,   // -0.5% = -50 bps
+    0.99,    // -1% = -100 bps
+    // 0.95,    // -5% = -500 bps
+    // 0.9,     // -10% = -1000 bps
+    // 0.5,     // -50% = -5000 bps
 ];
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -145,8 +144,8 @@ pub async fn run_benchmark(
                     let token_in = &tokens[i];
                     let token_out = &tokens[j];
 
-                    // Spot price of token_out in terms of token_in
-                    let spot_price = match state.spot_price(token_out, token_in) {
+                    // Spot price in token_out per token_in units
+                    let spot_price = match state.spot_price(token_in, token_out) {
                         Ok(price) => price,
                         Err(e) => {
                             println!(
@@ -235,7 +234,8 @@ pub async fn run_benchmark(
                             let limit_result = state.get_amount_out(max_amount_in.clone(), token_in, token_out).ok();
 
                             if use_query_supply {
-                                // TradePrice mode: bounds are [spot_price, limit_trade_price]
+                                // TradePrice mode: bounds are [limit_trade_price, spot_price]
+                                // (prices decrease with amount, so limit is lower bound)
                                 let limit_trade = limit_result.map(|result| {
                                     let max_in_f64 = max_amount_in.to_f64().unwrap_or(f64::MAX);
                                     let max_out_f64 = result.amount.to_f64().unwrap_or(0.0);
@@ -247,12 +247,12 @@ pub async fn run_benchmark(
                                     )
                                 });
 
-                                (Some(spot_price), limit_trade, Some(max_amount_in))
+                                (limit_trade, Some(spot_price), Some(max_amount_in))
                             } else {
-                                // SpotPrice mode: bounds are [spot_price, limit_spot_price]
+                                // SpotPrice mode: bounds are [limit_spot_price, spot_price]
                                 let limit_spot = limit_result
-                                    .and_then(|result| result.new_state.spot_price(token_out, token_in).ok());
-                                (Some(spot_price), limit_spot, Some(max_amount_in))
+                                    .and_then(|result| result.new_state.spot_price(token_in, token_out).ok());
+                                (limit_spot, Some(spot_price), Some(max_amount_in))
                             }
                         }
                         Err(e) => {

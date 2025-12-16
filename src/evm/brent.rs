@@ -120,12 +120,16 @@ impl BrentConfig {
 // Types
 // =============================================================================
 
-/// Which price metric to track during the search
+/// Which price metric to track during the search.
+///
+/// All prices are in units of **token_out per token_in**.
+/// Both metrics DECREASE as amount_in increases due to slippage.
+/// Valid targets: `limit_price <= target < spot_price`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PriceMetric {
-    /// Track the resulting spot price after the swap
+    /// Track the resulting spot price (marginal rate) after the swap.
     SpotPrice,
-    /// Track the trade price (execution price = amount_in / amount_out scaled by decimals)
+    /// Track the trade price (execution price = amount_out / amount_in).
     TradePrice,
 }
 
@@ -146,18 +150,20 @@ impl SearchConfig {
 
 /// Calculate trade price (execution price) normalized by token decimals.
 ///
-/// Trade price = (amount_in / amount_out) * 10^(decimals_out - decimals_in)
+/// Trade price = (amount_out / amount_in) * 10^(decimals_in - decimals_out)
+///
+/// This gives price in units of **token_out per token_in**.
 fn calculate_trade_price(
     amount_in: f64,
     amount_out: f64,
     decimals_in: u32,
     decimals_out: u32,
 ) -> f64 {
-    if amount_out <= 0.0 {
+    if amount_in <= 0.0 {
         return f64::MAX;
     }
-    let decimal_adjustment = 10_f64.powi(decimals_out as i32 - decimals_in as i32);
-    (amount_in / amount_out) * decimal_adjustment
+    let decimal_adjustment = 10_f64.powi(decimals_in as i32 - decimals_out as i32);
+    (amount_out / amount_in) * decimal_adjustment
 }
 
 /// A point in the search history (amount, price)
@@ -246,10 +252,12 @@ pub struct QuerySupplyResult {
 /// Error types for Brent search operations
 #[derive(Debug, thiserror::Error)]
 pub enum BrentSearchError {
-    #[error("Target price {target} is below spot price {spot}. Cannot reach target by trading in this direction.")]
-    TargetBelowSpot { target: f64, spot: f64 },
-    #[error("Target price {target} is above limit price {limit} (spot: {spot}). Pool doesn't have enough liquidity to reach target.")]
-    TargetAboveLimit { target: f64, spot: f64, limit: f64 },
+    #[error("Target price {target} is above spot price {spot}. Target must be below spot (prices decrease with amount).")]
+    TargetAboveSpot { target: f64, spot: f64 },
+    #[error("Target price {target} is below limit price {limit} (spot: {spot}). Pool cannot reach such a low price.")]
+    TargetBelowLimit { target: f64, spot: f64, limit: f64 },
+    #[error("Limit price {limit} is at or above spot price {spot}. Expected limit < spot since prices decrease.")]
+    LimitAboveSpot { limit: f64, spot: f64 },
     #[error("Failed to converge within {iterations} iterations. Target: {target_price:.6e}, best: {best_price:.6e} (diff: {error_bps:.2}bps), amount: {amount}")]
     ConvergenceFailure {
         iterations: u32,
@@ -427,8 +435,8 @@ fn run_search(
     search_config: SearchConfig,
     config: &BrentConfig,
 ) -> Result<SwapToPriceResult, BrentSearchError> {
-    // Step 1: Get spot price
-    let spot_price = state.spot_price(token_out, token_in)?;
+    // Step 1: Get spot price (token_out per token_in)
+    let spot_price = state.spot_price(token_in, token_out)?;
 
     // Step 2: Check if we're already at target (for spot price metric)
     if search_config.metric == PriceMetric::SpotPrice
@@ -449,12 +457,11 @@ fn run_search(
     let (max_amount_in, _) =
         state.get_limits(token_in.address.clone(), token_out.address.clone())?;
 
-    // Step 4: Validate target price is above spot price
-    // For both metrics, spot_price is used as the theoretical minimum:
-    // - SpotPrice: target must be above current spot
-    // - TradePrice: spot_price is a good approximation of trade price of 0 amount
-    if target_price < spot_price {
-        return Err(BrentSearchError::TargetBelowSpot {
+    // Step 4: Validate target price is below spot price
+    // With prices in token_out/token_in units, prices DECREASE as amount increases.
+    // spot_price is the maximum achievable (at amount=0), so target must be below it.
+    if target_price > spot_price {
+        return Err(BrentSearchError::TargetAboveSpot {
             target: target_price,
             spot: spot_price,
         });
@@ -464,7 +471,7 @@ fn run_search(
     let limit_result = state.get_amount_out(max_amount_in.clone(), token_in, token_out)?;
 
     let limit_price = match search_config.metric {
-        PriceMetric::SpotPrice => limit_result.new_state.spot_price(token_out, token_in)?,
+        PriceMetric::SpotPrice => limit_result.new_state.spot_price(token_in, token_out)?,
         PriceMetric::TradePrice => {
             let max_in_f64 = max_amount_in.to_f64().unwrap_or(f64::MAX);
             let max_out_f64 = limit_result.amount.to_f64().unwrap_or(0.0);
@@ -472,18 +479,17 @@ fn run_search(
         }
     };
 
-    // Step 6: Validate limit price
-    if limit_price <= spot_price {
-        return Err(BrentSearchError::TargetAboveLimit {
-            target: target_price,
-            spot: spot_price,
+    // Step 6: Validate limit price (should be below spot since prices decrease)
+    if limit_price >= spot_price {
+        return Err(BrentSearchError::LimitAboveSpot {
             limit: limit_price,
+            spot: spot_price,
         });
     }
 
-    // Step 7: Validate target is reachable
-    if target_price > limit_price {
-        return Err(BrentSearchError::TargetAboveLimit {
+    // Step 7: Validate target is reachable (must be >= limit_price)
+    if target_price < limit_price {
+        return Err(BrentSearchError::TargetBelowLimit {
             target: target_price,
             spot: spot_price,
             limit: limit_price,
@@ -518,7 +524,7 @@ fn run_search(
 
         // Get the price based on the metric
         let current_price = match search_config.metric {
-            PriceMetric::SpotPrice => result.new_state.spot_price(token_out, token_in)?,
+            PriceMetric::SpotPrice => result.new_state.spot_price(token_in, token_out)?,
             PriceMetric::TradePrice => {
                 let amount_in_f64 = next_amount.to_f64().unwrap_or(0.0);
                 let amount_out_f64 = result.amount.to_f64().unwrap_or(0.0);
@@ -565,7 +571,8 @@ fn run_search(
         }
 
         // Update bounds
-        if current_price < target_price {
+        // Price decreases with amount: price > target → need more amount, price < target → need less
+        if current_price > target_price {
             low = next_amount;
             low_price = current_price;
         } else {
@@ -600,7 +607,7 @@ fn run_search(
                 }
                 let result = state.get_amount_out(boundary_amount.clone(), token_in, token_out)?;
                 let price = match search_config.metric {
-                    PriceMetric::SpotPrice => result.new_state.spot_price(token_out, token_in)?,
+                    PriceMetric::SpotPrice => result.new_state.spot_price(token_in, token_out)?,
                     PriceMetric::TradePrice => {
                         let amount_in_f64 = boundary_amount.to_f64().unwrap_or(0.0);
                         let amount_out_f64 = result.amount.to_f64().unwrap_or(0.0);

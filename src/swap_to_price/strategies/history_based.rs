@@ -144,9 +144,10 @@ where
     let (max_amount_in, _) =
         state.get_limits(token_in.address.clone(), token_out.address.clone())?;
 
-    // Step 4: Validate target price is above spot
-    if target_price < spot_price {
-        return Err(SwapToPriceError::TargetBelowSpot {
+    // Step 4: Validate target price is below spot
+    // With prices in token_out/token_in units, prices DECREASE as amount increases.
+    if target_price > spot_price {
+        return Err(SwapToPriceError::TargetAboveSpot {
             target: target_price,
             spot: spot_price,
         });
@@ -154,20 +155,19 @@ where
 
     // Step 5: Calculate limit price (spot price at max trade)
     let limit_result = state.get_amount_out(max_amount_in.clone(), token_in, token_out)?;
-    let limit_spot_price = limit_result.new_state.spot_price(token_out, token_in)?;
+    let limit_spot_price = limit_result.new_state.spot_price(token_in, token_out)?;
 
-    // Step 6: Validate limit price
-    if limit_spot_price <= spot_price {
-        return Err(SwapToPriceError::TargetAboveLimit {
-            target: target_price,
-            spot: spot_price,
+    // Step 6: Validate limit price (should be below spot since prices decrease)
+    if limit_spot_price >= spot_price {
+        return Err(SwapToPriceError::LimitAboveSpot {
             limit: limit_spot_price,
+            spot: spot_price,
         });
     }
 
-    // Step 7: Validate target is reachable (using spot price as proxy)
-    if target_price > limit_spot_price {
-        return Err(SwapToPriceError::TargetAboveLimit {
+    // Step 7: Validate target is reachable (must be >= limit_price)
+    if target_price < limit_spot_price {
+        return Err(SwapToPriceError::TargetBelowLimit {
             target: target_price,
             spot: spot_price,
             limit: limit_spot_price,
@@ -1310,15 +1310,14 @@ impl ProtocolSimExt for EVMBrentStrategy {
             Some(self.config),
         )
         .map_err(|e| match e {
-            crate::evm::brent::BrentSearchError::TargetBelowSpot { target, spot } => {
-                SwapToPriceError::TargetBelowSpot { target, spot }
+            crate::evm::brent::BrentSearchError::TargetAboveSpot { target, spot } => {
+                SwapToPriceError::TargetAboveSpot { target, spot }
             }
-            crate::evm::brent::BrentSearchError::TargetAboveLimit { target, spot, limit } => {
-                SwapToPriceError::TargetAboveLimit {
-                    target,
-                    spot,
-                    limit,
-                }
+            crate::evm::brent::BrentSearchError::TargetBelowLimit { target, spot, limit } => {
+                SwapToPriceError::TargetBelowLimit { target, spot, limit }
+            }
+            crate::evm::brent::BrentSearchError::LimitAboveSpot { limit, spot } => {
+                SwapToPriceError::LimitAboveSpot { limit, spot }
             }
             crate::evm::brent::BrentSearchError::ConvergenceFailure {
                 iterations,
@@ -1363,15 +1362,14 @@ impl ProtocolSimExt for EVMBrentStrategy {
             Some(self.config),
         )
         .map_err(|e| match e {
-            crate::evm::brent::BrentSearchError::TargetBelowSpot { target, spot } => {
-                SwapToPriceError::TargetBelowSpot { target, spot }
+            crate::evm::brent::BrentSearchError::TargetAboveSpot { target, spot } => {
+                SwapToPriceError::TargetAboveSpot { target, spot }
             }
-            crate::evm::brent::BrentSearchError::TargetAboveLimit { target, spot, limit } => {
-                SwapToPriceError::TargetAboveLimit {
-                    target,
-                    spot,
-                    limit,
-                }
+            crate::evm::brent::BrentSearchError::TargetBelowLimit { target, spot, limit } => {
+                SwapToPriceError::TargetBelowLimit { target, spot, limit }
+            }
+            crate::evm::brent::BrentSearchError::LimitAboveSpot { limit, spot } => {
+                SwapToPriceError::LimitAboveSpot { limit, spot }
             }
             crate::evm::brent::BrentSearchError::ConvergenceFailure {
                 iterations,

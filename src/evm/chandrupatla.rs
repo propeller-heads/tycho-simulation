@@ -115,16 +115,14 @@ impl ChandrupatlaConfig {
 
 /// Which price metric to track during the search.
 ///
-/// **Critical difference**: These metrics behave oppositely as amount_in increases:
-/// - SpotPrice INCREASES (selling depletes token_in, making it more valuable)
-/// - TradePrice DECREASES (more volume = more slippage = worse average rate)
+/// All prices are in units of **token_out per token_in**.
+/// Both metrics DECREASE as amount_in increases due to slippage.
+/// Valid targets: `limit_price <= target < spot_price`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PriceMetric {
-    /// Track the resulting spot price after the swap.
-    /// **Behavior**: INCREASES as amount_in increases. Valid targets: target > spot_price
+    /// Track the resulting spot price (marginal rate) after the swap.
     SpotPrice,
-    /// Track the trade price (execution price = amount_out / amount_in * decimal_adj).
-    /// **Behavior**: DECREASES as amount_in increases. Valid targets: target < spot_price
+    /// Track the trade price (execution price = amount_out / amount_in).
     TradePrice,
 }
 
@@ -145,23 +143,23 @@ impl SearchConfig {
 
 /// Calculate trade price (execution price) normalized by token decimals.
 ///
-/// Trade price = (amount_in / amount_out) * 10^(decimals_out - decimals_in)
+/// Trade price = (amount_out / amount_in) * 10^(decimals_in - decimals_out)
 ///
-/// This normalizes raw token amounts to a human-readable price.
-/// For example, swapping 1000 USDC (6 dec) for 0.5 WETH (18 dec):
-/// - Raw: 1000e6 / 0.5e18 = 2e-9
-/// - Normalized: 2e-9 * 10^(18-6) = 2000 USDC per WETH
+/// This gives price in units of **token_out per token_in** (how much token_out you get per token_in).
+/// For example, swapping 2000 USDC (6 dec) for 1 WETH (18 dec):
+/// - Raw: 1e18 / 2000e6 = 5e8
+/// - Normalized: 5e8 * 10^(6-18) = 0.0005 WETH per USDC
 fn calculate_trade_price(
     amount_in: f64,
     amount_out: f64,
     decimals_in: u32,
     decimals_out: u32,
 ) -> f64 {
-    if amount_out <= 0.0 {
+    if amount_in <= 0.0 {
         return f64::MAX;
     }
-    let decimal_adjustment = 10_f64.powi(decimals_out as i32 - decimals_in as i32);
-    (amount_in / amount_out) * decimal_adjustment
+    let decimal_adjustment = 10_f64.powi(decimals_in as i32 - decimals_out as i32);
+    (amount_out / amount_in) * decimal_adjustment
 }
 
 /// Chandrupatla bracket state
@@ -236,12 +234,12 @@ pub struct QuerySupplyResult {
 /// Error types for Chandrupatla search operations
 #[derive(Debug, thiserror::Error)]
 pub enum ChandrupatlaSearchError {
-    #[error("Target price {target} is below spot price {spot}. Cannot reach target by trading in this direction.")]
-    TargetBelowSpot { target: f64, spot: f64 },
-    #[error("Target price {target} is above limit price {limit} (spot: {spot}). Pool doesn't have enough liquidity to reach target.")]
-    TargetAboveLimit { target: f64, spot: f64, limit: f64 },
-    #[error("Limit price {limit} is at or below spot price {spot}. Trading in this direction does not increase price.")]
-    LimitBelowSpot { limit: f64, spot: f64 },
+    #[error("Target price {target} is above spot price {spot}. Target must be below spot (prices decrease with amount).")]
+    TargetAboveSpot { target: f64, spot: f64 },
+    #[error("Target price {target} is below limit price {limit} (spot: {spot}). Pool cannot reach such a low price.")]
+    TargetBelowLimit { target: f64, spot: f64, limit: f64 },
+    #[error("Limit price {limit} is at or above spot price {spot}. Expected limit < spot since prices decrease.")]
+    LimitAboveSpot { limit: f64, spot: f64 },
     #[error("Maximum output amount at limit is zero. Pool has no liquidity for output token.")]
     ZeroOutputAmountAtLimit,
     #[error("Failed to converge within {iterations} iterations. Target: {target_price:.6e}, best: {best_price:.6e} (diff: {error_bps:.2}bps), amount: {amount}")]
@@ -412,7 +410,7 @@ fn evaluate_objective(
     let price = match config.metric {
         PriceMetric::SpotPrice => result
             .new_state
-            .spot_price(token_out, token_in)?,
+            .spot_price(token_in, token_out)?,
         PriceMetric::TradePrice => {
             let amount_in_f64 = amount.to_f64().unwrap_or(f64::MAX);
             let amount_out_f64 = result.amount.to_f64().unwrap_or(f64::MAX);
@@ -443,8 +441,8 @@ fn run_search(
     search_config: SearchConfig,
     config: &ChandrupatlaConfig,
 ) -> Result<SwapToPriceResult, ChandrupatlaSearchError> {
-    // Step 1: Get spot price
-    let spot_price = state.spot_price(token_out, token_in)?;
+    // Step 1: Get spot price (token_out per token_in)
+    let spot_price = state.spot_price(token_in, token_out)?;
 
     // Step 2: Check if we're already at target (for spot price metric only)
     // For TradePrice, we need marginal_price which requires limits, so we check later
@@ -466,12 +464,11 @@ fn run_search(
     let (max_amount_in, max_amount_out) =
         state.get_limits(token_in.address.clone(), token_out.address.clone())?;
 
-    // Step 4: Validate target price is above spot price
-    // For both metrics, spot_price is used as the theoretical minimum:
-    // - SpotPrice: target must be above current spot
-    // - TradePrice: spot_price is a good approximation of the best trade price (no slippage)
-    if target_price < spot_price {
-        return Err(ChandrupatlaSearchError::TargetBelowSpot {
+    // Step 4: Validate target price is below spot price
+    // With prices in token_out/token_in units, prices DECREASE as amount increases.
+    // spot_price is the maximum achievable (at amount=0), so target must be below it.
+    if target_price > spot_price {
+        return Err(ChandrupatlaSearchError::TargetAboveSpot {
             target: target_price,
             spot: spot_price,
         });
@@ -495,21 +492,21 @@ fn run_search(
             )
         }
         PriceMetric::SpotPrice => {
-            limit_result.new_state.spot_price(token_out, token_in)?
+            limit_result.new_state.spot_price(token_in, token_out)?
         }
     };
 
-    // Step 5: Validate limit price
-    if limit_price <= spot_price {
-        return Err(ChandrupatlaSearchError::LimitBelowSpot {
+    // Step 5: Validate limit price (should be below spot since prices decrease)
+    if limit_price >= spot_price {
+        return Err(ChandrupatlaSearchError::LimitAboveSpot {
             limit: limit_price,
             spot: spot_price,
         });
     }
 
-    // Step 6: Validate target is reachable
-    if target_price > limit_price {
-        return Err(ChandrupatlaSearchError::TargetAboveLimit {
+    // Step 6: Validate target is reachable (must be >= limit_price)
+    if target_price < limit_price {
+        return Err(ChandrupatlaSearchError::TargetBelowLimit {
             target: target_price,
             spot: spot_price,
             limit: limit_price,
@@ -519,22 +516,18 @@ fn run_search(
     // Step 7: Initialize Chandrupatla state
     // We frame this as root-finding: f(x) = price(x) - target_price = 0
     //
-    // Initial bracket: [0, max_amount_in]
-    // f(0) = spot_price - target_price < 0  (spot is below target)
-    // f(max) = limit_price - target_price > 0  (limit is above target)
+    // With prices in token_out/token_in units, prices DECREASE as amount increases:
+    // f(0) = spot_price - target_price > 0  (spot is above target)
+    // f(max) = limit_price - target_price < 0  (limit is below target)
     //
-    // For TradePrice metric, spot_price at amount=0 is a good approximation.
-    // Once low bound moves away from 0, we'll have actual trade prices.
-    //
-    // Following TensorFlow/SciPy naming:
-    // x1, x2 bracket the root (f1 and f2 have opposite signs)
-    // x3 is the previous contrapoint
+    // Following TensorFlow/SciPy: Chandrupatla expects f(x1) < 0
+    // So x1 = max (negative f), x2 = 0 (positive f)
 
-    let x1 = 0.0_f64;
-    let f1 = spot_price - target_price; // negative (spot < target)
+    let x1 = max_amount_in.to_f64().unwrap_or(f64::MAX);
+    let f1 = limit_price - target_price; // negative (limit < target)
 
-    let x2 = max_amount_in.to_f64().unwrap_or(f64::MAX);
-    let f2 = limit_price - target_price; // positive (limit > target)
+    let x2 = 0.0_f64;
+    let f2 = spot_price - target_price; // positive (spot > target)
 
     // Initially x3 = x1 (no previous point yet)
     let mut chandru_state = ChandrupatlaState { x1, f1, x2, f2, x3: x1, f3: f1 };
@@ -714,7 +707,8 @@ fn run_search(
         }
 
         // Update BigUint bounds
-        if price_new < target_price {
+        // Price decreases with amount: price > target → need more amount, price < target → need less
+        if price_new > target_price {
             low = amount_new;
         } else {
             high = amount_new;
@@ -1274,18 +1268,17 @@ mod tests {
         let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
         let dai = create_test_token("0x0000000000000000000000000000000000000001", "DAI", 18);
 
-        // spot_price(base, quote) = price of base in quote units
-        // spot_price(WETH, DAI) = how much DAI per WETH = 2000
-        let spot_price = state.spot_price(&weth, &dai).unwrap();
+        // For swap_to_price(state, target, dai, weth), price is in WETH per DAI units
+        // spot_price(token_in=DAI, token_out=WETH) = WETH per DAI = 1/2000 = 0.0005
+        let spot_price = state.spot_price(&dai, &weth).unwrap();
         assert!(
-            (spot_price - 2000.0).abs() < 1.0,
-            "Spot price should be ~2000, got {}",
+            (spot_price - 0.0005).abs() < 0.0001,
+            "Spot price should be ~0.0005 WETH per DAI, got {}",
             spot_price
         );
 
-        // Target: increase price by 1% (WETH becomes more expensive in DAI terms)
-        // This means selling DAI for WETH
-        let target_price = spot_price * 1.01;
+        // Target: decrease price by 1% (prices decrease with amount)
+        let target_price = spot_price * 0.99;
 
         let result = swap_to_price(&state, target_price, &dai, &weth, None);
         assert!(result.is_ok(), "swap_to_price failed: {:?}", result.err());
@@ -1294,7 +1287,7 @@ mod tests {
         assert!(result.amount_in > BigUint::zero(), "Should have non-zero amount_in");
 
         // Verify the new spot price is close to target
-        let new_spot = result.new_state.spot_price(&weth, &dai).unwrap();
+        let new_spot = result.new_state.spot_price(&dai, &weth).unwrap();
         let error_bps = ((new_spot - target_price) / target_price).abs() * 10000.0;
         assert!(
             error_bps < 10.0,
@@ -1317,22 +1310,23 @@ mod tests {
         let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
         let usdc = create_test_token("0x0000000000000000000000000000000000000001", "USDC", 6);
 
-        // spot_price(WETH, USDC) = how much USDC per WETH = 2000
-        let spot_price = state.spot_price(&weth, &usdc).unwrap();
+        // For swap_to_price(state, target, usdc, weth), price is in WETH per USDC units
+        // spot_price(token_in=USDC, token_out=WETH) = WETH per USDC = 1/2000 = 0.0005
+        let spot_price = state.spot_price(&usdc, &weth).unwrap();
         assert!(
-            (spot_price - 2000.0).abs() < 1.0,
-            "Spot price should be ~2000, got {}",
+            (spot_price - 0.0005).abs() < 0.0001,
+            "Spot price should be ~0.0005, got {}",
             spot_price
         );
 
-        // Target: increase price by 5% (WETH becomes more expensive)
-        let target_price = spot_price * 1.05;
+        // Target: decrease price by 5% (prices decrease with amount)
+        let target_price = spot_price * 0.95;
 
         let result = swap_to_price(&state, target_price, &usdc, &weth, None);
         assert!(result.is_ok(), "swap_to_price failed: {:?}", result.err());
 
         let result = result.unwrap();
-        let new_spot = result.new_state.spot_price(&weth, &usdc).unwrap();
+        let new_spot = result.new_state.spot_price(&usdc, &weth).unwrap();
         let error_bps = ((new_spot - target_price) / target_price).abs() * 10000.0;
         assert!(
             error_bps < 10.0,
@@ -1352,12 +1346,12 @@ mod tests {
         let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
         let dai = create_test_token("0x0000000000000000000000000000000000000001", "DAI", 18);
 
-        // spot_price(WETH, DAI) = how much DAI per WETH = 2000
-        let spot_price = state.spot_price(&weth, &dai).unwrap();
+        // For query_supply(state, target, dai, weth), price is in WETH per DAI units
+        // spot_price(token_in=DAI, token_out=WETH) = WETH per DAI = 1/2000 = 0.0005
+        let spot_price = state.spot_price(&dai, &weth).unwrap();
 
-        // Target trade price: 1% above spot (willing to pay up to 2020 DAI per WETH)
-        // Selling DAI to buy WETH
-        let target_price = spot_price * 1.01;
+        // Target trade price: 1% below spot (prices decrease with amount)
+        let target_price = spot_price * 0.99;
 
         let result = query_supply(&state, target_price, &dai, &weth, None);
         assert!(result.is_ok(), "query_supply failed: {:?}", result.err());
@@ -1366,7 +1360,7 @@ mod tests {
         assert!(result.amount_in > BigUint::zero(), "Should have non-zero amount_in");
         assert!(result.amount_out > BigUint::zero(), "Should have non-zero amount_out");
 
-        // Verify the trade price is at or below target
+        // Verify the trade price is at or above target (we want to stay above target)
         let trade_price = calculate_trade_price(
             result.amount_in.to_f64().unwrap_or(0.0),
             result.amount_out.to_f64().unwrap_or(0.0),
@@ -1374,8 +1368,8 @@ mod tests {
             weth.decimals,
         );
         assert!(
-            trade_price <= target_price * 1.001,
-            "Trade price {} should be <= target {}",
+            trade_price >= target_price * 0.999,
+            "Trade price {} should be >= target {}",
             trade_price,
             target_price
         );
@@ -1392,18 +1386,19 @@ mod tests {
         let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
         let usdc = create_test_token("0x0000000000000000000000000000000000000001", "USDC", 6);
 
-        // spot_price(WETH, USDC) = how much USDC per WETH = 2000
-        let spot_price = state.spot_price(&weth, &usdc).unwrap();
+        // For query_supply(state, target, usdc, weth), price is in WETH per USDC units
+        // spot_price(token_in=USDC, token_out=WETH) = WETH per USDC = 1/2000 = 0.0005
+        let spot_price = state.spot_price(&usdc, &weth).unwrap();
 
-        // Target trade price: 5% above spot (willing to pay up to 2100 USDC per WETH)
-        let target_price = spot_price * 1.05;
+        // Target trade price: 5% below spot (prices decrease with amount)
+        let target_price = spot_price * 0.95;
 
         let result = query_supply(&state, target_price, &usdc, &weth, None);
         assert!(result.is_ok(), "query_supply failed: {:?}", result.err());
 
         let result = result.unwrap();
 
-        // Verify the trade price is at or below target
+        // Verify the trade price is at or above target (we want to stay above target)
         let trade_price = calculate_trade_price(
             result.amount_in.to_f64().unwrap_or(0.0),
             result.amount_out.to_f64().unwrap_or(0.0),
@@ -1411,8 +1406,8 @@ mod tests {
             weth.decimals,
         );
         assert!(
-            trade_price <= target_price * 1.001,
-            "Trade price {} should be <= target {}",
+            trade_price >= target_price * 0.999,
+            "Trade price {} should be >= target {}",
             trade_price,
             target_price
         );
@@ -1429,12 +1424,13 @@ mod tests {
         let weth = create_test_token("0x0000000000000000000000000000000000000000", "WETH", 18);
         let dai = create_test_token("0x0000000000000000000000000000000000000001", "DAI", 18);
 
-        // spot_price(WETH, DAI) = how much DAI per WETH = 2000
-        let spot_price = state.spot_price(&weth, &dai).unwrap();
+        // For query_supply(state, target, dai, weth), price is in WETH per DAI units
+        let spot_price = state.spot_price(&dai, &weth).unwrap();
 
-        // Test with increasing price limits - larger limits should yield larger trades
+        // Test with decreasing price limits - lower limits should yield larger trades
+        // (because prices decrease with amount, so to hit a lower target we need more amount)
         let mut prev_amount = BigUint::zero();
-        for multiplier in [1.01, 1.05, 1.10, 1.20] {
+        for multiplier in [0.99, 0.95, 0.90, 0.80] {
             let target_price = spot_price * multiplier;
             let result = query_supply(&state, target_price, &dai, &weth, None);
             assert!(result.is_ok(), "query_supply failed at multiplier {}", multiplier);
@@ -1442,7 +1438,7 @@ mod tests {
             let amount = result.unwrap().amount_in;
             assert!(
                 amount >= prev_amount,
-                "Higher price limit should allow larger trade: {} vs {}",
+                "Lower price limit should allow larger trade: {} vs {}",
                 amount,
                 prev_amount
             );

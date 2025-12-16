@@ -24,23 +24,17 @@ pub const SWAP_TO_PRICE_MAX_ITERATIONS: u32 = 30;
 
 /// Which price metric to track during the search.
 ///
-/// **Critical difference**: These metrics behave oppositely as amount_in increases:
-/// - SpotPrice INCREASES (selling depletes token_in, making it more valuable)
-/// - TradePrice DECREASES (more volume = more slippage = worse average rate)
+/// All prices are in units of **token_out per token_in** (how much token_out you get per token_in).
+/// Both metrics DECREASE as amount_in increases due to slippage.
+/// Valid targets: `limit_price <= target < spot_price`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PriceMetric {
-    /// Track the resulting spot price after the swap.
-    /// Used by `swap_to_price` - finds amount to move pool's marginal price to target.
-    ///
-    /// **Behavior**: SpotPrice INCREASES as amount_in increases (selling pushes price up).
-    /// Valid targets: `spot_price < target <= limit_spot_price` (positive price movements)
+    /// Track the resulting spot price (marginal rate) after the swap.
+    /// Used by `swap_to_price` - finds amount to move pool's marginal price down to target.
     SpotPrice,
 
-    /// Track the trade price (execution price = amount_out / amount_in * decimal_adjustment).
-    /// Used by `query_supply` - finds max trade at or above target price.
-    ///
-    /// **Behavior**: TradePrice DECREASES as amount_in increases (more slippage).
-    /// Valid targets: `limit_trade_price <= target < spot_price` (negative price movements)
+    /// Track the trade price (execution price = amount_out / amount_in).
+    /// Used by `query_supply` - finds max trade where average price stays at or above target.
     TradePrice,
 }
 
@@ -136,12 +130,14 @@ pub struct QuerySupplyResult {
 /// Error types for swap-to-price operations
 #[derive(Debug, thiserror::Error)]
 pub enum SwapToPriceError {
-    #[error("Target price {target} is below spot price {spot}. Cannot reach target by trading in this direction.")]
-    TargetBelowSpot { target: f64, spot: f64 },
-    #[error("Target price {target} is above limit price {limit} (spot: {spot}). Pool doesn't have enough liquidity to reach target.")]
-    TargetAboveLimit { target: f64, spot: f64, limit: f64 },
-    #[error("Target price {target} is above searchable range (max searchable price: {searchable_price}). Binary search with {max_iterations} iterations cannot converge beyond 2^{max_iterations} precision. Consider increasing max iterations or using a different strategy.")]
-    TargetAboveSearchable {
+    #[error("Target price {target} is above spot price {spot}. Target must be below spot (prices decrease with amount).")]
+    TargetAboveSpot { target: f64, spot: f64 },
+    #[error("Target price {target} is below limit price {limit} (spot: {spot}). Pool cannot reach such a low price.")]
+    TargetBelowLimit { target: f64, spot: f64, limit: f64 },
+    #[error("Limit price {limit} is at or above spot price {spot}. Expected limit < spot since prices decrease.")]
+    LimitAboveSpot { limit: f64, spot: f64 },
+    #[error("Target price {target} is below searchable range (min searchable price: {searchable_price}). Binary search with {max_iterations} iterations cannot converge.")]
+    TargetBelowSearchable {
         target: f64,
         searchable_price: f64,
         max_iterations: u32,
