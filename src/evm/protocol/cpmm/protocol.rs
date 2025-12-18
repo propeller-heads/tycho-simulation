@@ -277,3 +277,145 @@ pub fn cpmm_swap_to_price(
 
     Ok((u256_to_biguint(amount_in), u256_to_biguint(implied_amount_out)))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use num_bigint::BigUint;
+    use tycho_common::{
+        hex_bytes::Bytes,
+        models::{token::Token, Chain},
+        simulation::protocol_sim::Price,
+    };
+
+    use super::*;
+
+    fn token_0() -> Token {
+        Token::new(
+            &Bytes::from_str("0x0000000000000000000000000000000000000000").unwrap(),
+            "T0",
+            18,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        )
+    }
+
+    fn token_1() -> Token {
+        Token::new(
+            &Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap(),
+            "T1",
+            18,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        )
+    }
+
+    #[test]
+    fn test_swap_to_price_verifies_spot_price() {
+        let reserve0 = U256::from(2_000_000u64);
+        let reserve1 = U256::from(1_000_000u64);
+
+        let fee_bps: u32 = 30;
+        let fee_numerator = U256::from(10000 - fee_bps);
+        let fee_precision = U256::from(10000u32);
+        let fee = ProtocolFee::new(fee_numerator, fee_precision);
+
+        let target_price = Price::new(BigUint::from(2u32), BigUint::from(5u32));
+
+        let (amount_in, _implied_amount_out) =
+            cpmm_swap_to_price(reserve0, reserve1, &target_price, fee).unwrap();
+
+        let amount_in_u256 = biguint_to_u256(&amount_in);
+
+        let fee_for_get_amount_out = ProtocolFee::new(fee_numerator, fee_precision);
+        let actual_amount_out =
+            cpmm_get_amount_out(amount_in_u256, reserve0, reserve1, fee_for_get_amount_out)
+                .unwrap();
+
+        let new_reserve0 = safe_add_u256(reserve0, amount_in_u256).unwrap();
+        let new_reserve1 = safe_sub_u256(reserve1, actual_amount_out).unwrap();
+
+        let base = token_0();
+        let quote = token_1();
+        let new_spot_price = cpmm_spot_price(&base, &quote, new_reserve0, new_reserve1).unwrap();
+
+        let target_price_f64 = target_price
+            .numerator
+            .to_string()
+            .parse::<f64>()
+            .unwrap() /
+            target_price
+                .denominator
+                .to_string()
+                .parse::<f64>()
+                .unwrap();
+
+        let relative_diff = (new_spot_price - target_price_f64).abs() / target_price_f64;
+        assert!(
+            relative_diff < 0.01,
+            "New spot price {new_spot_price} should be close to target price {target_price_f64}, \
+             relative diff: {relative_diff}"
+        );
+    }
+
+    #[test]
+    fn test_swap_to_price_unreachable() {
+        let reserve0 = U256::from(2_000_000u64);
+        let reserve1 = U256::from(1_000_000u64);
+
+        let fee_bps: u32 = 30;
+        let fee_numerator = U256::from(10000 - fee_bps);
+        let fee_precision = U256::from(10000u32);
+        let fee = ProtocolFee::new(fee_numerator, fee_precision);
+
+        // Target price of 3.0 means swap_price = 1/3 ≈ 0.33
+        // Current spot price (with fees) ≈ 2.006 (reserve_in * fee_precision / (reserve_out *
+        // fee_numerator)) Since swap_price < current spot price, this target is unreachable
+        let target_price = Price::new(BigUint::from(3u32), BigUint::from(1u32));
+
+        let result = cpmm_swap_to_price(reserve0, reserve1, &target_price, fee);
+
+        assert!(
+            matches!(result, Err(SimulationError::InvalidInput(ref msg, _)) if msg.contains("unreachable")),
+            "Expected InvalidInput error about unreachable price, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_swap_to_price_at_spot() {
+        let reserve0 = U256::from(2_000_000u64);
+        let reserve1 = U256::from(1_000_000u64);
+
+        let fee_bps: u32 = 30;
+        let fee_numerator = U256::from(10000 - fee_bps);
+        let fee_precision = U256::from(10000u32);
+        let fee = ProtocolFee::new(fee_numerator, fee_precision);
+
+        // Current spot price (with fees) = reserve_in * fee_precision / (reserve_out *
+        // fee_numerator)                 = 2_000_000 * 10000 / (1_000_000 * 9970)
+        //                                = 2000/997 ≈ 2.006
+        // Setting target_price = 997/2000 means swap_price = 2000/997 = current spot
+        let target_price = Price::new(BigUint::from(997u32), BigUint::from(2000u32));
+
+        let (amount_in, implied_amount_out) =
+            cpmm_swap_to_price(reserve0, reserve1, &target_price, fee).unwrap();
+
+        // When target price equals current spot price, no swap is needed
+        assert!(
+            amount_in.is_zero(),
+            "amount_in should be zero when target is at spot price, got: {}",
+            amount_in
+        );
+        assert!(
+            implied_amount_out.is_zero(),
+            "implied_amount_out should be zero when target is at spot price, got: {}",
+            implied_amount_out
+        );
+    }
+}
