@@ -439,20 +439,8 @@ impl UniswapV4State {
                         SimulationError::FatalError("Overflow in tolerance calculation".to_string())
                     })?;
 
-                let current_trade_price = if new_total_amount_in > U256::ZERO {
-                    u256_to_biguint(new_total_amount_out).to_f64().unwrap_or(0.0)
-                        / u256_to_biguint(new_total_amount_in).to_f64().unwrap_or(1.0)
-                } else {
-                    0.0
-                };
-
                 if lhs >= rhs_with_tolerance {
                     // Reached target trade price within tolerance
-                    eprintln!(
-                        "[V4 swap_to_trade_price] Breaking: step_in={}, step_out={}, total_in={}, total_out={}, trade_price={:.6}, state.sqrt_price={}, will_update_to={}",
-                        step_amount_in_with_fee, step.amount_out, new_total_amount_in, new_total_amount_out,
-                        current_trade_price, state.sqrt_price, sqrt_price
-                    );
                     // Update totals to include this step, then stop
                     total_amount_in = new_total_amount_in;
                     total_amount_out = new_total_amount_out;

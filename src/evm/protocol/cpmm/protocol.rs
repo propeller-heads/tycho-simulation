@@ -216,7 +216,10 @@ impl ProtocolFee {
 /// # Returns
 /// * `Ok((amount_in, implied_amount_out))` - The implied amount out is computed analytically and
 ///   will be smaller than actually swapping against the pool.
-/// * `Err(SimulationError)` - If an error occurs during calculation.
+///
+/// # Errors
+/// * `FatalError` - If reserves are zero or calculation overflows
+/// * `InvalidInput` - If target price is unreachable (already below current spot price)
 pub fn cpmm_swap_to_price(
     reserve_in: U256,
     reserve_out: U256,
@@ -299,7 +302,7 @@ pub fn cpmm_swap_to_price(
 /// - `y` = reserve_out
 /// - `dx` = amount_in
 /// - `dy` = amount_out
-/// - `P` = target_price (in terms of amount_in per amount_out)
+/// - `P` = limit_price (in terms of amount_in per amount_out)
 /// - `gamma` = fee_numerator / fee_precision (e.g. 9970/10000 for 0.3% fee)
 ///
 /// We want `dx / dy = P`.
@@ -323,25 +326,28 @@ pub fn cpmm_swap_to_price(
 ///
 /// # Returns
 /// * `Ok((amount_in, implied_amount_out))` - The implied amount out satisfies `amount_in /
-///   implied_amount_out = target_price` (after flipping).
-/// * `Err(SimulationError)` - If target price is unreachable (better than current spot).
+///   implied_amount_out = limit_price` (after flipping).
+///
+/// # Errors
+/// * `FatalError` - If reserves are zero or calculation overflows
+/// * `InvalidInput` - If limit price is unreachable (at or better than current spot price)
 pub fn cpmm_swap_to_trade_price(
     reserve_in: U256,
     reserve_out: U256,
-    target_price: &Price,
+    limit_price: &Price,
     fee: ProtocolFee,
 ) -> Result<(BigUint, BigUint), SimulationError> {
     if reserve_in == U256::ZERO || reserve_out == U256::ZERO {
         return Err(SimulationError::FatalError("Reserves cannot be zero".to_string()));
     }
 
-    // Flip target pool price to swap price (P = amount_in / amount_out)
+    // Flip limit pool price to swap price (P = amount_in / amount_out)
     // Input Price is in amount_out/amount_in convention, so we invert it
-    let swap_price_num = biguint_to_u256(&target_price.denominator);
-    let swap_price_den = biguint_to_u256(&target_price.numerator);
+    let swap_price_num = biguint_to_u256(&limit_price.denominator);
+    let swap_price_den = biguint_to_u256(&limit_price.numerator);
 
-    // Check reachability: target trade price P must be strictly greater than current spot price
-    // (with fees). As you trade, P increases (you pay more per unit received), so the target
+    // Check reachability: limit trade price P must be strictly greater than current spot price
+    // (with fees). As you trade, P increases (you pay more per unit received), so the limit
     // must be above the starting spot price.
     //
     // Current spot price (in P convention) = reserve_in / (reserve_out * gamma)
@@ -352,7 +358,7 @@ pub fn cpmm_swap_to_trade_price(
     // swap_price_num / swap_price_den > (reserve_in * fee_precision) / (reserve_out *
     // fee_numerator) Cross-multiply: swap_price_num * reserve_out * fee_numerator >
     // swap_price_den * reserve_in * fee_precision
-    let target_price_cross_mult = U512::from(swap_price_num)
+    let limit_price_cross_mult = U512::from(swap_price_num)
         .checked_mul(U512::from(reserve_out))
         .and_then(|x| x.checked_mul(U512::from(fee.numerator)))
         .ok_or_else(|| SimulationError::FatalError("Overflow in price check".to_string()))?;
@@ -361,18 +367,18 @@ pub fn cpmm_swap_to_trade_price(
         .and_then(|x| x.checked_mul(U512::from(fee.precision)))
         .ok_or_else(|| SimulationError::FatalError("Overflow in price check".to_string()))?;
 
-    if target_price_cross_mult <= current_price_cross_mult {
+    if limit_price_cross_mult <= current_price_cross_mult {
         return Err(SimulationError::InvalidInput(
-            "Target trade price is unreachable (at or better than current spot price)".to_string(),
+            "Limit trade price is unreachable (at or better than current spot price)".to_string(),
             None,
         ));
     }
 
     // Calculate amount_in using the derived formula:
     // amount_in = (P_num * reserve_out * fee_num - P_den * reserve_in * fee_prec) / (P_den *
-    // fee_num) We already have target_price_cross_mult = P_num * reserve_out * fee_num
+    // fee_num) We already have limit_price_cross_mult = P_num * reserve_out * fee_num
     //            and current_price_cross_mult = P_den * reserve_in * fee_prec
-    let numerator = target_price_cross_mult - current_price_cross_mult;
+    let numerator = limit_price_cross_mult - current_price_cross_mult;
 
     let denominator = U512::from(swap_price_den)
         .checked_mul(U512::from(fee.numerator))

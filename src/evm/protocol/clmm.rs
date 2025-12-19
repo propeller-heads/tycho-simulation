@@ -13,22 +13,33 @@ use crate::evm::protocol::{
 // U160_MAX = 2^160 - 1, used for "infinite" swap amounts in swap_to_price
 const U160_MAX: U256 = U256::from_limbs([u64::MAX, u64::MAX, u64::MAX >> 32, 0]); // 2^160 - 1
 
-/// Abstracted swap_to_price implementation for Concentrated Liquidity Market Makers (CLMM).
+/// Calculates the exact amount of token_in required to move the pool's marginal price down to
+/// a target price for Concentrated Liquidity Market Makers (CLMM).
 ///
 /// This function encapsulates the common logic for swap_to_price across UniswapV3 and UniswapV4,
 /// handling differences through the provided closure.
+///
+/// # Algorithm
+///
+/// Unlike constant product AMMs, CLMMs have concentrated liquidity that varies across price ranges.
+/// The swap is executed by iterating through liquidity ticks until the target price is reached.
+/// The function uses a large amount (U160_MAX) to find the maximum available liquidity that can
+/// be swapped while respecting the target price limit.
 ///
 /// # Arguments
 /// * `sqrt_price` - Current sqrt price of the pool in Q96 format
 /// * `token_in` - Token being sold
 /// * `token_out` - Token being bought
-/// * `target_price` - Target price as token_out/token_in (tycho convention)
+/// * `target_price` - Target marginal (spot) price as token_out/token_in (tycho convention)
 /// * `fee_pips` - Total fee in pips (1/1_000_000)
 /// * `amount_sign` - Sign for the amount_specified (Positive for V3, Negative for V4)
 /// * `swap_fn` - Closure that performs the actual swap operation
 ///
 /// # Returns
 /// A tuple containing (amount_in, amount_out, SwapResults)
+///
+/// # Errors
+/// Returns `InvalidInput` if the target price is unreachable (already below current spot price)
 #[allow(clippy::too_many_arguments)]
 pub fn clmm_swap_to_price<F>(
     sqrt_price: U256,
@@ -91,7 +102,9 @@ where
 }
 
 /// Calculates the exact amount of token_in required such that the trade's execution price
-/// equals the target price for Concentrated Liquidity Market Makers (CLMM).
+/// equals the limit price for Concentrated Liquidity Market Makers (CLMM).
+///
+/// # Algorithm
 ///
 /// Unlike `clmm_swap_to_price` which targets the *marginal* (spot) price after the swap,
 /// this function targets the *trade* (average execution) price of the swap itself.
@@ -100,7 +113,12 @@ where
 ///
 /// Since CLMM has concentrated liquidity that varies across price ranges, there's no
 /// closed-form solution. Instead, we execute the swap step-by-step until the accumulated
-/// trade price reaches the target.
+/// trade price reaches the limit.
+///
+/// ## Trade Price vs Spot Price
+/// - **Spot price**: The marginal price at a specific point (price for infinitesimal swap)
+/// - **Trade price**: The average price of an executed swap (total_in / total_out)
+/// - Trade price accounts for price impact across the entire swap
 ///
 /// # Arguments
 /// * `sqrt_price` - Current sqrt price of the pool in Q96 format
@@ -119,6 +137,9 @@ where
 /// - If limit is achievable: swaps to achieve the limit price (within tolerance)
 /// - If limit is worse than available: swaps all available liquidity (doesn't error)
 /// - Errors only if limit is better than effective spot (impossible to achieve)
+///
+/// # Errors
+/// Returns `InvalidInput` if limit is better than effective spot price (impossible to achieve)
 #[allow(clippy::too_many_arguments)]
 pub fn clmm_swap_to_trade_price<F>(
     sqrt_price: U256,
