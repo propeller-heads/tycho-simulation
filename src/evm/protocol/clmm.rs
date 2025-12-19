@@ -106,53 +106,74 @@ where
 /// * `sqrt_price` - Current sqrt price of the pool in Q96 format
 /// * `token_in` - Token being sold
 /// * `token_out` - Token being bought
-/// * `target_price` - Target trade price as token_out/token_in (tycho convention)
+/// * `limit_price` - Limit trade price as token_out/token_in (tycho convention)
 /// * `fee_pips` - Total fee in pips (1/1_000_000)
 /// * `tolerance` - Relative tolerance for trade price (e.g., 0.01 = 1%)
+/// * `amount_sign` - Sign for the amount_specified (Positive for V3, Negative for V4)
 /// * `swap_step_fn` - Closure that performs one step of the swap and checks trade price
 ///
 /// # Returns
 /// A tuple containing (amount_in, amount_out, SwapResults)
+///
+/// # Behavior
+/// - If limit is achievable: swaps to achieve the limit price (within tolerance)
+/// - If limit is worse than available: swaps all available liquidity (doesn't error)
+/// - Errors only if limit is better than effective spot (impossible to achieve)
+#[allow(clippy::too_many_arguments)]
 pub fn clmm_swap_to_trade_price<F>(
     sqrt_price: U256,
     token_in: &Bytes,
     token_out: &Bytes,
-    target_price: &Price,
+    limit_price: &Price,
     fee_pips: u32,
     tolerance: f64,
+    amount_sign: Sign,
     swap_step_fn: F,
 ) -> Result<(BigUint, BigUint, SwapResults), SimulationError>
 where
-    F: FnOnce(bool, &Price, f64) -> Result<(U256, U256, SwapResults), SimulationError>,
+    F: FnOnce(bool, &Price, f64, Sign) -> Result<(U256, U256, SwapResults), SimulationError>,
 {
     let zero_for_one = token_in < token_out;
 
-    // Validate that target trade price is achievable
-    // The trade price for an infinitesimal swap equals the spot price (with fees)
-    // As you swap more, the trade price gets worse (further from spot)
-    // So target must be worse than or equal to current spot price
+    // Validate that limit trade price is not better than effective spot price
+    // (which would be impossible to achieve)
 
-    // Calculate current spot price with fees (in token_out/token_in convention)
-    // This is the best possible trade price you can get
-    let sqrt_price_limit =
-        get_sqrt_price_limit(token_in, token_out, target_price, U256::from(fee_pips))?;
+    use num_traits::ToPrimitive;
+    let limit_price_f64 = limit_price.numerator.to_f64().unwrap_or(0.0)
+        / limit_price.denominator.to_f64().unwrap_or(1.0);
 
-    // Validate that we can reach the target by checking price direction
-    if zero_for_one && sqrt_price_limit >= sqrt_price {
+    // Validate against effective spot price (spot price after fees)
+    // The best achievable trade price is the current spot price minus fees
+    use crate::evm::protocol::u256_num::u256_to_f64;
+    let sqrt_price_f64 = u256_to_f64(sqrt_price)?;
+    let q96 = 2_f64.powi(96);
+    let raw_spot = (sqrt_price_f64 / q96).powi(2); // This is token1/token0
+    let spot_price_f64 = if zero_for_one {
+        raw_spot // For zero_for_one: Price = token_out/token_in = token1/token0
+    } else {
+        1.0 / raw_spot // For !zero_for_one: Price = token_out/token_in = token0/token1
+    };
+
+    // Apply fees to get effective spot (best achievable trade price)
+    // Using same precision as get_sqrt_price_limit: fee_precision = 1_000_000
+    let fee_multiplier = 1.0 - (fee_pips as f64 / 1_000_000.0);
+    let effective_spot_price = spot_price_f64 * fee_multiplier;
+
+    // Check if limit is better than effective spot (impossible to achieve)
+    if limit_price_f64 > effective_spot_price {
         return Err(SimulationError::InvalidInput(
-            "Target trade price is unreachable (better than current spot price)".to_string(),
-            None,
-        ));
-    }
-    if !zero_for_one && sqrt_price_limit <= sqrt_price {
-        return Err(SimulationError::InvalidInput(
-            "Target trade price is unreachable (better than current spot price)".to_string(),
+            format!(
+                "Limit trade price {:.6} is better than effective spot price {:.6} (spot {:.6} × {:.6}) - impossible to achieve",
+                limit_price_f64, effective_spot_price, spot_price_f64, fee_multiplier
+            ),
             None,
         ));
     }
 
     // Execute the swap with trade price checking
-    let (amount_in, amount_out, result) = swap_step_fn(zero_for_one, target_price, tolerance)?;
+    // If limit is achievable: swaps to achieve the limit price
+    // If limit is worse than available: swaps all available liquidity (natural behavior)
+    let (amount_in, amount_out, result) = swap_step_fn(zero_for_one, limit_price, tolerance, amount_sign)?;
 
     if amount_in == U256::ZERO {
         return Ok((BigUint::ZERO, BigUint::ZERO, SwapResults::default()));
