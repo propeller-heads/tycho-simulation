@@ -89,3 +89,74 @@ where
 
     Ok((u256_to_biguint(amount_in), u256_to_biguint(amount_out), result))
 }
+
+/// Calculates the exact amount of token_in required such that the trade's execution price
+/// equals the target price for Concentrated Liquidity Market Makers (CLMM).
+///
+/// Unlike `clmm_swap_to_price` which targets the *marginal* (spot) price after the swap,
+/// this function targets the *trade* (average execution) price of the swap itself.
+///
+/// The trade price is defined as: `P = amount_in / amount_out`
+///
+/// Since CLMM has concentrated liquidity that varies across price ranges, there's no
+/// closed-form solution. Instead, we execute the swap step-by-step until the accumulated
+/// trade price reaches the target.
+///
+/// # Arguments
+/// * `sqrt_price` - Current sqrt price of the pool in Q96 format
+/// * `token_in` - Token being sold
+/// * `token_out` - Token being bought
+/// * `target_price` - Target trade price as token_out/token_in (tycho convention)
+/// * `fee_pips` - Total fee in pips (1/1_000_000)
+/// * `tolerance` - Relative tolerance for trade price (e.g., 0.01 = 1%)
+/// * `swap_step_fn` - Closure that performs one step of the swap and checks trade price
+///
+/// # Returns
+/// A tuple containing (amount_in, amount_out, SwapResults)
+pub fn clmm_swap_to_trade_price<F>(
+    sqrt_price: U256,
+    token_in: &Bytes,
+    token_out: &Bytes,
+    target_price: &Price,
+    fee_pips: u32,
+    tolerance: f64,
+    swap_step_fn: F,
+) -> Result<(BigUint, BigUint, SwapResults), SimulationError>
+where
+    F: FnOnce(bool, &Price, f64) -> Result<(U256, U256, SwapResults), SimulationError>,
+{
+    let zero_for_one = token_in < token_out;
+
+    // Validate that target trade price is achievable
+    // The trade price for an infinitesimal swap equals the spot price (with fees)
+    // As you swap more, the trade price gets worse (further from spot)
+    // So target must be worse than or equal to current spot price
+
+    // Calculate current spot price with fees (in token_out/token_in convention)
+    // This is the best possible trade price you can get
+    let sqrt_price_limit =
+        get_sqrt_price_limit(token_in, token_out, target_price, U256::from(fee_pips))?;
+
+    // Validate that we can reach the target by checking price direction
+    if zero_for_one && sqrt_price_limit >= sqrt_price {
+        return Err(SimulationError::InvalidInput(
+            "Target trade price is unreachable (better than current spot price)".to_string(),
+            None,
+        ));
+    }
+    if !zero_for_one && sqrt_price_limit <= sqrt_price {
+        return Err(SimulationError::InvalidInput(
+            "Target trade price is unreachable (better than current spot price)".to_string(),
+            None,
+        ));
+    }
+
+    // Execute the swap with trade price checking
+    let (amount_in, amount_out, result) = swap_step_fn(zero_for_one, target_price, tolerance)?;
+
+    if amount_in == U256::ZERO {
+        return Ok((BigUint::ZERO, BigUint::ZERO, SwapResults::default()));
+    }
+
+    Ok((u256_to_biguint(amount_in), u256_to_biguint(amount_out), result))
+}
