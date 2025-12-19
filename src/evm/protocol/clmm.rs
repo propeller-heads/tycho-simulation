@@ -160,8 +160,14 @@ where
     // (which would be impossible to achieve)
 
     use num_traits::ToPrimitive;
-    let limit_price_f64 = limit_price.numerator.to_f64().unwrap_or(0.0)
-        / limit_price.denominator.to_f64().unwrap_or(1.0);
+    let limit_price_f64 = limit_price
+        .numerator
+        .to_f64()
+        .unwrap_or(0.0) /
+        limit_price
+            .denominator
+            .to_f64()
+            .unwrap_or(1.0);
 
     // Validate against effective spot price (spot price after fees)
     // The best achievable trade price is the current spot price minus fees
@@ -194,7 +200,8 @@ where
     // Execute the swap with trade price checking
     // If limit is achievable: swaps to achieve the limit price
     // If limit is worse than available: swaps all available liquidity (natural behavior)
-    let (amount_in, amount_out, result) = swap_step_fn(zero_for_one, limit_price, tolerance, amount_sign)?;
+    let (amount_in, amount_out, result) =
+        swap_step_fn(zero_for_one, limit_price, tolerance, amount_sign)?;
 
     if amount_in == U256::ZERO {
         return Ok((BigUint::ZERO, BigUint::ZERO, SwapResults::default()));

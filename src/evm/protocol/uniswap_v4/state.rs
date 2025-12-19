@@ -10,8 +10,8 @@ use tycho_common::{
     models::token::Token,
     simulation::{
         errors::{SimulationError, TransitionError},
-        protocol_sim::{Price,
-            Balances, GetAmountOutResult, PoolSwap, ProtocolSim, QueryPoolSwapParams,
+        protocol_sim::{
+            Balances, GetAmountOutResult, PoolSwap, Price, ProtocolSim, QueryPoolSwapParams,
             SwapConstraint,
         },
     },
@@ -320,10 +320,18 @@ impl UniswapV4State {
 
         // Validate target against effective spot price (spot price after fees)
         use num_traits::ToPrimitive;
-        let target_price_f64 = target_price.numerator.to_f64().unwrap_or(0.0)
-            / target_price.denominator.to_f64().unwrap_or(1.0);
+        let target_price_f64 = target_price
+            .numerator
+            .to_f64()
+            .unwrap_or(0.0) /
+            target_price
+                .denominator
+                .to_f64()
+                .unwrap_or(1.0);
 
-        let sqrt_price_f64 = u256_to_biguint(self.sqrt_price).to_f64().unwrap_or(0.0);
+        let sqrt_price_f64 = u256_to_biguint(self.sqrt_price)
+            .to_f64()
+            .unwrap_or(0.0);
         let q96 = 2.0_f64.powi(96);
         let raw_spot = (sqrt_price_f64 / q96).powi(2); // token1/token0
         let spot_price_f64 = if zero_for_one {
@@ -333,7 +341,9 @@ impl UniswapV4State {
         };
 
         // Apply fees to get effective spot (best achievable trade price)
-        let fee_pips = self.fees.calculate_swap_fees_pips(zero_for_one, None);
+        let fee_pips = self
+            .fees
+            .calculate_swap_fees_pips(zero_for_one, None);
         let fee_multiplier = 1.0 - (fee_pips as f64 / 1_000_000.0);
         let effective_spot_price = spot_price_f64 * fee_multiplier;
 
@@ -350,7 +360,6 @@ impl UniswapV4State {
         // Flip target price from token_out/token_in to amount_in/amount_out (swap convention)
         let target_swap_price_num = &target_price.denominator;
         let target_swap_price_den = &target_price.numerator;
-
 
         let mut state = SwapState {
             amount_remaining: I256::from_raw(U256::MAX),
@@ -446,11 +455,9 @@ impl UniswapV4State {
                     total_amount_out = new_total_amount_out;
                     // CRITICAL: Update state to match the final amounts before breaking
                     state.sqrt_price = sqrt_price;
-                    state.amount_remaining -= I256::checked_from_sign_and_abs(
-                        amount_sign,
-                        step_amount_in_with_fee,
-                    )
-                    .unwrap();
+                    state.amount_remaining -=
+                        I256::checked_from_sign_and_abs(amount_sign, step_amount_in_with_fee)
+                            .unwrap();
                     state.amount_calculated -=
                         I256::checked_from_sign_and_abs(amount_sign, step.amount_out).unwrap();
 
@@ -462,9 +469,12 @@ impl UniswapV4State {
                                 .get_tick(step.tick_next)
                                 .unwrap()
                                 .net_liquidity;
-                            let liquidity_net = if zero_for_one { -liquidity_raw } else { liquidity_raw };
-                            state.liquidity =
-                                liquidity_math::add_liquidity_delta(state.liquidity, liquidity_net)?;
+                            let liquidity_net =
+                                if zero_for_one { -liquidity_raw } else { liquidity_raw };
+                            state.liquidity = liquidity_math::add_liquidity_delta(
+                                state.liquidity,
+                                liquidity_net,
+                            )?;
                         }
                         state.tick = if zero_for_one { step.tick_next - 1 } else { step.tick_next };
                     } else if state.sqrt_price != step.sqrt_price_start {
@@ -481,11 +491,8 @@ impl UniswapV4State {
 
             // Update state
             state.sqrt_price = sqrt_price;
-            state.amount_remaining -= I256::checked_from_sign_and_abs(
-                amount_sign,
-                step_amount_in_with_fee,
-            )
-            .unwrap();
+            state.amount_remaining -=
+                I256::checked_from_sign_and_abs(amount_sign, step_amount_in_with_fee).unwrap();
             state.amount_calculated -=
                 I256::checked_from_sign_and_abs(amount_sign, step.amount_out).unwrap();
 
@@ -520,8 +527,8 @@ impl UniswapV4State {
             SwapResults {
                 amount_calculated: I256::checked_from_sign_and_abs(amount_sign, total_amount_out)
                     .ok_or_else(|| {
-                        SimulationError::FatalError("Failed to create amount_calculated".to_string())
-                    })?,
+                    SimulationError::FatalError("Failed to create amount_calculated".to_string())
+                })?,
                 amount_specified: I256::checked_from_sign_and_abs(amount_sign, total_amount_in)
                     .ok_or_else(|| {
                         SimulationError::FatalError("Failed to create amount_specified".to_string())
@@ -2653,7 +2660,12 @@ mod tests {
 
         let tolerance = 0.10; // 10% tolerance (due to tick granularity in CLMM)
         let (amount_in, amount_out, _) = pool
-            .swap_to_trade_price(token_x.address < token_y.address, &target_price, tolerance, Sign::Negative)
+            .swap_to_trade_price(
+                token_x.address < token_y.address,
+                &target_price,
+                tolerance,
+                Sign::Negative,
+            )
             .expect("swap_to_trade_price failed");
 
         // Verify the trade price matches target
@@ -2713,12 +2725,14 @@ mod tests {
         let target_price = Price::new(BigUint::from(30u32), BigUint::from(10u32));
         let tolerance = 0.01;
 
-        let result = pool.swap_to_trade_price(token_x.address < token_y.address, &target_price, tolerance, Sign::Negative);
-
-        assert!(
-            result.is_err(),
-            "Should return error when target trade price is better than spot"
+        let result = pool.swap_to_trade_price(
+            token_x.address < token_y.address,
+            &target_price,
+            tolerance,
+            Sign::Negative,
         );
+
+        assert!(result.is_err(), "Should return error when target trade price is better than spot");
     }
 
     #[test]
@@ -2760,16 +2774,25 @@ mod tests {
         let tolerance = 0.10; // 10% tolerance (due to tick granularity in CLMM)
 
         let (amount_in, estimated_amount_out, _) = pool
-            .swap_to_trade_price(token_x.address < token_y.address, &target_price, tolerance, Sign::Negative)
+            .swap_to_trade_price(
+                token_x.address < token_y.address,
+                &target_price,
+                tolerance,
+                Sign::Negative,
+            )
             .expect("swap_to_trade_price failed");
 
         // Execute actual swap to verify
-        let amount_specified =
-            I256::checked_from_sign_and_abs(Sign::Negative, amount_in).unwrap();
-        let swap_result = pool.swap(token_x.address < token_y.address, amount_specified, None, None);
+        let amount_specified = I256::checked_from_sign_and_abs(Sign::Negative, amount_in).unwrap();
+        let swap_result =
+            pool.swap(token_x.address < token_y.address, amount_specified, None, None);
 
         assert!(swap_result.is_ok(), "Actual swap should succeed");
-        let actual_amount_out = swap_result.unwrap().amount_calculated.abs().into_raw();
+        let actual_amount_out = swap_result
+            .unwrap()
+            .amount_calculated
+            .abs()
+            .into_raw();
 
         // Allow some difference due to step-by-step execution breaking early
         let diff = if estimated_amount_out > actual_amount_out {
@@ -2777,8 +2800,14 @@ mod tests {
         } else {
             actual_amount_out - estimated_amount_out
         };
-        let diff_f64 = u256_to_biguint(diff).to_string().parse::<f64>().unwrap();
-        let actual_f64 = u256_to_biguint(actual_amount_out).to_string().parse::<f64>().unwrap();
+        let diff_f64 = u256_to_biguint(diff)
+            .to_string()
+            .parse::<f64>()
+            .unwrap();
+        let actual_f64 = u256_to_biguint(actual_amount_out)
+            .to_string()
+            .parse::<f64>()
+            .unwrap();
         let relative_diff = diff_f64 / actual_f64;
 
         assert!(
@@ -2826,7 +2855,12 @@ mod tests {
         let target_price = Price::new(BigUint::from(19u32), BigUint::from(10u32));
         let tolerance = 0.20; // 20% tolerance (due to tick granularity in CLMM)
         let (amount_in, amount_out, _) = pool
-            .swap_to_trade_price(token_x.address < token_y.address, &target_price, tolerance, Sign::Negative)
+            .swap_to_trade_price(
+                token_x.address < token_y.address,
+                &target_price,
+                tolerance,
+                Sign::Negative,
+            )
             .expect("swap_to_trade_price failed");
 
         // Use the amount_in from swap_to_trade_price with get_amount_out
@@ -2842,7 +2876,10 @@ mod tests {
             result_amount_u256 - amount_out
         };
 
-        let diff_f64 = u256_to_biguint(diff).to_string().parse::<f64>().unwrap();
+        let diff_f64 = u256_to_biguint(diff)
+            .to_string()
+            .parse::<f64>()
+            .unwrap();
         let amount_out_f64 = u256_to_biguint(amount_out)
             .to_string()
             .parse::<f64>()

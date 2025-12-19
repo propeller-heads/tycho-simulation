@@ -838,16 +838,16 @@ mod tests {
         );
 
         let state = PancakeswapV2State::new(
-            U256::from(1_000_000_000u64),  // reserve0
-            U256::from(1_000_000_000u64),  // reserve1
+            U256::from(1_000_000_000u64), // reserve0
+            U256::from(1_000_000_000u64), // reserve1
         );
 
         // Price is in amount_out/amount_in convention (Q)
         // Limit = 2/3 = 0.666... is worse than spot ~0.9975, so should be reachable
         // When flipped to P convention: 3/2 = 1.5 > 1.0025 spot
         let limit_price = Price::new(
-            BigUint::from(2u32),  // numerator
-            BigUint::from(3u32),  // denominator
+            BigUint::from(2u32), // numerator
+            BigUint::from(3u32), // denominator
         );
 
         let params = QueryPoolSwapParams::new(
@@ -890,17 +890,12 @@ mod tests {
             100,
         );
 
-        let state = PancakeswapV2State::new(
-            U256::from(1_000_000_000u64),
-            U256::from(1_000_000_000u64),
-        );
+        let state =
+            PancakeswapV2State::new(U256::from(1_000_000_000u64), U256::from(1_000_000_000u64));
 
         // Limit better than spot (spot ~0.9975 after fees, this is 1.5)
         // This should fail since you can't get a better price than spot
-        let limit_price = Price::new(
-            BigUint::from(3u32),
-            BigUint::from(2u32),
-        );
+        let limit_price = Price::new(BigUint::from(3u32), BigUint::from(2u32));
 
         let params = QueryPoolSwapParams::new(
             token0,
@@ -938,16 +933,11 @@ mod tests {
             100,
         );
 
-        let state = PancakeswapV2State::new(
-            U256::from(1_000_000_000u64),
-            U256::from(1_000_000_000u64),
-        );
+        let state =
+            PancakeswapV2State::new(U256::from(1_000_000_000u64), U256::from(1_000_000_000u64));
 
         // Limit = 2/3 = 0.666... is worse than spot ~0.9975
-        let limit_price = Price::new(
-            BigUint::from(2u32),
-            BigUint::from(3u32),
-        );
+        let limit_price = Price::new(BigUint::from(2u32), BigUint::from(3u32));
 
         let params = QueryPoolSwapParams::new(
             token0.clone(),
@@ -960,7 +950,9 @@ mod tests {
             },
         );
 
-        let swap = state.query_pool_swap(&params).expect("Swap should succeed");
+        let swap = state
+            .query_pool_swap(&params)
+            .expect("Swap should succeed");
 
         // Verify actual trade price matches limit
         let actual_amount_out = state
