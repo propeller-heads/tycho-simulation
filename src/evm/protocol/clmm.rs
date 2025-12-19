@@ -109,10 +109,12 @@ where
 /// * `target_price` - Target trade price as token_out/token_in (tycho convention)
 /// * `fee_pips` - Total fee in pips (1/1_000_000)
 /// * `tolerance` - Relative tolerance for trade price (e.g., 0.01 = 1%)
+/// * `amount_sign` - Sign for the amount_specified (Positive for V3, Negative for V4)
 /// * `swap_step_fn` - Closure that performs one step of the swap and checks trade price
 ///
 /// # Returns
 /// A tuple containing (amount_in, amount_out, SwapResults)
+#[allow(clippy::too_many_arguments)]
 pub fn clmm_swap_to_trade_price<F>(
     sqrt_price: U256,
     token_in: &Bytes,
@@ -120,10 +122,11 @@ pub fn clmm_swap_to_trade_price<F>(
     target_price: &Price,
     fee_pips: u32,
     tolerance: f64,
+    amount_sign: Sign,
     swap_step_fn: F,
 ) -> Result<(BigUint, BigUint, SwapResults), SimulationError>
 where
-    F: FnOnce(bool, &Price, f64) -> Result<(U256, U256, SwapResults), SimulationError>,
+    F: FnOnce(bool, &Price, f64, Sign) -> Result<(U256, U256, SwapResults), SimulationError>,
 {
     let zero_for_one = token_in < token_out;
 
@@ -152,7 +155,7 @@ where
     }
 
     // Execute the swap with trade price checking
-    let (amount_in, amount_out, result) = swap_step_fn(zero_for_one, target_price, tolerance)?;
+    let (amount_in, amount_out, result) = swap_step_fn(zero_for_one, target_price, tolerance, amount_sign)?;
 
     if amount_in == U256::ZERO {
         return Ok((BigUint::ZERO, BigUint::ZERO, SwapResults::default()));

@@ -243,6 +243,7 @@ impl UniswapV3State {
         zero_for_one: bool,
         target_price: &Price,
         tolerance: f64,
+        amount_sign: Sign,
     ) -> Result<(U256, U256, SwapResults), SimulationError> {
         if self.liquidity == 0 {
             return Err(SimulationError::RecoverableError("No liquidity".to_string()));
@@ -358,12 +359,12 @@ impl UniswapV3State {
             // Update state
             state.sqrt_price = sqrt_price;
             state.amount_remaining -= I256::checked_from_sign_and_abs(
-                Sign::Positive,
+                amount_sign,
                 step_amount_in_with_fee,
             )
             .unwrap();
             state.amount_calculated -=
-                I256::checked_from_sign_and_abs(Sign::Positive, step.amount_out).unwrap();
+                I256::checked_from_sign_and_abs(amount_sign, step.amount_out).unwrap();
 
             if state.sqrt_price == step.sqrt_price_next {
                 if step.initialized {
@@ -704,8 +705,9 @@ impl ProtocolSim for UniswapV3State {
                     limit,
                     self.fee as u32,
                     *tolerance,
-                    |zero_for_one, target_price, tol| {
-                        self.swap_to_trade_price(zero_for_one, target_price, tol)
+                    Sign::Positive, // V3 uses positive for exact input
+                    |zero_for_one, target_price, tol, amount_sign| {
+                        self.swap_to_trade_price(zero_for_one, target_price, tol, amount_sign)
                     },
                 )?;
 
@@ -1574,7 +1576,7 @@ mod tests {
 
         let tolerance = 0.10; // 10% tolerance (due to tick granularity in CLMM)
         let (amount_in, amount_out, _) = pool
-            .swap_to_trade_price(token_x.address < token_y.address, &target_price, tolerance)
+            .swap_to_trade_price(token_x.address < token_y.address, &target_price, tolerance, Sign::Positive)
             .expect("swap_to_trade_price failed");
 
         // Verify the trade price matches target
@@ -1644,7 +1646,7 @@ mod tests {
         let target_price = Price::new(BigUint::from(30u32), BigUint::from(10u32));
         let tolerance = 0.01;
 
-        let result = pool.swap_to_trade_price(token_x.address < token_y.address, &target_price, tolerance);
+        let result = pool.swap_to_trade_price(token_x.address < token_y.address, &target_price, tolerance, Sign::Positive);
 
         assert!(
             result.is_err(),
@@ -1687,7 +1689,7 @@ mod tests {
         let tolerance = 0.10; // 10% tolerance (due to tick granularity in CLMM)
 
         let (amount_in, estimated_amount_out, _) = pool
-            .swap_to_trade_price(token_x.address < token_y.address, &target_price, tolerance)
+            .swap_to_trade_price(token_x.address < token_y.address, &target_price, tolerance, Sign::Positive)
             .expect("swap_to_trade_price failed");
 
         // Execute actual swap to verify
@@ -1790,7 +1792,7 @@ mod tests {
         let target_price = Price::new(BigUint::from(19u32), BigUint::from(10u32));
         let tolerance = 0.20; // 20% tolerance (due to tick granularity in CLMM)
         let (amount_in, amount_out, _) = pool
-            .swap_to_trade_price(token_x.address < token_y.address, &target_price, tolerance)
+            .swap_to_trade_price(token_x.address < token_y.address, &target_price, tolerance, Sign::Positive)
             .expect("swap_to_trade_price failed");
 
         // Use the amount_in from swap_to_trade_price with get_amount_out
@@ -1892,6 +1894,7 @@ mod tests {
                 buy_token.address < sell_token.address,
                 &target_price,
                 tolerance,
+                Sign::Positive,
             );
 
             if should_succeed {
