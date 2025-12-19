@@ -278,6 +278,126 @@ pub fn cpmm_swap_to_price(
     Ok((u256_to_biguint(amount_in), u256_to_biguint(implied_amount_out)))
 }
 
+/// Calculates the exact amount of token_in required such that the trade's execution price
+/// equals the target price.
+///
+/// # Algorithm
+///
+/// Unlike `cpmm_swap_to_price` which targets the *marginal* (spot) price after the swap,
+/// this function targets the *trade* (average execution) price of the swap itself.
+///
+/// The trade price is defined as: `P = amount_in / amount_out`
+///
+/// ## Base equations
+/// 1. Trade Price: `P = amount_in / amount_out`
+/// 2. Amount Out: `amount_out = (reserve_out * amount_in * fee_numerator) / (reserve_in *
+///    fee_precision + amount_in * fee_numerator)`
+///
+/// ## Derivation
+/// Let:
+/// - `x` = reserve_in
+/// - `y` = reserve_out
+/// - `dx` = amount_in
+/// - `dy` = amount_out
+/// - `P` = target_price (in terms of amount_in per amount_out)
+/// - `gamma` = fee_numerator / fee_precision (e.g. 9970/10000 for 0.3% fee)
+///
+/// We want `dx / dy = P`.
+///
+/// Substituting the CPMM formula for `dy`:
+/// ```text,no_run
+/// P = dx / [ (y * dx * gamma) / (x + dx * gamma) ]
+/// P = (x + dx * gamma) / (y * gamma)
+/// P * y * gamma = x + dx * gamma
+/// dx * gamma = P * y * gamma - x
+/// dx = P * y - x / gamma
+/// ```
+///
+/// Translated to integer math with precision:
+/// ```text,no_run
+/// dx = (P_num * y * fee_num - x * P_den * fee_prec) / (P_den * fee_num)
+/// ```
+///
+/// where P = P_num / P_den after flipping the input Price (which is in amount_out/amount_in
+/// convention).
+///
+/// # Returns
+/// * `Ok((amount_in, implied_amount_out))` - The implied amount out satisfies `amount_in /
+///   implied_amount_out = target_price` (after flipping).
+/// * `Err(SimulationError)` - If target price is unreachable (better than current spot).
+pub fn cpmm_swap_to_trade_price(
+    reserve_in: U256,
+    reserve_out: U256,
+    target_price: &Price,
+    fee: ProtocolFee,
+) -> Result<(BigUint, BigUint), SimulationError> {
+    if reserve_in == U256::ZERO || reserve_out == U256::ZERO {
+        return Err(SimulationError::FatalError("Reserves cannot be zero".to_string()));
+    }
+
+    // Flip target pool price to swap price (P = amount_in / amount_out)
+    // Input Price is in amount_out/amount_in convention, so we invert it
+    let swap_price_num = biguint_to_u256(&target_price.denominator);
+    let swap_price_den = biguint_to_u256(&target_price.numerator);
+
+    // Check reachability: target trade price P must be strictly greater than current spot price
+    // (with fees). As you trade, P increases (you pay more per unit received), so the target
+    // must be above the starting spot price.
+    //
+    // Current spot price (in P convention) = reserve_in / (reserve_out * gamma)
+    //                                      = (reserve_in * fee_precision) / (reserve_out *
+    // fee_numerator)
+    //
+    // Condition: P > spot_price
+    // swap_price_num / swap_price_den > (reserve_in * fee_precision) / (reserve_out *
+    // fee_numerator) Cross-multiply: swap_price_num * reserve_out * fee_numerator >
+    // swap_price_den * reserve_in * fee_precision
+    let target_price_cross_mult = U512::from(swap_price_num)
+        .checked_mul(U512::from(reserve_out))
+        .and_then(|x| x.checked_mul(U512::from(fee.numerator)))
+        .ok_or_else(|| SimulationError::FatalError("Overflow in price check".to_string()))?;
+    let current_price_cross_mult = U512::from(swap_price_den)
+        .checked_mul(U512::from(reserve_in))
+        .and_then(|x| x.checked_mul(U512::from(fee.precision)))
+        .ok_or_else(|| SimulationError::FatalError("Overflow in price check".to_string()))?;
+
+    if target_price_cross_mult <= current_price_cross_mult {
+        return Err(SimulationError::InvalidInput(
+            "Target trade price is unreachable (at or better than current spot price)".to_string(),
+            None,
+        ));
+    }
+
+    // Calculate amount_in using the derived formula:
+    // amount_in = (P_num * reserve_out * fee_num - P_den * reserve_in * fee_prec) / (P_den *
+    // fee_num) We already have target_price_cross_mult = P_num * reserve_out * fee_num
+    //            and current_price_cross_mult = P_den * reserve_in * fee_prec
+    let numerator = target_price_cross_mult - current_price_cross_mult;
+
+    let denominator = U512::from(swap_price_den)
+        .checked_mul(U512::from(fee.numerator))
+        .ok_or_else(|| SimulationError::FatalError("Overflow in denominator".to_string()))?;
+
+    let amount_in_u512 = numerator / denominator;
+
+    // Check for U256 overflow
+    let limbs = amount_in_u512.as_limbs();
+    if limbs[4] != 0 || limbs[5] != 0 || limbs[6] != 0 || limbs[7] != 0 {
+        return Err(SimulationError::FatalError("Calculated amount_in overflows U256".to_string()));
+    }
+    let amount_in = U256::from_limbs([limbs[0], limbs[1], limbs[2], limbs[3]]);
+
+    if amount_in == U256::ZERO {
+        return Ok((BigUint::ZERO, BigUint::ZERO));
+    }
+
+    // Calculate implied_amount_out such that amount_in / amount_out = P
+    // amount_out = amount_in / P = amount_in * P_den / P_num
+    let implied_amount_out = mul_div(amount_in, swap_price_den, swap_price_num)?;
+
+    Ok((u256_to_biguint(amount_in), u256_to_biguint(implied_amount_out)))
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -417,5 +537,118 @@ mod tests {
             "implied_amount_out should be zero when target is at spot price, got: {}",
             implied_amount_out
         );
+    }
+
+    #[test]
+    fn test_swap_to_trade_price_verifies_trade_price() {
+        let reserve0 = U256::from(2_000_000u64);
+        let reserve1 = U256::from(1_000_000u64);
+
+        let fee_bps: u32 = 30;
+        let fee_numerator = U256::from(10000 - fee_bps);
+        let fee_precision = U256::from(10000u32);
+        let fee = ProtocolFee::new(fee_numerator, fee_precision);
+
+        // Target trade price: 2.5 amount_in per amount_out (in Price convention: 1/2.5 = 0.4)
+        // This is worse than current spot price (≈0.5), so it's achievable
+        let target_price = Price::new(BigUint::from(2u32), BigUint::from(5u32));
+
+        let (amount_in, implied_amount_out) =
+            cpmm_swap_to_trade_price(reserve0, reserve1, &target_price, fee).unwrap();
+
+        let amount_in_u256 = biguint_to_u256(&amount_in);
+
+        // Execute actual swap to get real amount_out
+        let fee_for_get_amount_out = ProtocolFee::new(fee_numerator, fee_precision);
+        let actual_amount_out =
+            cpmm_get_amount_out(amount_in_u256, reserve0, reserve1, fee_for_get_amount_out)
+                .unwrap();
+
+        // Compute actual trade price: amount_in / amount_out (in P convention)
+        // In Q convention (amount_out / amount_in), this is what we compare to target_price
+        let amount_in_f64 = amount_in
+            .to_string()
+            .parse::<f64>()
+            .unwrap();
+        let actual_amount_out_f64 = actual_amount_out
+            .to_string()
+            .parse::<f64>()
+            .unwrap();
+        let actual_trade_price_q = actual_amount_out_f64 / amount_in_f64;
+
+        let target_price_f64 = target_price
+            .numerator
+            .to_string()
+            .parse::<f64>()
+            .unwrap() /
+            target_price
+                .denominator
+                .to_string()
+                .parse::<f64>()
+                .unwrap();
+
+        let relative_diff = (actual_trade_price_q - target_price_f64).abs() / target_price_f64;
+        assert!(
+            relative_diff < 0.001,
+            "Actual trade price {actual_trade_price_q} should be close to target price \
+             {target_price_f64}, relative diff: {relative_diff}"
+        );
+
+        // Verify implied_amount_out is close to actual
+        let implied_amount_out_f64 = implied_amount_out
+            .to_string()
+            .parse::<f64>()
+            .unwrap();
+        let amount_out_diff =
+            (implied_amount_out_f64 - actual_amount_out_f64).abs() / actual_amount_out_f64;
+        assert!(
+            amount_out_diff < 0.001,
+            "Implied amount out {implied_amount_out_f64} should be close to actual \
+             {actual_amount_out_f64}, relative diff: {amount_out_diff}"
+        );
+    }
+
+    #[test]
+    fn test_swap_to_trade_price_unreachable() {
+        let reserve0 = U256::from(2_000_000u64);
+        let reserve1 = U256::from(1_000_000u64);
+
+        let fee_bps: u32 = 30;
+        let fee_numerator = U256::from(10000 - fee_bps);
+        let fee_precision = U256::from(10000u32);
+        let fee = ProtocolFee::new(fee_numerator, fee_precision);
+
+        // Target trade price: 0.6 amount_out per amount_in (better than spot ≈0.5)
+        // This is unreachable - you can't get a better price than spot
+        let target_price = Price::new(BigUint::from(3u32), BigUint::from(5u32));
+
+        let result = cpmm_swap_to_trade_price(reserve0, reserve1, &target_price, fee);
+
+        assert!(result.is_err(), "Should return error when target trade price is better than spot");
+    }
+
+    #[test]
+    fn test_swap_to_trade_price_at_spot() {
+        let reserve0 = U256::from(2_000_000u64);
+        let reserve1 = U256::from(1_000_000u64);
+
+        let fee_bps: u32 = 30;
+        let fee_numerator = U256::from(10000 - fee_bps);
+        let fee_precision = U256::from(10000u32);
+        let fee = ProtocolFee::new(fee_numerator, fee_precision);
+
+        // Target exactly at spot price (with fees):
+        // Spot price in Q convention = reserve_out * fee_num / (reserve_in * fee_prec)
+        //                            = 1_000_000 * 9970 / (2_000_000 * 10000)
+        let spot_price_num = U256::from(1_000_000u64) * fee_numerator;
+        let spot_price_den = U256::from(2_000_000u64) * fee_precision;
+
+        let target_price =
+            Price::new(u256_to_biguint(spot_price_num), u256_to_biguint(spot_price_den));
+
+        let result = cpmm_swap_to_trade_price(reserve0, reserve1, &target_price, fee);
+
+        // At exactly spot price, we can't achieve that trade price (need to be strictly worse)
+        assert!(result.is_err(), "Should return error when target trade price equals spot price");
     }
 }
