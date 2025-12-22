@@ -289,44 +289,37 @@ pub fn cpmm_swap_to_price(
 /// Unlike `cpmm_swap_to_price` which targets the *marginal* (spot) price after the swap,
 /// this function targets the *trade* (average execution) price of the swap itself.
 ///
-/// The trade price is defined as: `P = amount_in / amount_out`
-///
 /// ## Base equations
-/// 1. Trade Price: `P = amount_in / amount_out`
-/// 2. Amount Out: `amount_out = (reserve_out * amount_in * fee_numerator) / (reserve_in *
+/// 1. Trade price: `limit_price = amount_in / amount_out`
+/// 2. Amount out: `amount_out = (reserve_out * amount_in * fee_numerator) / (reserve_in *
 ///    fee_precision + amount_in * fee_numerator)`
 ///
 /// ## Derivation
-/// Let:
-/// - `x` = reserve_in
-/// - `y` = reserve_out
-/// - `dx` = amount_in
-/// - `dy` = amount_out
-/// - `P` = limit_price (in terms of amount_in per amount_out)
-/// - `gamma` = fee_numerator / fee_precision (e.g. 9970/10000 for 0.3% fee)
 ///
-/// We want `dx / dy = P`.
+/// We want `amount_in / amount_out = limit_price`.
 ///
-/// Substituting the CPMM formula for `dy`:
+/// Let `γ = fee_numerator / fee_precision` (e.g., 9970/10000 for 0.3% fee).
+///
+/// Substituting the CPMM formula for `amount_out`:
 /// ```text,no_run
-/// P = dx / [ (y * dx * gamma) / (x + dx * gamma) ]
-/// P = (x + dx * gamma) / (y * gamma)
-/// P * y * gamma = x + dx * gamma
-/// dx * gamma = P * y * gamma - x
-/// dx = P * y - x / gamma
+/// limit_price = amount_in / [ (reserve_out * amount_in * γ) / (reserve_in + amount_in * γ) ]
+/// limit_price = (reserve_in + amount_in * γ) / (reserve_out * γ)
+/// limit_price * reserve_out * γ = reserve_in + amount_in * γ
+/// amount_in * γ = limit_price * reserve_out * γ - reserve_in
+/// amount_in = limit_price * reserve_out - reserve_in / γ
 /// ```
 ///
 /// Translated to integer math with precision:
 /// ```text,no_run
-/// dx = (P_num * y * fee_num - x * P_den * fee_prec) / (P_den * fee_num)
+/// amount_in = (P_num * reserve_out * fee_num - reserve_in * P_den * fee_prec) / (P_den * fee_num)
 /// ```
 ///
-/// where P = P_num / P_den after flipping the input Price (which is in amount_out/amount_in
-/// convention).
+/// where `limit_price = P_num / P_den` after flipping the input `Price` (which is in
+/// amount_out/amount_in convention).
 ///
 /// # Returns
-/// * `Ok((amount_in, implied_amount_out))` - The implied amount out satisfies `amount_in /
-///   implied_amount_out = limit_price` (after flipping).
+/// * `Ok((amount_in, implied_amount_out))` - The implied amount out satisfies
+///   `amount_in / implied_amount_out ≈ limit_price` (after flipping, with integer rounding).
 ///
 /// # Errors
 /// * `FatalError` - If reserves are zero or calculation overflows
