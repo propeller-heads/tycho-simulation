@@ -318,8 +318,8 @@ pub fn cpmm_swap_to_price(
 /// amount_out/amount_in convention).
 ///
 /// # Returns
-/// * `Ok((amount_in, implied_amount_out))` - The implied amount out satisfies
-///   `amount_in / implied_amount_out ≈ limit_price` (after flipping, with integer rounding).
+/// * `Ok((amount_in, implied_amount_out))` - The implied amount out satisfies `amount_in /
+///   implied_amount_out ≈ limit_price` (after flipping, with integer rounding).
 ///
 /// # Errors
 /// * `FatalError` - If reserves are zero or calculation overflows

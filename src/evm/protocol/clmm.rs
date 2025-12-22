@@ -1,4 +1,4 @@
-use alloy::primitives::{Sign, I256, U256};
+use alloy::primitives::{Sign, I256, U256, U512};
 use num_bigint::BigUint;
 use tycho_common::{
     simulation::{errors::SimulationError, protocol_sim::Price},
@@ -6,7 +6,7 @@ use tycho_common::{
 };
 
 use crate::evm::protocol::{
-    u256_num::u256_to_biguint,
+    u256_num::{biguint_to_u256, u256_to_biguint},
     utils::uniswap::{sqrt_price_math::get_sqrt_price_limit, SwapResults},
 };
 
@@ -109,15 +109,15 @@ where
 /// Unlike `clmm_swap_to_price` which targets the *marginal* (spot) price after the swap,
 /// this function targets the *trade* (average execution) price of the swap itself.
 ///
-/// The trade price is defined as: `P = amount_in / amount_out`
+/// The trade price is defined as: `P = amount_out / amount_in`
 ///
-/// Since CLMM has concentrated liquidity that varies across price ranges, there's no
-/// closed-form solution. Instead, we execute the swap step-by-step until the accumulated
-/// trade price reaches the limit.
+/// This uses an analytical formula to compute the exact sqrt_price needed to achieve
+/// the target trade price within each tick range, iterating through tick boundaries
+/// as needed.
 ///
 /// ## Trade Price vs Spot Price
 /// - **Spot price**: The marginal price at a specific point (price for infinitesimal swap)
-/// - **Trade price**: The average price of an executed swap (total_in / total_out)
+/// - **Trade price**: The average price of an executed swap (total_out / total_in)
 /// - Trade price accounts for price impact across the entire swap
 ///
 /// # Arguments
@@ -126,82 +126,106 @@ where
 /// * `token_out` - Token being bought
 /// * `limit_price` - Limit trade price as token_out/token_in (tycho convention)
 /// * `fee_pips` - Total fee in pips (1/1_000_000)
-/// * `tolerance` - Relative tolerance for trade price (e.g., 0.01 = 1%)
-/// * `amount_sign` - Sign for the amount_specified (Positive for V3, Negative for V4)
-/// * `swap_step_fn` - Closure that performs one step of the swap and checks trade price
+/// * `swap_fn` - Closure that performs the swap to achieve target trade price
 ///
 /// # Returns
 /// A tuple containing (amount_in, amount_out, SwapResults)
 ///
 /// # Behavior
-/// - If limit is achievable: swaps to achieve the limit price (within tolerance)
+/// - If limit is achievable: swaps to achieve the exact limit price
 /// - If limit is worse than available: swaps all available liquidity (doesn't error)
 /// - Errors only if limit is better than effective spot (impossible to achieve)
 ///
 /// # Errors
 /// Returns `InvalidInput` if limit is better than effective spot price (impossible to achieve)
-#[allow(clippy::too_many_arguments)]
 pub fn clmm_swap_to_trade_price<F>(
     sqrt_price: U256,
     token_in: &Bytes,
     token_out: &Bytes,
     limit_price: &Price,
     fee_pips: u32,
-    tolerance: f64,
-    amount_sign: Sign,
-    swap_step_fn: F,
+    swap_fn: F,
 ) -> Result<(BigUint, BigUint, SwapResults), SimulationError>
 where
-    F: FnOnce(bool, &Price, f64, Sign) -> Result<(U256, U256, SwapResults), SimulationError>,
+    F: FnOnce(bool, &Price) -> Result<(U256, U256, SwapResults), SimulationError>,
 {
     let zero_for_one = token_in < token_out;
 
     // Validate that limit trade price is not better than effective spot price
     // (which would be impossible to achieve)
+    //
+    // We use cross-multiplication to avoid f64 precision issues:
+    //
+    // For zero_for_one:
+    //   spot_price = sqrt_price² / 2^192
+    //   effective_spot = spot_price × (1_000_000 - fee_pips) / 1_000_000
+    //   Check: limit_num/limit_den > effective_spot
+    //   Cross-mult: limit_num × 2^192 × 1_000_000 > sqrt_price² × (1_000_000 - fee_pips) × limit_den
+    //
+    // For !zero_for_one:
+    //   spot_price = 2^192 / sqrt_price²
+    //   effective_spot = spot_price × (1_000_000 - fee_pips) / 1_000_000
+    //   Check: limit_num/limit_den > effective_spot
+    //   Cross-mult: limit_num × sqrt_price² × 1_000_000 > 2^192 × (1_000_000 - fee_pips) × limit_den
 
-    use num_traits::ToPrimitive;
-    let limit_price_f64 = limit_price
-        .numerator
-        .to_f64()
-        .unwrap_or(0.0) /
-        limit_price
-            .denominator
-            .to_f64()
-            .unwrap_or(1.0);
+    let limit_num = U512::from(biguint_to_u256(&limit_price.numerator));
+    let limit_den = U512::from(biguint_to_u256(&limit_price.denominator));
+    let sqrt_price_512 = U512::from(sqrt_price);
+    let sqrt_price_squared = sqrt_price_512.checked_mul(sqrt_price_512).ok_or_else(|| {
+        SimulationError::FatalError("Overflow in sqrt_price squared calculation".to_string())
+    })?;
+    let two_192 = U512::from(1u64) << 192;
+    let fee_factor = U512::from(1_000_000 - fee_pips);
+    let fee_precision = U512::from(1_000_000u32);
 
-    // Validate against effective spot price (spot price after fees)
-    // The best achievable trade price is the current spot price minus fees
-    use crate::evm::protocol::u256_num::u256_to_f64;
-    let sqrt_price_f64 = u256_to_f64(sqrt_price)?;
-    let q96 = 2_f64.powi(96);
-    let raw_spot = (sqrt_price_f64 / q96).powi(2); // This is token1/token0
-    let spot_price_f64 = if zero_for_one {
-        raw_spot // For zero_for_one: Price = token_out/token_in = token1/token0
+    let limit_is_better_than_spot = if zero_for_one {
+        // limit_num × 2^192 × 1_000_000 > sqrt_price² × (1_000_000 - fee_pips) × limit_den
+        let lhs = limit_num
+            .checked_mul(two_192)
+            .and_then(|x| x.checked_mul(fee_precision));
+        let rhs = sqrt_price_squared
+            .checked_mul(fee_factor)
+            .and_then(|x| x.checked_mul(limit_den));
+
+        match (lhs, rhs) {
+            (Some(l), Some(r)) => l > r,
+            _ => {
+                return Err(SimulationError::FatalError(
+                    "Overflow in limit price comparison".to_string(),
+                ))
+            }
+        }
     } else {
-        1.0 / raw_spot // For !zero_for_one: Price = token_out/token_in = token0/token1
+        // limit_num × sqrt_price² × 1_000_000 > 2^192 × (1_000_000 - fee_pips) × limit_den
+        let lhs = limit_num
+            .checked_mul(sqrt_price_squared)
+            .and_then(|x| x.checked_mul(fee_precision));
+        let rhs = two_192
+            .checked_mul(fee_factor)
+            .and_then(|x| x.checked_mul(limit_den));
+
+        match (lhs, rhs) {
+            (Some(l), Some(r)) => l > r,
+            _ => {
+                return Err(SimulationError::FatalError(
+                    "Overflow in limit price comparison".to_string(),
+                ))
+            }
+        }
     };
 
-    // Apply fees to get effective spot (best achievable trade price)
-    // Using same precision as get_sqrt_price_limit: fee_precision = 1_000_000
-    let fee_multiplier = 1.0 - (fee_pips as f64 / 1_000_000.0);
-    let effective_spot_price = spot_price_f64 * fee_multiplier;
-
-    // Check if limit is better than effective spot (impossible to achieve)
-    if limit_price_f64 > effective_spot_price {
+    if limit_is_better_than_spot {
         return Err(SimulationError::InvalidInput(
-            format!(
-                "Limit trade price {:.6} is better than effective spot price {:.6} (spot {:.6} × {:.6}) - impossible to achieve",
-                limit_price_f64, effective_spot_price, spot_price_f64, fee_multiplier
-            ),
+            "Limit trade price is better than effective spot price - impossible to achieve"
+                .to_string(),
             None,
         ));
     }
 
-    // Execute the swap with trade price checking
-    // If limit is achievable: swaps to achieve the limit price
+    // Execute the swap using analytical calculation
+    // If limit is achievable: swaps to achieve the exact limit price
     // If limit is worse than available: swaps all available liquidity (natural behavior)
-    let (amount_in, amount_out, result) =
-        swap_step_fn(zero_for_one, limit_price, tolerance, amount_sign)?;
+    let (amount_in, amount_out, result) = swap_fn(zero_for_one, limit_price)?;
 
     if amount_in == U256::ZERO {
         return Ok((BigUint::ZERO, BigUint::ZERO, SwapResults::default()));
