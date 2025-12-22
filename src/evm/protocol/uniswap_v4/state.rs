@@ -304,6 +304,23 @@ impl UniswapV4State {
         })
     }
 
+    /// Executes a swap to achieve a specific trade (execution) price.
+    ///
+    /// # Price Units
+    /// - `target_price` is in Tycho convention: Price = token_out/token_in (amount received /
+    ///   amount paid)
+    /// - `zero_for_one`: if true, swapping token0→token1; if false, swapping token1→token0
+    /// - When zero_for_one=true: token_in=token0, token_out=token1, so Price = token1/token0
+    /// - When zero_for_one=false: token_in=token1, token_out=token0, so Price = token0/token1
+    ///
+    /// # Validation
+    /// Validates that target_price is within achievable range [limit_trade_price, spot_price] or
+    /// [spot_price, limit_trade_price] depending on swap direction. Uses get_limits() to
+    /// determine the worst achievable price.
+    ///
+    /// # Returns
+    /// * `Ok((amount_in, amount_out, swap_results))` - The amounts needed to achieve the target
+    ///   trade price, along with the resulting swap state.
     fn swap_to_trade_price(
         &self,
         zero_for_one: bool,

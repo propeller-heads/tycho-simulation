@@ -251,6 +251,10 @@ impl UniswapV3State {
     /// Validates that target_price is within achievable range [limit_trade_price, spot_price] or
     /// [spot_price, limit_trade_price] depending on swap direction. Uses get_limits() to
     /// determine the worst achievable price.
+    ///
+    /// # Returns
+    /// * `Ok((amount_in, amount_out, swap_results))` - The amounts needed to achieve the target
+    ///   trade price, along with the resulting swap state.
     fn swap_to_trade_price(
         &self,
         zero_for_one: bool,
