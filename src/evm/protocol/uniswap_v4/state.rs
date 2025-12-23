@@ -372,8 +372,16 @@ impl UniswapV4State {
             liquidity: self.liquidity,
         };
         let mut gas_used = U256::from(130_000);
-        let mut total_amount_in = U256::ZERO;
+        let mut total_amount_in_with_fee = U256::ZERO;
+        let mut total_amount_in_pre_fee = U256::ZERO; // For accumulated trade price calculation
         let mut total_amount_out = U256::ZERO;
+
+        // Convert target price from user perspective (amount_out / amount_in_with_fee)
+        // to formula perspective (amount_out / amount_in_pre_fee)
+        // Relationship: target_price_formula = target_price_user / (1 - fee)
+        let fee_factor = 1_000_000u32 - fee_pips;
+        let formula_target_num = &target_price.numerator * BigUint::from(1_000_000u32);
+        let formula_target_den = &target_price.denominator * BigUint::from(fee_factor);
 
         // Iterate through tick ranges, using analytical calculation for exact amounts
         loop {
@@ -392,20 +400,24 @@ impl UniswapV4State {
             next_tick = next_tick.clamp(MIN_TICK, MAX_TICK);
             let sqrt_price_limit = get_sqrt_ratio_at_tick(next_tick)?;
 
-            // Use analytical function to compute exact swap amounts for target trade price
+            // Use analytical function to compute exact swap amounts for target cumulative trade price
+            // Note: formula uses pre-fee amounts, so we pass the converted target price
             let (sqrt_price_new, amount_in, amount_out, fee_amount, reached_target) =
                 swap_math::compute_swap_to_trade_price(
                     state.sqrt_price,
                     sqrt_price_limit,
                     state.liquidity,
-                    &target_price.numerator,
-                    &target_price.denominator,
+                    &formula_target_num,
+                    &formula_target_den,
                     fee_pips,
+                    total_amount_in_pre_fee,
+                    total_amount_out,
                 )?;
 
             // Update totals
             let step_amount_in_with_fee = safe_add_u256(amount_in, fee_amount)?;
-            total_amount_in = safe_add_u256(total_amount_in, step_amount_in_with_fee)?;
+            total_amount_in_with_fee = safe_add_u256(total_amount_in_with_fee, step_amount_in_with_fee)?;
+            total_amount_in_pre_fee = safe_add_u256(total_amount_in_pre_fee, amount_in)?;
             total_amount_out = safe_add_u256(total_amount_out, amount_out)?;
 
             // Update state
@@ -442,7 +454,7 @@ impl UniswapV4State {
         }
 
         Ok((
-            total_amount_in,
+            total_amount_in_with_fee,
             total_amount_out,
             SwapResults {
                 amount_calculated: I256::checked_from_sign_and_abs(
@@ -452,7 +464,7 @@ impl UniswapV4State {
                 .ok_or_else(|| {
                     SimulationError::FatalError("Failed to create amount_calculated".to_string())
                 })?,
-                amount_specified: I256::checked_from_sign_and_abs(Sign::Negative, total_amount_in)
+                amount_specified: I256::checked_from_sign_and_abs(Sign::Negative, total_amount_in_with_fee)
                     .ok_or_else(|| {
                         SimulationError::FatalError("Failed to create amount_specified".to_string())
                     })?,
@@ -2574,9 +2586,13 @@ mod tests {
         .unwrap();
 
         // Target trade price: 1.8 token_out per token_in (worse than spot ~2.0, achievable)
-        let target_price = Price::new(BigUint::from(18u32), BigUint::from(10u32));
+        // Use high precision fraction to minimize integer truncation
+        let target_price = Price::new(
+            BigUint::from_str("1800000000000000000").unwrap(),
+            BigUint::from_str("1000000000000000000").unwrap()
+        );
 
-        let tolerance = 0.10; // 10% tolerance for verification (due to tick granularity in CLMM)
+        let tolerance = 0.000001; // 1e-6 tolerance - quadratic formula achieves machine precision
         let (amount_in, amount_out, _) = pool
             .swap_to_trade_price(token_x.address < token_y.address, &target_price)
             .expect("swap_to_trade_price failed");
@@ -2676,8 +2692,12 @@ mod tests {
         .unwrap();
 
         // Target trade price: 1.95 (slightly worse than spot ~2.0)
-        let target_price = Price::new(BigUint::from(195u32), BigUint::from(100u32));
-        let tolerance = 0.10; // 10% tolerance for verification (due to tick granularity in CLMM)
+        // Use high precision fraction to minimize integer truncation
+        let target_price = Price::new(
+            BigUint::from_str("1950000000000000000").unwrap(),
+            BigUint::from_str("1000000000000000000").unwrap()
+        );
+        let tolerance = 0.000001; // 1e-6 tolerance - quadratic formula achieves machine precision
 
         let (amount_in, estimated_amount_out, _) = pool
             .swap_to_trade_price(token_x.address < token_y.address, &target_price)
@@ -2752,9 +2772,12 @@ mod tests {
         )
         .unwrap();
 
-        // Target: 1.9 Y per X
-        let target_price = Price::new(BigUint::from(19u32), BigUint::from(10u32));
-        let tolerance = 0.20; // 20% tolerance for verification (due to tick granularity in CLMM)
+        // Target: 1.9 Y per X - use high precision fraction
+        let target_price = Price::new(
+            BigUint::from_str("1900000000000000000").unwrap(),
+            BigUint::from_str("1000000000000000000").unwrap()
+        );
+        let tolerance = 0.000001; // 1e-6 tolerance - quadratic formula achieves machine precision
         let (amount_in, amount_out, _) = pool
             .swap_to_trade_price(token_x.address < token_y.address, &target_price)
             .expect("swap_to_trade_price failed");
@@ -2836,14 +2859,15 @@ mod tests {
         // Pool has spot price ~2.0 Y/X
         // For zero_for_one (X→Y): effective spot ~1.994 after 0.3% fee
         // For !zero_for_one (Y→X): effective spot ~0.497 after 0.3% fee
+        // Use high precision fractions to minimize integer truncation effects
         let test_cases = vec![
-            (true, "19/10", true, "zero_for_one: 1.9 (achievable)"),
-            (true, "15/10", true, "zero_for_one: 1.5 (achievable, more price impact)"),
-            (false, "48/100", true, "one_for_zero: 0.48 (achievable)"),
-            (false, "45/100", true, "one_for_zero: 0.45 (achievable, more price impact)"),
+            (true, "1900000000000000000/1000000000000000000", true, "zero_for_one: 1.9 (achievable)"),
+            (true, "1500000000000000000/1000000000000000000", true, "zero_for_one: 1.5 (achievable, more price impact)"),
+            (false, "480000000000000000/1000000000000000000", true, "one_for_zero: 0.48 (achievable)"),
+            (false, "450000000000000000/1000000000000000000", true, "one_for_zero: 0.45 (achievable, more price impact)"),
         ];
 
-        let tolerance = 0.15; // 15% tolerance due to tick granularity
+        let tolerance = 0.000001; // 0.0001% tolerance - quadratic formula achieves machine precision
 
         for (zero_for_one, price_str, reachable, test_id) in test_cases {
             let parts: Vec<&str> = price_str.split('/').collect();
@@ -2925,7 +2949,11 @@ mod tests {
         // For !zero_for_one (selling token1 for token0), price is token0/token1
         // Effective spot ~0.497 after 0.3% fee
         // Target 0.47 is worse than effective spot, so it's achievable
-        let target_price = Price::new(BigUint::from(47u32), BigUint::from(100u32)); // 0.47
+        // Use high precision fraction to minimize integer truncation
+        let target_price = Price::new(
+            BigUint::from_str("470000000000000000").unwrap(),
+            BigUint::from_str("1000000000000000000").unwrap()
+        ); // 0.47
 
         // zero_for_one = false for one_for_zero swap
         let result = pool.swap_to_trade_price(false, &target_price);
@@ -2940,7 +2968,7 @@ mod tests {
         use crate::evm::protocol::u256_num::u256_to_f64;
         let trade_price = u256_to_f64(amount_out).unwrap() / u256_to_f64(amount_in).unwrap();
         let target_f64 = 0.47;
-        let tolerance = 0.15;
+        let tolerance = 0.000001; // 1e-6 tolerance
         let relative_diff = (trade_price - target_f64).abs() / target_f64;
         assert!(
             relative_diff <= tolerance || trade_price > target_f64,
@@ -2954,7 +2982,7 @@ mod tests {
     #[test]
     fn test_swap_to_trade_price_asymmetric_fees() {
         // V4 unique feature: different fees for different directions
-        let _token_x = Token::new(
+        let token_x = Token::new(
             &Bytes::from_str("0x1000000000000000000000000000000000000001").unwrap(),
             "X",
             18,
@@ -2963,7 +2991,7 @@ mod tests {
             Default::default(),
             100,
         );
-        let _token_y = Token::new(
+        let token_y = Token::new(
             &Bytes::from_str("0x2000000000000000000000000000000000000002").unwrap(),
             "Y",
             18,
@@ -2973,34 +3001,101 @@ mod tests {
             100,
         );
 
-        // Asymmetric fees: 0.3% for zero_for_one, 0.05% for one_for_zero
+        // Asymmetric fees: protocol fees differ by direction, but lp_fee is added to both
+        // zero_for_one total: 3000 + 3000 ≈ 5991 pips (~0.6%)
+        // one_for_zero total: 500 + 3000 ≈ 3499 pips (~0.35%)
+        //
+        // sqrt_price 112045541949572279837463876454 = sqrt(2) * 2^96 corresponds to tick ~6931
+        // (tick = 2 * log_1.0001(sqrt(2)) ≈ 6931)
+        // We set tick=6931 and have ticks at 0 and 12000 to allow swaps in both directions
         let pool = UniswapV4State::new(
             100_000_000_000_000_000_000u128,
-            U256::from_str("112045541949572279837463876454").unwrap(),
+            U256::from_str("112045541949572279837463876454").unwrap(), // sqrt(2) * 2^96, corresponds to Y/X = 2
             UniswapV4Fees { zero_for_one: 3000, one_for_zero: 500, lp_fee: 3000 },
-            0,
+            6931, // Tick matching the sqrt_price (tick = 2 * log_1.0001(sqrt(2)))
             60,
             vec![
-                TickInfo::new(-6000, 50_000_000_000_000_000_000i128).unwrap(),
-                TickInfo::new(6000, -50_000_000_000_000_000_000i128).unwrap(),
+                TickInfo::new(0, 50_000_000_000_000_000_000i128).unwrap(),
+                TickInfo::new(6960, 0).unwrap(), // Tick near current for tick spacing alignment
+                TickInfo::new(12000, -50_000_000_000_000_000_000i128).unwrap(),
             ],
         )
         .unwrap();
 
-        // Test zero_for_one with higher fee (0.3%)
-        let target_z = Price::new(BigUint::from(19u32), BigUint::from(10u32)); // 1.9
-        let result_z = pool.swap_to_trade_price(true, &target_z);
-        assert!(result_z.is_ok(), "zero_for_one should succeed");
-        let (amount_in_z, amount_out_z, _) = result_z.unwrap();
-        assert!(amount_in_z > U256::ZERO && amount_out_z > U256::ZERO);
+        let tolerance = 0.000001; // 1e-6 tolerance
+        use crate::evm::protocol::u256_num::u256_to_f64;
+        use num_traits::ToPrimitive;
 
-        // Test one_for_zero with lower fee (0.05%)
+        // ========== Test 1: zero_for_one with higher fee (0.3%) ==========
+        // Use high precision fraction to minimize integer truncation
+        let target_z = Price::new(
+            BigUint::from_str("1900000000000000000").unwrap(),
+            BigUint::from_str("1000000000000000000").unwrap()
+        ); // 1.9
+        let target_z_f64 = 1.9;
+
+        let (amount_in_z, amount_out_estimated_z, _) = pool
+            .swap_to_trade_price(true, &target_z)
+            .expect("zero_for_one should succeed");
+        assert!(amount_in_z > U256::ZERO && amount_out_estimated_z > U256::ZERO);
+
+        // Verify swap_to_trade_price's returned trade price
+        let trade_price_estimated_z = u256_to_f64(amount_out_estimated_z).unwrap() / u256_to_f64(amount_in_z).unwrap();
+        let diff_estimated_z = (trade_price_estimated_z - target_z_f64).abs() / target_z_f64;
+        assert!(
+            diff_estimated_z <= tolerance,
+            "zero_for_one: swap_to_trade_price returned trade price {:.10} should match target {:.10}, diff: {:.2e}",
+            trade_price_estimated_z, target_z_f64, diff_estimated_z
+        );
+
+        // Verify independently with get_amount_out
+        // zero_for_one: selling token_x (token0) for token_y (token1)
+        let result_z = pool
+            .get_amount_out(u256_to_biguint(amount_in_z), &token_x, &token_y)
+            .expect("get_amount_out failed for zero_for_one");
+        let trade_price_actual_z = result_z.amount.to_f64().unwrap() / u256_to_biguint(amount_in_z).to_f64().unwrap();
+        let diff_actual_z = (trade_price_actual_z - target_z_f64).abs() / target_z_f64;
+        assert!(
+            diff_actual_z <= tolerance,
+            "zero_for_one: get_amount_out trade price {:.10} should match target {:.10}, diff: {:.2e}",
+            trade_price_actual_z, target_z_f64, diff_actual_z
+        );
+
+        // ========== Test 2: one_for_zero with lower fee (0.05%) ==========
         // Effective spot ~0.4995 (much closer to raw spot due to lower fee)
-        let target_o = Price::new(BigUint::from(49u32), BigUint::from(100u32)); // 0.49
-        let result_o = pool.swap_to_trade_price(false, &target_o);
-        assert!(result_o.is_ok(), "one_for_zero should succeed");
-        let (amount_in_o, amount_out_o, _) = result_o.unwrap();
-        assert!(amount_in_o > U256::ZERO && amount_out_o > U256::ZERO);
+        // Use high precision fraction
+        let target_o = Price::new(
+            BigUint::from_str("490000000000000000").unwrap(),
+            BigUint::from_str("1000000000000000000").unwrap()
+        ); // 0.49
+        let target_o_f64 = 0.49;
+
+        let (amount_in_o, amount_out_estimated_o, _) = pool
+            .swap_to_trade_price(false, &target_o)
+            .expect("one_for_zero should succeed");
+        assert!(amount_in_o > U256::ZERO && amount_out_estimated_o > U256::ZERO);
+
+        // Verify swap_to_trade_price's returned trade price
+        let trade_price_estimated_o = u256_to_f64(amount_out_estimated_o).unwrap() / u256_to_f64(amount_in_o).unwrap();
+        let diff_estimated_o = (trade_price_estimated_o - target_o_f64).abs() / target_o_f64;
+        assert!(
+            diff_estimated_o <= tolerance,
+            "one_for_zero: swap_to_trade_price returned trade price {:.10} should match target {:.10}, diff: {:.2e}",
+            trade_price_estimated_o, target_o_f64, diff_estimated_o
+        );
+
+        // Verify independently with get_amount_out
+        // one_for_zero: selling token_y (token1) for token_x (token0)
+        let result_o = pool
+            .get_amount_out(u256_to_biguint(amount_in_o), &token_y, &token_x)
+            .expect("get_amount_out failed for one_for_zero");
+        let trade_price_actual_o = result_o.amount.to_f64().unwrap() / u256_to_biguint(amount_in_o).to_f64().unwrap();
+        let diff_actual_o = (trade_price_actual_o - target_o_f64).abs() / target_o_f64;
+        assert!(
+            diff_actual_o <= tolerance,
+            "one_for_zero: get_amount_out trade price {:.10} should match target {:.10}, diff: {:.2e}",
+            trade_price_actual_o, target_o_f64, diff_actual_o
+        );
     }
 
     #[test]
