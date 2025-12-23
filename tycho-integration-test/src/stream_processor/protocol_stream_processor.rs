@@ -24,6 +24,7 @@ use tycho_simulation::{
             uniswap_v2::state::UniswapV2State,
             uniswap_v3::state::UniswapV3State,
             uniswap_v4::state::UniswapV4State,
+            velodrome_slipstreams::state::VelodromeSlipstreamsState,
             vm::state::EVMPoolState,
         },
         stream::ProtocolStreamBuilder,
@@ -255,6 +256,13 @@ impl ProtocolStreamProcessor {
             }
             "rocketpool" => {
                 stream = stream.exchange::<RocketpoolState>("rocketpool", tvl_filter.clone(), None);
+            }
+            "velodrome_slipstreams" => {
+                stream = stream.exchange::<VelodromeSlipstreamsState>(
+                    "velodrome_slipstreams",
+                    tvl_filter.clone(),
+                    None,
+                );
             }
             _ => {
                 return Err(miette::miette!("Unknown protocol: {}", protocol));
