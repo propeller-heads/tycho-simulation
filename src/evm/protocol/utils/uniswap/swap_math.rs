@@ -1,4 +1,4 @@
-use alloy::primitives::{I256, U256, U512};
+use alloy::primitives::{I256, U256};
 use num_bigint::{BigInt, BigUint};
 use num_traits::Signed;
 use tycho_common::simulation::errors::SimulationError;
@@ -12,7 +12,8 @@ use crate::evm::protocol::{
 
 /// Computes the result of swapping some amount in, or amount out, given the parameters of the swap
 ///
-/// The fee, plus the amount in, will never exceed the amount remaining if the swap's `amountSpecified` is positive
+/// The fee, plus the amount in, will never exceed the amount remaining if the swap's
+/// `amountSpecified` is positive
 ///
 /// # Arguments
 ///
@@ -21,10 +22,10 @@ use crate::evm::protocol::{
 ///   is inferred. Typically represents the next tick boundary.
 /// * `liquidity` - The usable liquidity in the current tick range.
 /// * `amount_remaining` - How much input or output amount is remaining to be swapped in/out.
-///   Positive values indicate exact input swaps (amount_specified > 0),
-///   negative values indicate exact output swaps (amount_specified < 0).
-/// * `fee_pips` - The fee taken from the input amount, expressed in hundredths of a bip
-///   (e.g., 3000 = 0.3%).
+///   Positive values indicate exact input swaps (amount_specified > 0), negative values indicate
+///   exact output swaps (amount_specified < 0).
+/// * `fee_pips` - The fee taken from the input amount, expressed in hundredths of a bip (e.g., 3000
+///   = 0.3%).
 ///
 /// # Returns
 ///
@@ -188,13 +189,14 @@ pub(crate) fn compute_swap_step(
 ///
 /// # Price Types and Fee Handling
 ///
-/// **IMPORTANT:** This function expects a **FORMULA target price** (amount_out / amount_in_pre_fee).
-/// The caller is responsible for converting the user's target price to the formula price:
+/// **IMPORTANT:** This function expects a **FORMULA target price** (amount_out /
+/// amount_in_pre_fee). The caller is responsible for converting the user's target price to the
+/// formula price:
 ///
 /// - **User price**: `amount_out / amount_in_with_fee` - what the user pays/receives
 /// - **Formula price**: `amount_out / amount_in_pre_fee` - used in Uniswap math
-/// - **Conversion**: `formula_price = user_price / (1 - fee)`
-///                   `formula_price = user_price × 1_000_000 / (1_000_000 - fee_pips)`
+/// - **Conversion**: `formula_price = user_price / (1 - fee)` `formula_price = user_price ×
+///   1_000_000 / (1_000_000 - fee_pips)`
 ///
 /// The `fee_pips` parameter is used ONLY to calculate the fee_amount on the returned amounts,
 /// NOT for target price conversion (that's the caller's responsibility).
@@ -240,7 +242,8 @@ pub(crate) fn compute_swap_step(
 /// * `target_price_num` - **Formula** target price numerator (amount_out / amount_in_pre_fee).
 /// * `target_price_den` - **Formula** target price denominator.
 /// * `fee_pips` - The fee in pips (e.g., 3000 = 0.3%). Used ONLY for fee_amount calculation.
-/// * `accumulated_in` - **Pre-fee** input amount already accumulated from previous ticks (0 if none).
+/// * `accumulated_in` - **Pre-fee** input amount already accumulated from previous ticks (0 if
+///   none).
 /// * `accumulated_out` - Output amount already accumulated from previous ticks (0 if none).
 ///
 /// # Swap Direction
@@ -257,8 +260,8 @@ pub(crate) fn compute_swap_step(
 /// * `amount_in` - Amount of input token (before fee) for this tick
 /// * `amount_out` - Amount of output token for this tick
 /// * `fee_amount` - Fee charged for this tick
-/// * `reached_target` - Whether we achieved the target price (false if hit tick boundary first
-///   or target was not achievable with the given accumulated amounts)
+/// * `reached_target` - Whether we achieved the target price (false if hit tick boundary first or
+///   target was not achievable with the given accumulated amounts)
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_swap_to_trade_price(
     sqrt_ratio_current: U256,
@@ -290,7 +293,8 @@ pub(crate) fn compute_swap_to_trade_price(
     // residual = P × accumulated_in - accumulated_out (scaled by target_price_den)
     // When residual > 0: we need more output to reach target
     // When residual < 0: we have more output than needed
-    let residual = BigInt::from(&target_price_num * &acc_in) - BigInt::from(&acc_out * &target_price_den);
+    let residual =
+        BigInt::from(&target_price_num * &acc_in) - BigInt::from(&acc_out * &target_price_den);
 
     // Solve quadratic equation for the price delta
     // If no valid solution exists (target not achievable), fall back to tick boundary
@@ -394,7 +398,6 @@ pub(crate) fn compute_swap_to_trade_price(
 /// # Returns
 ///
 /// The positive root as a BigUint, or an error if no positive real root exists.
-#[allow(dead_code)]
 fn solve_quadratic(
     b_num: &BigInt,
     b_den: &BigUint,
@@ -428,23 +431,27 @@ fn solve_quadratic(
         // x = -2c / (b + sqrt(D))
         // x = -2 * (c_num/c_den) / (b_num/b_den + sqrt_d_num/sqrt_d_den)
         // x = -2 * c_num * b_den * sqrt_d_den / (c_den * (b_num * sqrt_d_den + sqrt_d_num * b_den))
-        let x_num = BigInt::from(-2i64) * c_num * BigInt::from(b_den.clone()) * BigInt::from(sqrt_d_den.clone());
-        let x_den = BigInt::from(c_den.clone()) * (b_num * BigInt::from(sqrt_d_den.clone()) + BigInt::from(sqrt_d_num.clone()) * BigInt::from(b_den.clone()));
+        let x_num = BigInt::from(-2i64) *
+            c_num *
+            BigInt::from(b_den.clone()) *
+            BigInt::from(sqrt_d_den.clone());
+        let x_den = BigInt::from(c_den.clone()) *
+            (b_num * BigInt::from(sqrt_d_den.clone()) +
+                BigInt::from(sqrt_d_num.clone()) * BigInt::from(b_den.clone()));
         (x_num, x_den)
     } else {
         // b < 0: Use standard formula x = (-b + sqrt(D)) / 2
         // x = (-b_num/b_den + sqrt_d_num/sqrt_d_den) / 2
         // x = (-b_num * sqrt_d_den + sqrt_d_num * b_den) / (2 * b_den * sqrt_d_den)
-        let x_num = -b_num * BigInt::from(sqrt_d_den.clone()) + BigInt::from(sqrt_d_num) * BigInt::from(b_den.clone());
+        let x_num = -b_num * BigInt::from(sqrt_d_den.clone()) +
+            BigInt::from(sqrt_d_num) * BigInt::from(b_den.clone());
         let x_den = BigInt::from(2u64) * BigInt::from(b_den.clone()) * BigInt::from(sqrt_d_den);
         (x_num, x_den)
     };
 
     if x_num.is_negative() != x_den.is_negative() {
         // Signs differ, so result would be negative
-        return Err(SimulationError::FatalError(
-            "No positive solution".to_string(),
-        ));
+        return Err(SimulationError::FatalError("No positive solution".to_string()));
     }
 
     // Both have same sign (both positive or both negative), take absolute values
@@ -473,8 +480,8 @@ fn solve_quadratic(
 /// * `target_price_den` - Denominator of the target trade price
 /// * `fee_factor_num` - Numerator of fee factor γ = (1 - fee), i.e., (1_000_000 - fee_pips)
 /// * `fee_factor_den` - Denominator of fee factor (1_000_000)
-/// * `residual` - R × target_price_den, where R = P × accumulated_in - accumulated_out
-///   represents how much more output we need relative to what we have
+/// * `residual` - R × target_price_den, where R = P × accumulated_in - accumulated_out represents
+///   how much more output we need relative to what we have
 /// * `zero_for_one` - Swap direction: true for selling token0, false for selling token1
 ///
 /// # Returns
@@ -493,7 +500,6 @@ fn solve_quadratic(
 ///
 /// Note: Fee factors are NOT included here because target_price is already fee-adjusted
 /// by the caller (formula_target = user_target / (1 - fee)).
-#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 fn compute_quadratic_coefficients(
     sqrt_ratio_current: &BigUint,
@@ -571,7 +577,6 @@ fn compute_quadratic_coefficients(
 /// The target sqrt_ratio (S₁) that achieves the cumulative trade price:
 /// - For zero_for_one: S₁ = S₀ - delta (price decreases)
 /// - For one_for_zero: S₁ = S₀ + delta (price increases)
-#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 fn compute_sqrt_ratio_target(
     sqrt_ratio_current: &BigUint,
@@ -615,6 +620,7 @@ fn compute_sqrt_ratio_target(
 
 #[cfg(test)]
 mod tests {
+    use alloy::primitives::U512;
     use num_traits::ToPrimitive;
 
     use super::*;
@@ -1053,17 +1059,11 @@ mod tests {
         assert!(sqrt_price_new < sqrt_price_current, "Price should decrease for zero_for_one");
 
         // Should either reach target or be at boundary
-        assert!(
-            sqrt_price_new >= sqrt_ratio_limit,
-            "New price should be at or above boundary"
-        );
+        assert!(sqrt_price_new >= sqrt_ratio_limit, "New price should be at or above boundary");
 
         // If we hit the boundary exactly, reached_target should be false
         if sqrt_price_new == sqrt_ratio_limit {
-            assert!(
-                !reached_target,
-                "Should not have reached target if stopped at boundary"
-            );
+            assert!(!reached_target, "Should not have reached target if stopped at boundary");
         }
     }
 
@@ -1120,7 +1120,8 @@ mod tests {
         }
     }
 
-    // ==================== Tests for compute_swap_to_trade_price with accumulated amounts ====================
+    // ==================== Tests for compute_swap_to_trade_price with accumulated amounts
+    // ====================
 
     /// Helper to verify cumulative trade price is within tolerance.
     fn verify_cumulative_trade_price_tolerance(
@@ -1139,7 +1140,13 @@ mod tests {
             return Ok(());
         }
 
-        verify_trade_price_tolerance(total_in, total_out, target_price_num, target_price_den, tolerance)
+        verify_trade_price_tolerance(
+            total_in,
+            total_out,
+            target_price_num,
+            target_price_den,
+            tolerance,
+        )
     }
 
     #[test]
@@ -1384,8 +1391,8 @@ mod tests {
 
         let sqrt_ratio_limit = U256::from_str("79228162514264337593543950336").unwrap();
 
-        // Accumulated ratio is 1.4 (worse than target 1.5 for zero_for_one where we want high output)
-        // Wait - for zero_for_one, we're selling token0 for token1
+        // Accumulated ratio is 1.4 (worse than target 1.5 for zero_for_one where we want high
+        // output) Wait - for zero_for_one, we're selling token0 for token1
         // If target is 1.5 and current cumulative is 2.0 (better), then we need to swap more to
         // worsen the ratio to 1.5. So this should trigger a swap.
         //
@@ -1454,7 +1461,10 @@ mod tests {
 
         // If we didn't reach target in tick1, continue to tick2
         if !reached1 {
-            assert_eq!(sqrt_price_after_tick1, sqrt_ratio_limit_tick1, "Should be at tick1 boundary");
+            assert_eq!(
+                sqrt_price_after_tick1, sqrt_ratio_limit_tick1,
+                "Should be at tick1 boundary"
+            );
 
             // Second tick - use tick1's amounts as accumulated
             let sqrt_price_tick2 = sqrt_ratio_limit_tick1; // Continue from where we left off
@@ -1489,5 +1499,4 @@ mod tests {
             .expect("Final cumulative trade price should match target");
         }
     }
-
 }

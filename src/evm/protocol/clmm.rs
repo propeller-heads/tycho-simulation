@@ -160,20 +160,24 @@ where
     //   spot_price = sqrt_price² / 2^192
     //   effective_spot = spot_price × (1_000_000 - fee_pips) / 1_000_000
     //   Check: limit_num/limit_den > effective_spot
-    //   Cross-mult: limit_num × 2^192 × 1_000_000 > sqrt_price² × (1_000_000 - fee_pips) × limit_den
+    //   Cross-mult: limit_num × 2^192 × 1_000_000 > sqrt_price² × (1_000_000 - fee_pips) ×
+    // limit_den
     //
     // For !zero_for_one:
     //   spot_price = 2^192 / sqrt_price²
     //   effective_spot = spot_price × (1_000_000 - fee_pips) / 1_000_000
     //   Check: limit_num/limit_den > effective_spot
-    //   Cross-mult: limit_num × sqrt_price² × 1_000_000 > 2^192 × (1_000_000 - fee_pips) × limit_den
+    //   Cross-mult: limit_num × sqrt_price² × 1_000_000 > 2^192 × (1_000_000 - fee_pips) ×
+    // limit_den
 
     let limit_num = U512::from(biguint_to_u256(&limit_price.numerator));
     let limit_den = U512::from(biguint_to_u256(&limit_price.denominator));
     let sqrt_price_512 = U512::from(sqrt_price);
-    let sqrt_price_squared = sqrt_price_512.checked_mul(sqrt_price_512).ok_or_else(|| {
-        SimulationError::FatalError("Overflow in sqrt_price squared calculation".to_string())
-    })?;
+    let sqrt_price_squared = sqrt_price_512
+        .checked_mul(sqrt_price_512)
+        .ok_or_else(|| {
+            SimulationError::FatalError("Overflow in sqrt_price squared calculation".to_string())
+        })?;
     let two_192 = U512::from(1u64) << 192;
     let fee_factor = U512::from(1_000_000 - fee_pips);
     let fee_precision = U512::from(1_000_000u32);
