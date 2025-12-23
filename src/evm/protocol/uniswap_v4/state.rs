@@ -42,7 +42,7 @@ use crate::evm::protocol::{
                 get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio, MAX_SQRT_RATIO, MAX_TICK,
                 MIN_SQRT_RATIO, MIN_TICK,
             },
-            StepComputation, SwapResults, SwapState,
+            StepComputation, SwapResults, SwapState, SwapToTradePriceResult,
         },
     },
     vm::constants::EXTERNAL_ACCOUNT,
@@ -314,13 +314,13 @@ impl UniswapV4State {
     /// - When zero_for_one=false: token_in=token1, token_out=token0, so Price = token0/token1
     ///
     /// # Returns
-    /// * `Ok((amount_in, amount_out, swap_results))` - The amounts needed to achieve the target
+    /// * `Ok(SwapToTradePriceResult)` - The amounts needed to achieve the target
     ///   trade price, along with the resulting swap state.
     fn swap_to_trade_price(
         &self,
         zero_for_one: bool,
         target_price: &Price,
-    ) -> Result<(U256, U256, SwapResults), SimulationError> {
+    ) -> Result<SwapToTradePriceResult, SimulationError> {
         if self.liquidity == 0 {
             return Err(SimulationError::RecoverableError("No liquidity".to_string()));
         }
@@ -453,10 +453,10 @@ impl UniswapV4State {
             }
         }
 
-        Ok((
-            total_amount_in_with_fee,
-            total_amount_out,
-            SwapResults {
+        Ok(SwapToTradePriceResult {
+            amount_in: total_amount_in_with_fee,
+            amount_out: total_amount_out,
+            swap_state: SwapResults {
                 amount_calculated: I256::checked_from_sign_and_abs(
                     Sign::Negative,
                     total_amount_out,
@@ -474,7 +474,7 @@ impl UniswapV4State {
                 tick: state.tick,
                 gas_used,
             },
-        ))
+        })
     }
 
     pub fn set_hook_handler(&mut self, handler: Box<dyn HookHandler>) {
@@ -2593,16 +2593,16 @@ mod tests {
         );
 
         let tolerance = 0.000001; // 1e-6 tolerance - quadratic formula achieves machine precision
-        let (amount_in, amount_out, _) = pool
+        let result = pool
             .swap_to_trade_price(token_x.address < token_y.address, &target_price)
             .expect("swap_to_trade_price failed");
 
         // Verify the trade price matches target
-        let amount_in_f64 = u256_to_biguint(amount_in)
+        let amount_in_f64 = u256_to_biguint(result.amount_in)
             .to_string()
             .parse::<f64>()
             .unwrap();
-        let amount_out_f64 = u256_to_biguint(amount_out)
+        let amount_out_f64 = u256_to_biguint(result.amount_out)
             .to_string()
             .parse::<f64>()
             .unwrap();
@@ -2699,12 +2699,12 @@ mod tests {
         );
         let tolerance = 0.000001; // 1e-6 tolerance - quadratic formula achieves machine precision
 
-        let (amount_in, estimated_amount_out, _) = pool
+        let trade_result = pool
             .swap_to_trade_price(token_x.address < token_y.address, &target_price)
             .expect("swap_to_trade_price failed");
 
         // Execute actual swap to verify
-        let amount_specified = I256::checked_from_sign_and_abs(Sign::Negative, amount_in).unwrap();
+        let amount_specified = I256::checked_from_sign_and_abs(Sign::Negative, trade_result.amount_in).unwrap();
         let swap_result =
             pool.swap(token_x.address < token_y.address, amount_specified, None, None);
 
@@ -2716,10 +2716,10 @@ mod tests {
             .into_raw();
 
         // Allow some difference due to step-by-step execution breaking early
-        let diff = if estimated_amount_out > actual_amount_out {
-            estimated_amount_out - actual_amount_out
+        let diff = if trade_result.amount_out > actual_amount_out {
+            trade_result.amount_out - actual_amount_out
         } else {
-            actual_amount_out - estimated_amount_out
+            actual_amount_out - trade_result.amount_out
         };
         let diff_f64 = u256_to_biguint(diff)
             .to_string()
@@ -2734,7 +2734,7 @@ mod tests {
         assert!(
             relative_diff <= tolerance,
             "swap_to_trade_price's amount_out ({}) should match actual swap result ({}) within tolerance: {:.2}% actual, {:.2}% allowed",
-            estimated_amount_out, actual_amount_out, relative_diff * 100.0, tolerance * 100.0
+            trade_result.amount_out, actual_amount_out, relative_diff * 100.0, tolerance * 100.0
         );
     }
 
@@ -2778,28 +2778,28 @@ mod tests {
             BigUint::from_str("1000000000000000000").unwrap()
         );
         let tolerance = 0.000001; // 1e-6 tolerance - quadratic formula achieves machine precision
-        let (amount_in, amount_out, _) = pool
+        let trade_result = pool
             .swap_to_trade_price(token_x.address < token_y.address, &target_price)
             .expect("swap_to_trade_price failed");
 
         // Use the amount_in from swap_to_trade_price with get_amount_out
-        let result = pool
-            .get_amount_out(u256_to_biguint(amount_in), &token_x, &token_y)
+        let get_amount_result = pool
+            .get_amount_out(u256_to_biguint(trade_result.amount_in), &token_x, &token_y)
             .expect("get_amount_out failed");
 
         // Allow small rounding differences (within 0.1%)
-        let result_amount_u256 = biguint_to_u256(&result.amount);
-        let diff = if amount_out > result_amount_u256 {
-            amount_out - result_amount_u256
+        let result_amount_u256 = biguint_to_u256(&get_amount_result.amount);
+        let diff = if trade_result.amount_out > result_amount_u256 {
+            trade_result.amount_out - result_amount_u256
         } else {
-            result_amount_u256 - amount_out
+            result_amount_u256 - trade_result.amount_out
         };
 
         let diff_f64 = u256_to_biguint(diff)
             .to_string()
             .parse::<f64>()
             .unwrap();
-        let amount_out_f64 = u256_to_biguint(amount_out)
+        let amount_out_f64 = u256_to_biguint(trade_result.amount_out)
             .to_string()
             .parse::<f64>()
             .unwrap();
@@ -2879,20 +2879,20 @@ mod tests {
             let result = pool.swap_to_trade_price(zero_for_one, &target_price);
 
             assert!(result.is_ok(), "{} - should succeed: {:?}", test_id, result.err());
-            let (amount_in, amount_out, _) = result.unwrap();
+            let swap_result = result.unwrap();
             assert!(
-                amount_in > U256::ZERO && amount_out > U256::ZERO,
+                swap_result.amount_in > U256::ZERO && swap_result.amount_out > U256::ZERO,
                 "{} - amounts should be positive",
                 test_id
             );
 
             if reachable {
                 use num_traits::ToPrimitive;
-                let trade_price = u256_to_biguint(amount_out)
+                let trade_price = u256_to_biguint(swap_result.amount_out)
                     .to_string()
                     .parse::<f64>()
                     .unwrap() /
-                    u256_to_biguint(amount_in)
+                    u256_to_biguint(swap_result.amount_in)
                         .to_string()
                         .parse::<f64>()
                         .unwrap();
@@ -2959,14 +2959,14 @@ mod tests {
         let result = pool.swap_to_trade_price(false, &target_price);
 
         assert!(result.is_ok(), "one_for_zero swap should succeed: {:?}", result.err());
-        let (amount_in, amount_out, _swap_results) = result.unwrap();
+        let swap_result = result.unwrap();
 
-        assert!(amount_in > U256::ZERO, "amount_in should be positive");
-        assert!(amount_out > U256::ZERO, "amount_out should be positive");
+        assert!(swap_result.amount_in > U256::ZERO, "amount_in should be positive");
+        assert!(swap_result.amount_out > U256::ZERO, "amount_out should be positive");
 
         // Verify trade price is close to target
         use crate::evm::protocol::u256_num::u256_to_f64;
-        let trade_price = u256_to_f64(amount_out).unwrap() / u256_to_f64(amount_in).unwrap();
+        let trade_price = u256_to_f64(swap_result.amount_out).unwrap() / u256_to_f64(swap_result.amount_in).unwrap();
         let target_f64 = 0.47;
         let tolerance = 0.000001; // 1e-6 tolerance
         let relative_diff = (trade_price - target_f64).abs() / target_f64;
@@ -3034,13 +3034,13 @@ mod tests {
         ); // 1.9
         let target_z_f64 = 1.9;
 
-        let (amount_in_z, amount_out_estimated_z, _) = pool
+        let result_z = pool
             .swap_to_trade_price(true, &target_z)
             .expect("zero_for_one should succeed");
-        assert!(amount_in_z > U256::ZERO && amount_out_estimated_z > U256::ZERO);
+        assert!(result_z.amount_in > U256::ZERO && result_z.amount_out > U256::ZERO);
 
         // Verify swap_to_trade_price's returned trade price
-        let trade_price_estimated_z = u256_to_f64(amount_out_estimated_z).unwrap() / u256_to_f64(amount_in_z).unwrap();
+        let trade_price_estimated_z = u256_to_f64(result_z.amount_out).unwrap() / u256_to_f64(result_z.amount_in).unwrap();
         let diff_estimated_z = (trade_price_estimated_z - target_z_f64).abs() / target_z_f64;
         assert!(
             diff_estimated_z <= tolerance,
@@ -3050,10 +3050,10 @@ mod tests {
 
         // Verify independently with get_amount_out
         // zero_for_one: selling token_x (token0) for token_y (token1)
-        let result_z = pool
-            .get_amount_out(u256_to_biguint(amount_in_z), &token_x, &token_y)
+        let get_amount_z = pool
+            .get_amount_out(u256_to_biguint(result_z.amount_in), &token_x, &token_y)
             .expect("get_amount_out failed for zero_for_one");
-        let trade_price_actual_z = result_z.amount.to_f64().unwrap() / u256_to_biguint(amount_in_z).to_f64().unwrap();
+        let trade_price_actual_z = get_amount_z.amount.to_f64().unwrap() / u256_to_biguint(result_z.amount_in).to_f64().unwrap();
         let diff_actual_z = (trade_price_actual_z - target_z_f64).abs() / target_z_f64;
         assert!(
             diff_actual_z <= tolerance,
@@ -3070,13 +3070,13 @@ mod tests {
         ); // 0.49
         let target_o_f64 = 0.49;
 
-        let (amount_in_o, amount_out_estimated_o, _) = pool
+        let result_o = pool
             .swap_to_trade_price(false, &target_o)
             .expect("one_for_zero should succeed");
-        assert!(amount_in_o > U256::ZERO && amount_out_estimated_o > U256::ZERO);
+        assert!(result_o.amount_in > U256::ZERO && result_o.amount_out > U256::ZERO);
 
         // Verify swap_to_trade_price's returned trade price
-        let trade_price_estimated_o = u256_to_f64(amount_out_estimated_o).unwrap() / u256_to_f64(amount_in_o).unwrap();
+        let trade_price_estimated_o = u256_to_f64(result_o.amount_out).unwrap() / u256_to_f64(result_o.amount_in).unwrap();
         let diff_estimated_o = (trade_price_estimated_o - target_o_f64).abs() / target_o_f64;
         assert!(
             diff_estimated_o <= tolerance,
@@ -3086,10 +3086,10 @@ mod tests {
 
         // Verify independently with get_amount_out
         // one_for_zero: selling token_y (token1) for token_x (token0)
-        let result_o = pool
-            .get_amount_out(u256_to_biguint(amount_in_o), &token_y, &token_x)
+        let get_amount_o = pool
+            .get_amount_out(u256_to_biguint(result_o.amount_in), &token_y, &token_x)
             .expect("get_amount_out failed for one_for_zero");
-        let trade_price_actual_o = result_o.amount.to_f64().unwrap() / u256_to_biguint(amount_in_o).to_f64().unwrap();
+        let trade_price_actual_o = get_amount_o.amount.to_f64().unwrap() / u256_to_biguint(result_o.amount_in).to_f64().unwrap();
         let diff_actual_o = (trade_price_actual_o - target_o_f64).abs() / target_o_f64;
         assert!(
             diff_actual_o <= tolerance,
@@ -3112,15 +3112,15 @@ mod tests {
             "Should succeed when exhausting liquidity: {:?}",
             result.err()
         );
-        let (amount_in, amount_out, _) = result.unwrap();
+        let swap_result = result.unwrap();
 
-        assert!(amount_in > U256::ZERO, "Should have swapped some amount");
-        assert!(amount_out > U256::ZERO, "Should have received some output");
+        assert!(swap_result.amount_in > U256::ZERO, "Should have swapped some amount");
+        assert!(swap_result.amount_out > U256::ZERO, "Should have received some output");
 
         // Achieved price will be better than target
         use crate::evm::protocol::u256_num::u256_to_f64;
         let achieved_price =
-            u256_to_f64(amount_out).unwrap() / u256_to_f64(amount_in).unwrap();
+            u256_to_f64(swap_result.amount_out).unwrap() / u256_to_f64(swap_result.amount_in).unwrap();
         assert!(
             achieved_price > 0.1,
             "Achieved price {:.6} should be better than target 0.1",

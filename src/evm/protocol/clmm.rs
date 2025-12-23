@@ -7,7 +7,7 @@ use tycho_common::{
 
 use crate::evm::protocol::{
     u256_num::{biguint_to_u256, u256_to_biguint},
-    utils::uniswap::{sqrt_price_math::get_sqrt_price_limit, SwapResults},
+    utils::uniswap::{sqrt_price_math::get_sqrt_price_limit, SwapResults, SwapToTradePriceResult},
 };
 
 // U160_MAX = 2^160 - 1, used for "infinite" swap amounts in swap_to_price
@@ -147,7 +147,7 @@ pub fn clmm_swap_to_trade_price<F>(
     swap_fn: F,
 ) -> Result<(BigUint, BigUint, SwapResults), SimulationError>
 where
-    F: FnOnce(bool, &Price) -> Result<(U256, U256, SwapResults), SimulationError>,
+    F: FnOnce(bool, &Price) -> Result<SwapToTradePriceResult, SimulationError>,
 {
     let zero_for_one = token_in < token_out;
 
@@ -225,11 +225,11 @@ where
     // Execute the swap using analytical calculation
     // If limit is achievable: swaps to achieve the exact limit price
     // If limit is worse than available: swaps all available liquidity (natural behavior)
-    let (amount_in, amount_out, result) = swap_fn(zero_for_one, limit_price)?;
+    let result = swap_fn(zero_for_one, limit_price)?;
 
-    if amount_in == U256::ZERO {
+    if result.amount_in == U256::ZERO {
         return Ok((BigUint::ZERO, BigUint::ZERO, SwapResults::default()));
     }
 
-    Ok((u256_to_biguint(amount_in), u256_to_biguint(amount_out), result))
+    Ok((u256_to_biguint(result.amount_in), u256_to_biguint(result.amount_out), result.swap_state))
 }
