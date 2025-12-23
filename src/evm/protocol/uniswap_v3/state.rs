@@ -1302,12 +1302,12 @@ mod tests {
         // Current spot price is ~2.0 (token1/token0)
         // Test with target 1.9 - should achieve this exactly using analytical formula
         let target_price = Price::new(
-            19u64.to_biguint().unwrap(), // numerator: 19
-            10u64.to_biguint().unwrap(), // denominator: 10 -> price = 1.9
+            19_000_000_000u64.to_biguint().unwrap(),
+            10_000_000_000u64.to_biguint().unwrap(),
         );
         let target_price_f64 = 1.9;
 
-        let tolerance = 0.01; // 1% tolerance (for verification only)
+        let tolerance = 0.00001;
 
         let (amount_in, amount_out, _swap_results) = pool
             .swap_to_trade_price(true, &target_price)
@@ -1697,7 +1697,7 @@ mod tests {
         // Target trade price: 1.8 token_out per token_in (worse than spot ~2.0, achievable)
         let target_price = Price::new(BigUint::from(18u32), BigUint::from(10u32));
 
-        let tolerance = 0.10; // 10% tolerance for verification (due to tick granularity in CLMM)
+        let tolerance = 0.00001;
         let (amount_in, amount_out, _) = pool
             .swap_to_trade_price(token_x.address < token_y.address, &target_price)
             .expect("swap_to_trade_price failed");
@@ -1805,7 +1805,7 @@ mod tests {
 
         // Target trade price: 1.95 (slightly worse than spot ~2.0)
         let target_price = Price::new(BigUint::from(195u32), BigUint::from(100u32));
-        let tolerance = 0.10; // 10% tolerance for verification (due to tick granularity in CLMM)
+        let tolerance = 0.00001;
 
         let (amount_in, estimated_amount_out, _) = pool
             .swap_to_trade_price(token_x.address < token_y.address, &target_price)
@@ -1908,7 +1908,7 @@ mod tests {
 
         // Target: 1.9 Y per X
         let target_price = Price::new(BigUint::from(19u32), BigUint::from(10u32));
-        let tolerance = 0.20; // 20% tolerance for verification (due to tick granularity in CLMM)
+        let tolerance = 0.00001;
         let (amount_in, amount_out, _) = pool
             .swap_to_trade_price(token_x.address < token_y.address, &target_price)
             .expect("swap_to_trade_price failed");
@@ -1991,6 +1991,8 @@ mod tests {
 
     #[test]
     fn test_swap_to_trade_price_parameterized() {
+        use crate::evm::protocol::utils::uniswap::swap_math;
+
         let (wbtc, weth, pool) = create_wbtc_weth_test_pool();
 
         // Test cases: (sell_token_var, limit_price, limit_reachable, description)
@@ -2004,23 +2006,30 @@ mod tests {
         // - When sell_token_var=weth: zero_for_one=true → actually selling WBTC for WETH Price in
         //   Tycho = token_out/token_in = WETH/WBTC Effective spot (after 0.3% fee) ≈ 13.0 × 0.997 ≈
         //   12.96
+        // Use high precision values to minimize integer division truncation
+        // e.g., 0.0767 = 767e15 / 10000e15 instead of 767/10000
         let test_cases = vec![
             (
                 &wbtc,
-                "767/10000",
+                "767000000000000000/10000000000000000000",
                 true,
                 "Selling WETH: limit 0.0767 - at effective spot, should achieve close to limit",
             ),
             (
                 &wbtc,
-                "65/1000",
+                "65000000000000000/1000000000000000000",
                 false,
                 "Selling WETH: limit 0.065 - worse than available, returns max liquidity",
             ),
-            (&weth, "129/10", true, "Selling WBTC: limit 12.9 - achievable"),
             (
                 &weth,
-                "125/10",
+                "129000000000000000000/10000000000000000000",
+                true,
+                "Selling WBTC: limit 12.9 - achievable",
+            ),
+            (
+                &weth,
+                "125000000000000000/10000000000000000",
                 false,
                 "Selling WBTC: limit 12.5 - worse than available, returns max liquidity",
             ),
@@ -2035,7 +2044,147 @@ mod tests {
                 BigUint::from_str(parts[1]).unwrap(),
             );
 
-            let tolerance = 0.10; // 10% tolerance for verification (due to tick granularity in CLMM)
+            println!("\n=== {} ===", test_id);
+            println!("Target price: {}/{}", parts[0], parts[1]);
+
+            let zero_for_one = buy_token.address < sell_token.address;
+            println!("zero_for_one: {}", zero_for_one);
+
+            // Manual iteration to see what's happening
+            let mut state_sqrt_price = pool.sqrt_price;
+            let mut state_tick = pool.tick;
+            let mut state_liquidity = pool.liquidity;
+            let mut total_in = U256::ZERO;
+            let mut total_out = U256::ZERO;
+            let mut iteration = 0;
+
+            loop {
+                iteration += 1;
+                if iteration > 20 {
+                    println!("  [Stopped after 20 iterations]");
+                    break;
+                }
+
+                // Find next tick
+                let (next_tick, initialized) = match pool
+                    .ticks
+                    .next_initialized_tick_within_one_word(state_tick, zero_for_one)
+                {
+                    Ok((tick, init)) => (tick, init),
+                    Err(_) => {
+                        println!("  [Ticks exhausted]");
+                        break;
+                    }
+                };
+
+                let next_tick_clamped = next_tick.clamp(MIN_TICK, MAX_TICK);
+                let sqrt_price_limit = get_sqrt_ratio_at_tick(next_tick_clamped).unwrap();
+
+                println!(
+                    "  Iter {}: tick={}, sqrt_price={}, liquidity={}, next_tick={}",
+                    iteration, state_tick, state_sqrt_price, state_liquidity, next_tick_clamped
+                );
+
+                // Debug: compute sqrt_ratio_target manually to see precision
+                {
+                    use alloy::primitives::U512;
+                    use crate::evm::protocol::u256_num::biguint_to_u256;
+                    let gamma_num = U512::from(1_000_000 - (pool.fee as u32));
+                    let gamma_den = U512::from(1_000_000u32);
+                    let two_192 = U512::from(1u64) << 192;
+                    let s0 = U512::from(state_sqrt_price);
+                    let p_num = U512::from(biguint_to_u256(&limit_price.numerator));
+                    let p_den = U512::from(biguint_to_u256(&limit_price.denominator));
+
+                    let sqrt_ratio_target_u512: U512 = if zero_for_one {
+                        (p_num * two_192 * gamma_den) / (p_den * gamma_num * s0)
+                    } else {
+                        (gamma_num * two_192 * p_den) / (gamma_den * p_num * s0)
+                    };
+
+                    let limbs = sqrt_ratio_target_u512.as_limbs();
+                    let sqrt_ratio_target =
+                        U256::from_limbs([limbs[0], limbs[1], limbs[2], limbs[3]]);
+
+                    println!(
+                        "         sqrt_ratio_target={}, sqrt_price_current={}, diff={}",
+                        sqrt_ratio_target,
+                        state_sqrt_price,
+                        if sqrt_ratio_target > state_sqrt_price {
+                            sqrt_ratio_target - state_sqrt_price
+                        } else {
+                            state_sqrt_price - sqrt_ratio_target
+                        }
+                    );
+                    println!(
+                        "         target {} current? {}",
+                        if zero_for_one { ">=" } else { "<=" },
+                        if zero_for_one {
+                            sqrt_ratio_target >= state_sqrt_price
+                        } else {
+                            sqrt_ratio_target <= state_sqrt_price
+                        }
+                    );
+                }
+
+                let (sqrt_price_new, amount_in, amount_out, fee_amount, reached_target) =
+                    swap_math::compute_swap_to_trade_price(
+                        state_sqrt_price,
+                        sqrt_price_limit,
+                        state_liquidity,
+                        &limit_price.numerator,
+                        &limit_price.denominator,
+                        pool.fee as u32,
+                    )
+                    .unwrap();
+
+                // Calculate achieved trade price so far
+                let step_in = amount_in + fee_amount;
+                total_in = total_in + step_in;
+                total_out = total_out + amount_out;
+
+                let running_trade_price = if total_in > U256::ZERO {
+                    u256_to_biguint(total_out)
+                        .to_string()
+                        .parse::<f64>()
+                        .unwrap() /
+                        u256_to_biguint(total_in)
+                            .to_string()
+                            .parse::<f64>()
+                            .unwrap()
+                } else {
+                    0.0
+                };
+
+                println!(
+                    "         amount_in={}, amount_out={}, fee={}, reached_target={}",
+                    amount_in, amount_out, fee_amount, reached_target
+                );
+                println!(
+                    "         sqrt_price: {} -> {}, running_trade_price={:.10}",
+                    state_sqrt_price, sqrt_price_new, running_trade_price
+                );
+
+                // Update state
+                state_sqrt_price = sqrt_price_new;
+                if state_sqrt_price == sqrt_price_limit {
+                    if initialized {
+                        let liquidity_net = pool.ticks.get_tick(next_tick_clamped).unwrap().net_liquidity;
+                        let delta = if zero_for_one { -liquidity_net } else { liquidity_net };
+                        state_liquidity = (state_liquidity as i128 + delta) as u128;
+                    }
+                    state_tick = if zero_for_one { next_tick_clamped - 1 } else { next_tick_clamped };
+                } else {
+                    state_tick = get_tick_at_sqrt_ratio(state_sqrt_price).unwrap();
+                }
+
+                if reached_target || (amount_in == U256::ZERO && amount_out == U256::ZERO) {
+                    println!("  [Reached target or no more amounts]");
+                    break;
+                }
+            }
+
+            let tolerance = 0.00001;
             let result =
                 pool.swap_to_trade_price(buy_token.address < sell_token.address, &limit_price);
 
@@ -2051,16 +2200,29 @@ mod tests {
             if limit_reachable {
                 // Trade price should be close to limit (within tolerance)
                 use num_traits::ToPrimitive;
-                let trade_price = amount_out.to_f64().unwrap() / amount_in.to_f64().unwrap();
+                let trade_price = u256_to_biguint(amount_out)
+                    .to_string()
+                    .parse::<f64>()
+                    .unwrap() /
+                    u256_to_biguint(amount_in)
+                        .to_string()
+                        .parse::<f64>()
+                        .unwrap();
                 let limit_f64 = limit_price.numerator.to_f64().unwrap() /
                     limit_price
                         .denominator
                         .to_f64()
                         .unwrap();
                 let relative_diff = (trade_price - limit_f64).abs() / limit_f64;
+                println!(
+                    "Final: trade_price={:.10}, limit={:.10}, diff={:.6}%",
+                    trade_price,
+                    limit_f64,
+                    relative_diff * 100.0
+                );
                 assert!(
                     relative_diff <= tolerance,
-                    "{} - trade price {:.6} should be within {}% of limit {:.6}, but diff is {:.2}%",
+                    "{} - trade price {:.10} should be within {}% of limit {:.10}, but diff is {:.6}%",
                     test_id, trade_price, tolerance * 100.0, limit_f64, relative_diff * 100.0
                 );
             }
@@ -2309,7 +2471,7 @@ mod tests {
         // This should cross multiple tick boundaries
         let target_price = Price::new(BigUint::from(100u32), BigUint::from(10u32)); // 10.0
 
-        let tolerance = 0.15; // 15% tolerance due to tick granularity
+        let tolerance = 0.00001;
         let result = pool.swap_to_trade_price(wbtc.address < weth.address, &target_price);
 
         assert!(result.is_ok(), "Multi-tick swap should succeed");
@@ -2356,7 +2518,7 @@ mod tests {
         // Target trade price: 0.075 WBTC/WETH (worse than effective spot ~0.077)
         let target_price = Price::new(BigUint::from(75u32), BigUint::from(1000u32)); // 0.075
 
-        let tolerance = 0.10; // 10% tolerance
+        let tolerance = 0.00001;
         let result = pool.swap_to_trade_price(weth.address < wbtc.address, &target_price);
 
         assert!(result.is_ok(), "one_for_zero swap should succeed");
