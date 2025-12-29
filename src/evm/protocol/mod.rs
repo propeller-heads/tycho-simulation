@@ -3,6 +3,7 @@ mod clmm;
 mod cpmm;
 pub mod ekubo;
 pub mod erc4626;
+pub mod etherfi;
 pub mod filters;
 pub mod fluid;
 pub mod lido;
