@@ -2,6 +2,7 @@ pub mod aerodrome_slipstreams;
 mod clmm;
 mod cpmm;
 pub mod ekubo;
+pub mod ekubo_v3;
 pub mod erc4626;
 pub mod filters;
 pub mod fluid;
