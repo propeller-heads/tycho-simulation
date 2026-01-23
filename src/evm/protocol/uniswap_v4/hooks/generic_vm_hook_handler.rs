@@ -504,6 +504,73 @@ mod tests {
     }
 
     #[test]
+    fn test_before_swap_universal() {
+        let block = BlockHeader {
+            number: 38245470,
+            hash: Bytes::from_str(
+                "0xf435a8ac738e692e3bd9b2fb4eb756abbcab1e4355116c011dbf219b1ef81585",
+            )
+            .unwrap(),
+            timestamp: 1768993829,
+            ..Default::default()
+        };
+
+        let db = SimulationDB::new(
+            get_client(None).expect("Failed to create client"),
+            get_runtime().expect("Failed to get runtime"),
+            Some(block.clone()),
+        );
+        let engine = create_engine(db, true).expect("Failed to create simulation engine");
+
+        let hook_address = Address::from_str("0xcdfCaB084b2d29025772141d3BF473bd9673aaA8")
+            .expect("Invalid hook address");
+
+        let pool_manager = Address::from_str("0x1F98400000000000000000000000000000000004")
+            .expect("Invalid pool manager address");
+
+        let hook_handler = GenericVMHookHandler::new(
+            hook_address,
+            engine,
+            pool_manager,
+            HashMap::new(),
+            HashMap::new(),
+            None,
+            false, // Not Euler - this is a Universal hook contract
+        )
+        .expect("Failed to create GenericVMHookHandler");
+
+        // simulating this tx: 0x1807a9b924c21bdc9b50860d448332b21e4252aef308fd4da69d43c1c643eb36
+        let params = BeforeSwapParameters {
+            context: StateContext {
+                currency_0: Address::from_str("0x078d782b760474a361dda0af3839290b0ef57ad6")
+                    .unwrap(), // USDC
+                currency_1: Address::from_str("0x12e96c2bfea6e835cf8dd38a5834fa61cf723736")
+                    .unwrap(), // DOGE
+                fees: UniswapV4Fees { zero_for_one: 0, one_for_zero: 0, lp_fee: 0 },
+                tick_spacing: 1,
+            },
+            sender: Address::from_str("0x1de093852066fbff3c2b33ff159842f5d49b9204").unwrap(),
+            swap_params: SwapParams {
+                zero_for_one: true,
+                amount_specified: I256::try_from(-1769275i128).unwrap(),
+                sqrt_price_limit: U256::from(4295128740u64),
+            },
+            hook_data: Default::default(),
+        };
+
+        let result = hook_handler.before_swap(params, None, None);
+
+        let res = result.unwrap().result;
+        assert_eq!(
+            res.amount_delta,
+            BeforeSwapDelta(I256::from_raw(
+                U256::from_str("602053425016410320882625557708331339471947152").unwrap()
+            ))
+        );
+        assert_eq!(res.fee, U24::from(0));
+    }
+
+    #[test]
     fn test_after_swap() {
         let block = BlockHeader {
             number: 15797251,
@@ -748,6 +815,68 @@ mod tests {
 
         let token_in = Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(); // USDC
         let token_out = Bytes::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(); // WETH
+
+        let result = hook_handler.get_amount_ranges(token_in, token_out);
+
+        match result {
+            Ok(ranges) => {
+                assert_eq!(ranges.amount_in_range.0, U256::ZERO);
+                assert_eq!(ranges.amount_out_range.0, U256::ZERO);
+
+                // This varies depending on block, so we just use a safe min amount
+                let min_expected_limit_1 = U256::from_str("1000000").unwrap();
+                let min_expected_limit_2 = U256::from_str("1000").unwrap();
+
+                assert!(ranges.amount_in_range.1 >= min_expected_limit_1);
+                assert!(ranges.amount_out_range.1 >= min_expected_limit_2);
+            }
+            Err(e) => {
+                panic!("get_amount_out ranges failed {e}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_amount_ranges_no_euler() {
+        let block = BlockHeader {
+            number: 38362201,
+            hash: Bytes::from_str(
+                "0x87755d862c31933c1537385b50725befce88109afbb0b1625687077b22119a32",
+            )
+            .unwrap(),
+            timestamp: 1769110560,
+            ..Default::default()
+        };
+
+        let db = SimulationDB::new(
+            get_client(None).expect("Failed to create client"),
+            get_runtime().expect("Failed to get runtime"),
+            Some(block.clone()),
+        );
+        let engine = create_engine(db, true).expect("Failed to create simulation engine");
+
+        let hook_address = Address::from_str("0xcdfCaB084b2d29025772141d3BF473bd9673aaA8")
+            .expect("Invalid hook address");
+
+        let pool_manager = Address::from_str("0x1F98400000000000000000000000000000000004")
+            .expect("Invalid pool manager address");
+
+        // Encode function signature as expected in TychoSimulationContract.encode_input
+        let limits_entrypoint =
+            "0xE48a768A9846F82407712062828fBE6Ef3cB5394:getLimitsForPool(address,address)";
+        let hook_handler = GenericVMHookHandler::new(
+            hook_address,
+            engine,
+            pool_manager,
+            HashMap::new(),
+            HashMap::new(),
+            Some(limits_entrypoint.to_string()),
+            false, // Universal contract
+        )
+        .expect("Failed to create GenericVMHookHandler");
+
+        let token_in = Bytes::from_str("0x078D782b760474a361dDA0AF3839290b0EF57AD6").unwrap(); // USDC
+        let token_out = Bytes::from_str("0x12E96C2BFEA6E835CF8Dd38a5834fa61Cf723736").unwrap(); // DOGE
 
         let result = hook_handler.get_amount_ranges(token_in, token_out);
 
