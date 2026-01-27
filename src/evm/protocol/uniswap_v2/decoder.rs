@@ -1,7 +1,10 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use tycho_client::feed::{synchronizer::ComponentWithState, BlockHeader};
-use tycho_common::{models::token::Token, Bytes};
+use tycho_common::{
+    models::{protocol::ProtocolComponent, token::Token, ChangeType},
+    Bytes,
+};
 
 use crate::{
     evm::protocol::{cpmm::protocol::cpmm_try_from_with_header, uniswap_v2::state::UniswapV2State},
@@ -20,11 +23,38 @@ impl TryFromWithBlock<ComponentWithState, BlockHeader> for UniswapV2State {
         snapshot: ComponentWithState,
         _block: BlockHeader,
         _account_balances: &HashMap<Bytes, HashMap<Bytes, Bytes>>,
-        _all_tokens: &HashMap<Bytes, Token>,
+        tokens: &HashMap<Bytes, Token>,
         _decoder_context: &DecoderContext,
     ) -> Result<Self, Self::Error> {
+        let component = ProtocolComponent::<Arc<Token>>::new(
+            snapshot.component.id.as_str(),
+            snapshot
+                .component
+                .protocol_system
+                .as_str(),
+            snapshot
+                .component
+                .protocol_type_name
+                .as_str(),
+            snapshot.component.chain.into(),
+            snapshot
+                .component
+                .tokens
+                .iter()
+                .map(|t| Arc::new(tokens.get(t).unwrap().clone()))
+                .collect(),
+            snapshot.component.contract_ids.clone(),
+            snapshot
+                .component
+                .static_attributes
+                .clone(),
+            ChangeType::Creation,
+            snapshot.component.creation_tx.clone(),
+            snapshot.component.created_at,
+        );
         let (reserve0, reserve1) = cpmm_try_from_with_header(snapshot)?;
-        Ok(Self::new(reserve0, reserve1))
+
+        Ok(Self::new(reserve0, reserve1, Arc::new(component)))
     }
 }
 

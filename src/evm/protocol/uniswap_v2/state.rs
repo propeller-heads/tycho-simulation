@@ -1,20 +1,20 @@
-use std::{any::Any, collections::HashMap};
+use std::sync::Arc;
 
 use alloy::primitives::U256;
 use num_bigint::BigUint;
 use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 use tycho_common::{
-    dto::ProtocolStateDelta,
-    models::token::Token,
+    models::{protocol::ProtocolComponent, token::Token},
     simulation::{
         errors::{SimulationError, TransitionError},
-        protocol_sim::{
-            Balances, GetAmountOutResult, PoolSwap, ProtocolSim, QueryPoolSwapParams,
-            SwapConstraint,
+        protocol_sim::ProtocolSim,
+        swap::{
+            LimitsParams, MarginalPrice, MarginalPriceParams, QuerySwapParams, Quote, QuoteParams,
+            Range, SimulationResult, Swap, SwapConstraint, SwapFee, SwapLimits, SwapQuoter,
+            Transition, TransitionParams,
         },
     },
-    Bytes,
 };
 
 use crate::evm::protocol::{
@@ -31,10 +31,13 @@ const UNISWAP_V2_FEE_BPS: u32 = 30; // 0.3% fee
 const FEE_PRECISION: U256 = U256::from_limbs([10000, 0, 0, 0]);
 const FEE_NUMERATOR: U256 = U256::from_limbs([9970, 0, 0, 0]);
 
+type Component = Arc<ProtocolComponent<Arc<Token>>>;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UniswapV2State {
     pub reserve0: U256,
     pub reserve1: U256,
+    pub component: Component,
 }
 
 impl UniswapV2State {
@@ -44,77 +47,92 @@ impl UniswapV2State {
     ///
     /// * `reserve0` - Reserve of token 0.
     /// * `reserve1` - Reserve of token 1.
-    pub fn new(reserve0: U256, reserve1: U256) -> Self {
-        UniswapV2State { reserve0, reserve1 }
+    pub fn new(reserve0: U256, reserve1: U256, component: Component) -> Self {
+        UniswapV2State { reserve0, reserve1, component }
     }
 }
 
 #[typetag::serde]
-impl ProtocolSim for UniswapV2State {
-    fn fee(&self) -> f64 {
-        cpmm_fee(UNISWAP_V2_FEE_BPS)
+impl SwapQuoter for UniswapV2State {
+    fn component(&self) -> Arc<ProtocolComponent<Arc<Token>>> {
+        self.component.clone()
     }
 
-    fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
-        let price = cpmm_spot_price(base, quote, self.reserve0, self.reserve1)?;
-        Ok(add_fee_markup(price, self.fee()))
+    fn fee(&self, _params: QuoteParams) -> SimulationResult<SwapFee> {
+        Ok(SwapFee::new(cpmm_fee(UNISWAP_V2_FEE_BPS)))
     }
 
-    fn get_amount_out(
-        &self,
-        amount_in: BigUint,
-        token_in: &Token,
-        token_out: &Token,
-    ) -> Result<GetAmountOutResult, SimulationError> {
-        let amount_in = biguint_to_u256(&amount_in);
-        let zero2one = token_in.address < token_out.address;
+    fn marginal_price(&self, params: MarginalPriceParams) -> SimulationResult<MarginalPrice> {
+        let component = self.component();
+        let token_in = component
+            .tokens
+            .iter()
+            .find(|t| params.token_in().eq(&t.address))
+            .unwrap();
+
+        let token_out = component
+            .tokens
+            .iter()
+            .find(|t| params.token_out().eq(&t.address))
+            .unwrap();
+
+        let price_no_fee = cpmm_spot_price(token_in, token_out, self.reserve0, self.reserve1)?;
+        let price = add_fee_markup(price_no_fee, cpmm_fee(UNISWAP_V2_FEE_BPS));
+        Ok(MarginalPrice::new(price))
+    }
+
+    fn quote(&self, params: QuoteParams) -> SimulationResult<Quote> {
+        let amount_in = biguint_to_u256(params.amount_in());
+        let zero2one = params.token_in() < params.token_out();
         let (reserve_in, reserve_out) =
             if zero2one { (self.reserve0, self.reserve1) } else { (self.reserve1, self.reserve0) };
         let fee = ProtocolFee::new(FEE_NUMERATOR, FEE_PRECISION);
         let amount_out = cpmm_get_amount_out(amount_in, reserve_in, reserve_out, fee)?;
-        let mut new_state = self.clone();
-        let (reserve0_mut, reserve1_mut) = (&mut new_state.reserve0, &mut new_state.reserve1);
-        if zero2one {
-            *reserve0_mut = safe_add_u256(self.reserve0, amount_in)?;
-            *reserve1_mut = safe_sub_u256(self.reserve1, amount_out)?;
+
+        let updated = if params.modify_state() {
+            let mut new_state = self.clone();
+            let (reserve0_mut, reserve1_mut) = (&mut new_state.reserve0, &mut new_state.reserve1);
+            if zero2one {
+                *reserve0_mut = safe_add_u256(self.reserve0, amount_in)?;
+                *reserve1_mut = safe_sub_u256(self.reserve1, amount_out)?;
+            } else {
+                *reserve0_mut = safe_sub_u256(self.reserve0, amount_out)?;
+                *reserve1_mut = safe_add_u256(self.reserve1, amount_in)?;
+            };
+            let new_state: Arc<dyn SwapQuoter> = Arc::new(new_state);
+            Some(new_state)
         } else {
-            *reserve0_mut = safe_sub_u256(self.reserve0, amount_out)?;
-            *reserve1_mut = safe_add_u256(self.reserve1, amount_in)?;
+            None
         };
-        Ok(GetAmountOutResult::new(
-            u256_to_biguint(amount_out),
-            BigUint::from(120_000u32),
-            Box::new(new_state),
+
+        Ok(Quote::new(u256_to_biguint(amount_out), BigUint::from(120_000u32), updated))
+    }
+
+    fn swap_limits(&self, params: LimitsParams) -> SimulationResult<SwapLimits> {
+        let limits = cpmm_get_limits(
+            params.token_in(),
+            params.token_out(),
+            self.reserve0,
+            self.reserve1,
+            UNISWAP_V2_FEE_BPS,
+        )?;
+
+        Ok(SwapLimits::new(
+            Range::new(BigUint::ZERO, limits.0)?,
+            Range::new(BigUint::ZERO, limits.1)?,
         ))
     }
 
-    fn get_limits(
-        &self,
-        sell_token: Bytes,
-        buy_token: Bytes,
-    ) -> Result<(BigUint, BigUint), SimulationError> {
-        cpmm_get_limits(sell_token, buy_token, self.reserve0, self.reserve1, UNISWAP_V2_FEE_BPS)
-    }
-
-    fn delta_transition(
-        &mut self,
-        delta: ProtocolStateDelta,
-        _tokens: &HashMap<Bytes, Token>,
-        _balances: &Balances,
-    ) -> Result<(), TransitionError<String>> {
-        let (reserve0_mut, reserve1_mut) = (&mut self.reserve0, &mut self.reserve1);
-        cpmm_delta_transition(delta, reserve0_mut, reserve1_mut)
-    }
-
-    fn query_pool_swap(&self, params: &QueryPoolSwapParams) -> Result<PoolSwap, SimulationError> {
+    fn query_swap(&self, params: QuerySwapParams) -> SimulationResult<Swap> {
         match params.swap_constraint() {
             SwapConstraint::PoolTargetPrice {
                 target: price,
                 tolerance: _,
                 min_amount_in: _,
                 max_amount_in: _,
+                ..
             } => {
-                let zero2one = params.token_in().address < params.token_out().address;
+                let zero2one = params.token_in() < params.token_out();
                 let (reserve_in, reserve_out) = if zero2one {
                     (self.reserve0, self.reserve1)
                 } else {
@@ -124,17 +142,20 @@ impl ProtocolSim for UniswapV2State {
                 let fee = ProtocolFee::new(FEE_NUMERATOR, FEE_PRECISION);
                 let (amount_in, _) = cpmm_swap_to_price(reserve_in, reserve_out, price, fee)?;
                 if amount_in.is_zero() {
-                    return Ok(PoolSwap::new(
+                    return Ok(Swap::new(
                         BigUint::ZERO,
                         BigUint::ZERO,
-                        Box::new(self.clone()),
+                        Some(Arc::new(self.clone())),
                         None,
                     ));
                 }
 
-                let res =
-                    self.get_amount_out(amount_in.clone(), params.token_in(), params.token_out())?;
-                Ok(PoolSwap::new(amount_in, res.amount, res.new_state, None))
+                let res = self.quote(QuoteParams::new(
+                    params.token_in(),
+                    params.token_out(),
+                    amount_in.clone(),
+                ))?;
+                Ok(Swap::new(amount_in, res.amount_out().clone(), res.new_state(), None))
             }
             SwapConstraint::TradeLimitPrice { .. } => Err(SimulationError::InvalidInput(
                 "UniswapV2State does not support TradeLimitPrice constraint in query_pool_swap"
@@ -144,28 +165,21 @@ impl ProtocolSim for UniswapV2State {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn ProtocolSim> {
+    fn delta_transition(
+        &mut self,
+        params: TransitionParams,
+    ) -> Result<Transition, TransitionError> {
+        let (reserve0_mut, reserve1_mut) = (&mut self.reserve0, &mut self.reserve1);
+        cpmm_delta_transition(params.delta(), reserve0_mut, reserve1_mut)?;
+        Ok(Transition::default())
+    }
+
+    fn clone_box(&self) -> Box<dyn SwapQuoter> {
         Box::new(self.clone())
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn eq(&self, other: &dyn ProtocolSim) -> bool {
-        if let Some(other_state) = other.as_any().downcast_ref::<Self>() {
-            let (self_reserve0, self_reserve1) = (self.reserve0, self.reserve1);
-            let (other_reserve0, other_reserve1) = (other_state.reserve0, other_state.reserve1);
-            self_reserve0 == other_reserve0 &&
-                self_reserve1 == other_reserve1 &&
-                self.fee() == other_state.fee()
-        } else {
-            false
-        }
+    fn to_protocol_sim(&self) -> Box<dyn ProtocolSim> {
+        Box::new(self.clone())
     }
 }
 

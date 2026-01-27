@@ -42,10 +42,10 @@ hex = "0.4.3"
 async-trait = "0.1.88"
 
 # Tycho dependencies
-tycho-client = ">=0.133.0"
-tycho-common = ">=0.133.0"
-tycho-ethereum = ">=0.133.0"
-tycho-execution = ">=0.155.0"
+tycho-common = { git = "https://github.com/propeller-heads/tycho-indexer", branch = "ah/v1-quote-interface" }
+tycho-client = { git = "https://github.com/propeller-heads/tycho-indexer", branch = "ah/v1-quote-interface" }
+tycho-ethereum = { git = "https://github.com/propeller-heads/tycho-indexer", branch = "ah/v1-quote-interface" }
+tycho-execution = { git = "https://github.com/propeller-heads/tycho-execution", branch = "ah/v1-quote-interface" }
 
 # EVM dependencies
 # Alloy's dyn-abi 1.4.0 has a security vulnerability, so we require at least 1.4.1
@@ -115,6 +115,7 @@ http = { version = "1.0", optional = true }
 prost = { version = "0.13", optional = true }
 alloy-chains = "0.2.18"
 hex-literal.workspace = true
+typetag = "0.2.21"
 
 
 [dev-dependencies]

@@ -95,8 +95,8 @@ pub fn cpmm_get_amount_out(
 /// the actual price impact to be slightly less than 90%. For typical fees (0.25%-0.3%), the
 /// actual price impact is approximately 89.9% instead of exactly 90%.
 pub fn cpmm_get_limits(
-    sell_token: Bytes,
-    buy_token: Bytes,
+    sell_token: &Bytes,
+    buy_token: &Bytes,
     reserve0: U256,
     reserve1: U256,
     fee_bps: u32,
@@ -126,10 +126,10 @@ pub fn cpmm_get_limits(
 }
 
 pub fn cpmm_delta_transition(
-    delta: ProtocolStateDelta,
+    delta: &ProtocolStateDelta,
     reserve0_mut: &mut U256,
     reserve1_mut: &mut U256,
-) -> Result<(), TransitionError<String>> {
+) -> Result<(), TransitionError> {
     // reserve0 and reserve1 are considered required attributes and are expected in every delta
     // we process
     let reserve0 = U256::from_be_slice(
