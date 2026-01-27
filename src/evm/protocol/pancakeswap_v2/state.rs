@@ -93,7 +93,7 @@ impl ProtocolSim for PancakeswapV2State {
         sell_token: Bytes,
         buy_token: Bytes,
     ) -> Result<(BigUint, BigUint), SimulationError> {
-        cpmm_get_limits(sell_token, buy_token, self.reserve0, self.reserve1, PANCAKESWAP_V2_FEE)
+        cpmm_get_limits(&sell_token, &buy_token, self.reserve0, self.reserve1, PANCAKESWAP_V2_FEE)
     }
 
     fn delta_transition(
@@ -101,9 +101,9 @@ impl ProtocolSim for PancakeswapV2State {
         delta: ProtocolStateDelta,
         _tokens: &HashMap<Bytes, Token>,
         _balances: &Balances,
-    ) -> Result<(), TransitionError<String>> {
+    ) -> Result<(), TransitionError> {
         let (reserve0_mut, reserve1_mut) = (&mut self.reserve0, &mut self.reserve1);
-        cpmm_delta_transition(delta, reserve0_mut, reserve1_mut)
+        cpmm_delta_transition(&delta, reserve0_mut, reserve1_mut)
     }
 
     fn query_pool_swap(&self, params: &QueryPoolSwapParams) -> Result<PoolSwap, SimulationError> {
