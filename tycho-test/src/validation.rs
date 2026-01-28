@@ -306,11 +306,45 @@ impl Validator for UniswapV2State {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{str::FromStr, sync::Arc};
 
     use alloy::primitives::U256;
+    use chrono::NaiveDateTime;
+    use tycho_common::models::{protocol::ProtocolComponent, token::Token, Chain, ChangeType};
 
     use super::*;
+    fn component(t0_decimals: u32, token_1_decimals: u32) -> Arc<ProtocolComponent<Arc<Token>>> {
+        let t0 = Token::new(
+            &Bytes::from_str("0x0000000000000000000000000000000000000000").unwrap(),
+            "T0",
+            t0_decimals,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        );
+        let t1 = Token::new(
+            &Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap(),
+            "T0",
+            token_1_decimals,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        );
+        Arc::new(ProtocolComponent::<_>::new(
+            "0xtest",
+            "uniswap_v2",
+            "uniswap_v2_pool",
+            Chain::Ethereum,
+            vec![Arc::new(t0), Arc::new(t1)],
+            vec![],
+            HashMap::new(),
+            ChangeType::Creation,
+            Bytes::default(),
+            NaiveDateTime::default(),
+        ))
+    }
 
     #[tokio::test]
     #[ignore] // This test requires an RPC connection
@@ -323,11 +357,12 @@ mod tests {
         let state_1 = UniswapV2State::new(
             U256::from(7791135770602459893220844917132_u128),
             U256::from(80274590426947493401_u128),
+            component(18, 18),
         );
         let component_id_1 = Bytes::from_str(pool_id_1).unwrap();
 
         // Component with incorrect reserves to show validation failure
-        let state_2 = UniswapV2State::new(U256::from(1000), U256::from(2000));
+        let state_2 = UniswapV2State::new(U256::from(1000), U256::from(2000), component(18, 18));
         let component_id_2 = Bytes::from_str(pool_id_1).unwrap(); // Same component but wrong state
 
         let rpc_url = std::env::var("RPC_URL")

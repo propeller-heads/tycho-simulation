@@ -40,6 +40,7 @@ itertools = "0.10.5"
 hex-literal = "0.4.1"
 hex = "0.4.3"
 async-trait = "0.1.88"
+chrono = { version = "0.4.26", features = ["serde"] }
 
 # Tycho dependencies
 tycho-common = { git = "https://github.com/propeller-heads/tycho-indexer", branch = "ah/v1-quote-interface" }
@@ -58,7 +59,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { version = "1.4.1", features = ["serde", "v4", "fast-rng", "macro-diagnostics"] }
 hex = { workspace = true }
-chrono = { version = "0.4.26", features = ["serde"] }
+chrono = { workspace = true }
 typetag = { workspace = true }
 
 # Error handling

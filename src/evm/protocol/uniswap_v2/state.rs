@@ -191,16 +191,17 @@ mod tests {
     };
 
     use approx::assert_ulps_eq;
+    use chrono::NaiveDateTime;
     use num_bigint::BigUint;
     use num_traits::One;
     use rstest::rstest;
     use tycho_common::{
         dto::ProtocolStateDelta,
         hex_bytes::Bytes,
-        models::{token::Token, Chain},
+        models::{token::Token, Chain, ChangeType},
         simulation::{
             errors::{SimulationError, TransitionError},
-            protocol_sim::{Balances, Price, ProtocolSim},
+            protocol_sim::{Balances, Price, ProtocolSim, QueryPoolSwapParams},
         },
     };
 
@@ -256,28 +257,11 @@ mod tests {
         #[case] amount_in: BigUint,
         #[case] exp: BigUint,
     ) {
-        let t0 = Token::new(
-            &Bytes::from_str("0x0000000000000000000000000000000000000000").unwrap(),
-            "T0",
-            token_0_decimals,
-            0,
-            &[Some(10_000)],
-            Chain::Ethereum,
-            100,
-        );
-        let t1 = Token::new(
-            &Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap(),
-            "T0",
-            token_1_decimals,
-            0,
-            &[Some(10_000)],
-            Chain::Ethereum,
-            100,
-        );
-        let state = UniswapV2State::new(r0, r1);
+        let c = component(token_0_decimals, token_1_decimals);
+        let state = UniswapV2State::new(r0, r1, c.clone());
 
         let res = state
-            .get_amount_out(amount_in.clone(), &t0, &t1)
+            .get_amount_out(amount_in.clone(), &c.tokens[0], &c.tokens[1])
             .unwrap();
 
         assert_eq!(res.amount, exp);
@@ -293,17 +277,11 @@ mod tests {
         assert_eq!(state.reserve1, r1);
     }
 
-    #[test]
-    fn test_get_amount_out_overflow() {
-        let r0 = U256::from_str("33372357002392258830279").unwrap();
-        let r1 = U256::from_str("43356945776493").unwrap();
-        let amount_in = (BigUint::one() << 256) - BigUint::one(); // U256 max value
-        let t0d = 18;
-        let t1d = 16;
+    fn component(t0_decimals: u32, token_1_decimals: u32) -> Component {
         let t0 = Token::new(
             &Bytes::from_str("0x0000000000000000000000000000000000000000").unwrap(),
             "T0",
-            t0d,
+            t0_decimals,
             0,
             &[Some(10_000)],
             Chain::Ethereum,
@@ -312,15 +290,36 @@ mod tests {
         let t1 = Token::new(
             &Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap(),
             "T0",
-            t1d,
+            token_1_decimals,
             0,
             &[Some(10_000)],
             Chain::Ethereum,
             100,
         );
-        let state = UniswapV2State::new(r0, r1);
+        Arc::new(ProtocolComponent::<_>::new(
+            "0xtest",
+            "uniswap_v2",
+            "uniswap_v2_pool",
+            Chain::Ethereum,
+            vec![Arc::new(t0), Arc::new(t1)],
+            vec![],
+            HashMap::new(),
+            ChangeType::Creation,
+            Bytes::default(),
+            NaiveDateTime::default(),
+        ))
+    }
 
-        let res = state.get_amount_out(amount_in, &t0, &t1);
+    #[test]
+    fn test_get_amount_out_overflow() {
+        let r0 = U256::from_str("33372357002392258830279").unwrap();
+        let r1 = U256::from_str("43356945776493").unwrap();
+        let amount_in = (BigUint::one() << 256) - BigUint::one(); // U256 max value
+        let c = component(18, 16);
+
+        let state = UniswapV2State::new(r0, r1, c.clone());
+
+        let res = state.get_amount_out(amount_in, &c.tokens[0], &c.tokens[1]);
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(matches!(err, SimulationError::FatalError(_)));
@@ -330,33 +329,21 @@ mod tests {
     #[case(true, 0.000823442321727627)] // 0.0008209719947624441 / 0.997
     #[case(false, 1221.7335469177287)] // 1218.0683462769755 / 0.997
     fn test_spot_price(#[case] zero_to_one: bool, #[case] exp: f64) {
+        let c = component(6, 18);
         let state = UniswapV2State::new(
             U256::from_str("36925554990922").unwrap(),
             U256::from_str("30314846538607556521556").unwrap(),
-        );
-        let usdc = Token::new(
-            &Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
-            "USDC",
-            6,
-            0,
-            &[Some(10_000)],
-            Chain::Ethereum,
-            100,
-        );
-        let weth = Token::new(
-            &Bytes::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(),
-            "WETH",
-            18,
-            0,
-            &[Some(10_000)],
-            Chain::Ethereum,
-            100,
+            c.clone(),
         );
 
         let res = if zero_to_one {
-            state.spot_price(&usdc, &weth).unwrap()
+            state
+                .spot_price(&c.tokens[0], &c.tokens[1])
+                .unwrap()
         } else {
-            state.spot_price(&weth, &usdc).unwrap()
+            state
+                .spot_price(&c.tokens[1], &c.tokens[0])
+                .unwrap()
         };
 
         assert_ulps_eq!(res, exp);
@@ -367,17 +354,21 @@ mod tests {
         let state = UniswapV2State::new(
             U256::from_str("36925554990922").unwrap(),
             U256::from_str("30314846538607556521556").unwrap(),
+            component(18, 18),
         );
 
-        let res = state.fee();
+        let res = ProtocolSim::fee(&state);
 
         assert_ulps_eq!(res, 0.003);
     }
 
     #[test]
     fn test_delta_transition() {
-        let mut state =
-            UniswapV2State::new(U256::from_str("1000").unwrap(), U256::from_str("1000").unwrap());
+        let mut state = UniswapV2State::new(
+            U256::from_str("1000").unwrap(),
+            U256::from_str("1000").unwrap(),
+            component(18, 18),
+        );
         let attributes: HashMap<String, Bytes> = vec![
             ("reserve0".to_string(), Bytes::from(1500_u64.to_be_bytes().to_vec())),
             ("reserve1".to_string(), Bytes::from(2000_u64.to_be_bytes().to_vec())),
@@ -390,7 +381,8 @@ mod tests {
             deleted_attributes: HashSet::new(), // usv2 doesn't have any deletable attributes
         };
 
-        let res = state.delta_transition(delta, &HashMap::new(), &Balances::default());
+        let res =
+            ProtocolSim::delta_transition(&mut state, delta, &HashMap::new(), &Balances::default());
 
         assert!(res.is_ok());
         assert_eq!(state.reserve0, U256::from_str("1500").unwrap());
@@ -399,8 +391,11 @@ mod tests {
 
     #[test]
     fn test_delta_transition_missing_attribute() {
-        let mut state =
-            UniswapV2State::new(U256::from_str("1000").unwrap(), U256::from_str("1000").unwrap());
+        let mut state = UniswapV2State::new(
+            U256::from_str("1000").unwrap(),
+            U256::from_str("1000").unwrap(),
+            component(18, 18),
+        );
         let attributes: HashMap<String, Bytes> =
             vec![("reserve0".to_string(), Bytes::from(1500_u64.to_be_bytes().to_vec()))]
                 .into_iter()
@@ -411,7 +406,8 @@ mod tests {
             deleted_attributes: HashSet::new(),
         };
 
-        let res = state.delta_transition(delta, &HashMap::new(), &Balances::default());
+        let res =
+            ProtocolSim::delta_transition(&mut state, delta, &HashMap::new(), &Balances::default());
 
         assert!(res.is_err());
         // assert it errors for the missing reserve1 attribute delta
@@ -425,8 +421,11 @@ mod tests {
 
     #[test]
     fn test_get_limits_price_impact() {
-        let state =
-            UniswapV2State::new(U256::from_str("1000").unwrap(), U256::from_str("100000").unwrap());
+        let state = UniswapV2State::new(
+            U256::from_str("1000").unwrap(),
+            U256::from_str("100000").unwrap(),
+            component(18, 18),
+        );
 
         let (amount_in, _) = state
             .get_limits(
@@ -465,7 +464,11 @@ mod tests {
     fn test_swap_to_price_below_spot() {
         // Pool with reserve0=2000000, reserve1=1000000
         // Current price: reserve1/reserve0 = 1000000/2000000 = 0.5 token_out per token_in
-        let state = UniswapV2State::new(U256::from(2_000_000u32), U256::from(1_000_000u32));
+        let state = UniswapV2State::new(
+            U256::from(2_000_000u32),
+            U256::from(1_000_000u32),
+            component(18, 18),
+        );
 
         let token_in = token_0();
         let token_out = token_1();
@@ -476,7 +479,7 @@ mod tests {
         let params = &QueryPoolSwapParams::new(
             token_in.clone(),
             token_out.clone(),
-            SwapConstraint::PoolTargetPrice {
+            tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                 target: target_price,
                 tolerance: 0f64,
                 min_amount_in: None,
@@ -515,7 +518,11 @@ mod tests {
     #[test]
     fn test_swap_to_price_unreachable() {
         // Pool with 2:1 ratio
-        let state = UniswapV2State::new(U256::from(2_000_000u32), U256::from(1_000_000u32));
+        let state = UniswapV2State::new(
+            U256::from(2_000_000u32),
+            U256::from(1_000_000u32),
+            component(18, 18),
+        );
 
         let token_in = token_0();
         let token_out = token_1();
@@ -528,7 +535,7 @@ mod tests {
         let result = state.query_pool_swap(&QueryPoolSwapParams::new(
             token_in,
             token_out,
-            SwapConstraint::PoolTargetPrice {
+            tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                 target: target_price,
                 tolerance: 0f64,
                 min_amount_in: None,
@@ -541,7 +548,11 @@ mod tests {
 
     #[test]
     fn test_swap_to_price_at_spot_price() {
-        let state = UniswapV2State::new(U256::from(2_000_000u32), U256::from(1_000_000u32));
+        let state = UniswapV2State::new(
+            U256::from(2_000_000u32),
+            U256::from(1_000_000u32),
+            component(18, 18),
+        );
 
         let token_in = token_0();
         let token_out = token_1();
@@ -558,7 +569,7 @@ mod tests {
             .query_pool_swap(&QueryPoolSwapParams::new(
                 token_in.clone(),
                 token_out.clone(),
-                SwapConstraint::PoolTargetPrice {
+                tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                     target: target_price,
                     tolerance: 0f64,
                     min_amount_in: None,
@@ -582,7 +593,11 @@ mod tests {
 
     #[test]
     fn test_swap_to_price_slightly_below_spot() {
-        let state = UniswapV2State::new(U256::from(2_000_000u32), U256::from(1_000_000u32));
+        let state = UniswapV2State::new(
+            U256::from(2_000_000u32),
+            U256::from(1_000_000u32),
+            component(18, 18),
+        );
 
         let token_in = token_0();
         let token_out = token_1();
@@ -601,7 +616,7 @@ mod tests {
             .query_pool_swap(&QueryPoolSwapParams::new(
                 token_in,
                 token_out,
-                SwapConstraint::PoolTargetPrice {
+                tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                     target: target_price,
                     tolerance: 0f64,
                     min_amount_in: None,
@@ -622,6 +637,7 @@ mod tests {
         let state = UniswapV2State::new(
             U256::from_str("6770398782322527849696614").unwrap(),
             U256::from_str("5124813135806900540214").unwrap(),
+            component(18, 18),
         );
 
         let token_in = token_0();
@@ -640,7 +656,7 @@ mod tests {
             .query_pool_swap(&QueryPoolSwapParams::new(
                 token_in,
                 token_out,
-                SwapConstraint::PoolTargetPrice {
+                tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                     target: target_price,
                     tolerance: 0f64,
                     min_amount_in: None,
@@ -655,7 +671,11 @@ mod tests {
 
     #[test]
     fn test_swap_to_price_basic() {
-        let state = UniswapV2State::new(U256::from(1_000_000u32), U256::from(2_000_000u32));
+        let state = UniswapV2State::new(
+            U256::from(1_000_000u32),
+            U256::from(2_000_000u32),
+            component(18, 18),
+        );
 
         let token_in = token_0();
         let token_out = token_1();
@@ -666,7 +686,7 @@ mod tests {
             .query_pool_swap(&QueryPoolSwapParams::new(
                 token_in,
                 token_out,
-                SwapConstraint::PoolTargetPrice {
+                tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                     target: target_price,
                     tolerance: 0f64,
                     min_amount_in: None,
@@ -684,6 +704,7 @@ mod tests {
         let state = UniswapV2State::new(
             U256::from(1_000_000u128) * U256::from(1_000_000_000_000_000_000u128),
             U256::from(2_000_000u128) * U256::from(1_000_000_000_000_000_000u128),
+            component(18, 18),
         );
 
         let token_in = token_0();
@@ -698,7 +719,7 @@ mod tests {
             .query_pool_swap(&QueryPoolSwapParams::new(
                 token_in,
                 token_out,
-                SwapConstraint::PoolTargetPrice {
+                tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                     target: target_price,
                     tolerance: 0f64,
                     min_amount_in: None,
@@ -737,7 +758,7 @@ mod tests {
         let reserve_0 = U256::from_str("735952457913070155214197").unwrap();
         let reserve_1 = U256::from_str("735997725943000000000000").unwrap();
 
-        let pool = UniswapV2State::new(reserve_0, reserve_1);
+        let pool = UniswapV2State::new(reserve_0, reserve_1, component(18, 18));
 
         // Reserves: reserve_0 = DAI, reserve_1 = USDC (DAI address < USDC address)
         let reserve_usdc = reserve_1;
@@ -765,7 +786,7 @@ mod tests {
         let swap_above_limit = pool.query_pool_swap(&QueryPoolSwapParams::new(
             usdc.clone(),
             dai.clone(),
-            SwapConstraint::PoolTargetPrice {
+            tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                 target: target_price,
                 tolerance: 0f64,
                 min_amount_in: None,
@@ -789,7 +810,7 @@ mod tests {
             .query_pool_swap(&QueryPoolSwapParams::new(
                 usdc.clone(),
                 dai.clone(),
-                SwapConstraint::PoolTargetPrice {
+                tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                     target: target_price,
                     tolerance: 0f64,
                     min_amount_in: None,

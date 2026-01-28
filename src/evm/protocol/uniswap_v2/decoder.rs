@@ -60,12 +60,17 @@ impl TryFromWithBlock<ComponentWithState, BlockHeader> for UniswapV2State {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, str::FromStr, sync::Arc};
 
     use alloy::primitives::U256;
+    use chrono::NaiveDateTime;
     use rstest::rstest;
     use tycho_client::feed::{synchronizer::ComponentWithState, BlockHeader};
-    use tycho_common::{dto::ResponseProtocolState, Bytes};
+    use tycho_common::{
+        dto::ResponseProtocolState,
+        models::{protocol::ProtocolComponent, token::Token, Chain, ChangeType},
+        Bytes,
+    };
 
     use super::super::state::UniswapV2State;
     use crate::protocol::{
@@ -81,6 +86,39 @@ mod tests {
             revert: false,
             timestamp: 1,
         }
+    }
+
+    fn component(t0_decimals: u32, token_1_decimals: u32) -> Arc<ProtocolComponent<Arc<Token>>> {
+        let t0 = Token::new(
+            &Bytes::from_str("0x0000000000000000000000000000000000000000").unwrap(),
+            "T0",
+            t0_decimals,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        );
+        let t1 = Token::new(
+            &Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap(),
+            "T0",
+            token_1_decimals,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        );
+        Arc::new(ProtocolComponent::<_>::new(
+            "0xtest",
+            "uniswap_v2",
+            "uniswap_v2_pool",
+            Chain::Ethereum,
+            vec![Arc::new(t0), Arc::new(t1)],
+            vec![],
+            HashMap::new(),
+            ChangeType::Creation,
+            Bytes::default(),
+            NaiveDateTime::default(),
+        ))
     }
 
     #[tokio::test]
@@ -110,7 +148,10 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), UniswapV2State::new(U256::from(0u64), U256::from(0u64)));
+        assert_eq!(
+            result.unwrap(),
+            UniswapV2State::new(U256::from(0u64), U256::from(0u64), component(18, 18))
+        );
     }
 
     #[tokio::test]

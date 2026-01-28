@@ -7497,6 +7497,7 @@ dependencies = [
  "alloy-chains",
  "alloy-rpc-types-trace",
  "async-trait",
+ "chrono",
  "colored",
  "dotenv",
  "futures 0.3.31",
