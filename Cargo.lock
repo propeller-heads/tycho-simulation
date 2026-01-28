@@ -2906,6 +2906,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9eaf56840ccbfb0b6d4fb27dd20d96a13586482923b280f5d6eb1a5fa980e818"
 dependencies = [
  "num-traits",
+ "serde",
  "uint 0.10.0",
 ]
 
@@ -7240,9 +7241,9 @@ dependencies = [
 
 [[package]]
 name = "tycho-client"
-version = "0.130.1"
+version = "0.127.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea414186aa7a224e5df17260ac2eb6ca9803426d12215d71846829d1be939557"
+checksum = "9d5db3a1fd14d178867b7247d217f29b00c2997cbe164f8bc3ab89cacf93a522"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7270,9 +7271,9 @@ dependencies = [
 
 [[package]]
 name = "tycho-common"
-version = "0.130.1"
+version = "0.127.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a6c62bf4a768eaa312a62f74fe7b479fceee520dd4677666c8870ebee16daf3"
+checksum = "658af6bf429ee49623795e661f81947a592f56b1349ac43352ec960b01d0c186"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7296,20 +7297,18 @@ dependencies = [
 
 [[package]]
 name = "tycho-ethereum"
-version = "0.130.1"
+version = "0.127.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0690a6c4f22c8dfaa13cb32ee8b0a94661352c5f5c8c0a63b2b2655a0ae980e3"
+checksum = "f1f6f82b56accc282b69432a6ac9f15541a2b0d0dc4987d91df39d9c45c70626"
 dependencies = [
  "alloy",
  "async-trait",
  "backoff",
  "chrono",
  "futures 0.3.31",
- "num-bigint",
  "rand 0.8.5",
  "serde",
  "serde_json",
- "serde_with",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -7422,6 +7421,7 @@ dependencies = [
  "tycho-common",
  "tycho-ethereum",
  "tycho-execution",
+ "typetag",
  "unicode-width 0.1.14",
  "uuid",
 ]
