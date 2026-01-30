@@ -124,6 +124,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_usv2_try_from() {
+        let c = component(18, 18);
+        let tokens = c
+            .tokens
+            .clone()
+            .into_iter()
+            .map(|t| (t.address.clone(), t.as_ref().clone()))
+            .collect();
         let snapshot = ComponentWithState {
             state: ResponseProtocolState {
                 component_id: "State1".to_owned(),
@@ -133,12 +140,20 @@ mod tests {
                 ]),
                 balances: HashMap::new(),
             },
-            component: Default::default(),
+            component: Arc::try_unwrap(c).unwrap().into(),
             component_tvl: None,
             entrypoints: Vec::new(),
         };
 
-        let result = try_decode_snapshot_with_defaults::<UniswapV2State>(snapshot).await;
+        let decoder_context = DecoderContext::new();
+        let result = UniswapV2State::try_from_with_header(
+            snapshot,
+            header(),
+            &HashMap::new(),
+            &tokens,
+            &decoder_context,
+        )
+        .await;
 
         assert!(result.is_ok());
         assert_eq!(

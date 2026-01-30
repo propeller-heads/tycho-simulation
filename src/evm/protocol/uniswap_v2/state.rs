@@ -10,9 +10,9 @@ use tycho_common::{
         errors::{SimulationError, TransitionError},
         protocol_sim::ProtocolSim,
         swap::{
-            LimitsParams, MarginalPrice, MarginalPriceParams, QuerySwapParams, Quote, QuoteParams,
-            Range, SimulationResult, Swap, SwapConstraint, SwapFee, SwapLimits, SwapQuoter,
-            Transition, TransitionParams,
+            LimitsParams, MarginalPrice, MarginalPriceParams, QuerySwapParams, Quote, QuoteAmount,
+            QuoteParams, Range, SimulationResult, Swap, SwapConstraint, SwapFee, SwapLimits,
+            SwapQuoter, Transition, TransitionParams,
         },
     },
 };
@@ -65,47 +65,64 @@ impl SwapQuoter for UniswapV2State {
     fn marginal_price(&self, params: MarginalPriceParams) -> SimulationResult<MarginalPrice> {
         let component = self.component();
         let token_in = component
-            .tokens
-            .iter()
-            .find(|t| params.token_in().eq(&t.address))
-            .unwrap();
+            .get_token(params.token_in())
+            .ok_or_else(|| {
+                SimulationError::InvalidInput(
+                    format!("Token 0x{:x} not found", params.token_in()),
+                    None,
+                )
+            })?;
 
         let token_out = component
-            .tokens
-            .iter()
-            .find(|t| params.token_out().eq(&t.address))
-            .unwrap();
-
-        let price_no_fee = cpmm_spot_price(token_in, token_out, self.reserve0, self.reserve1)?;
+            .get_token(params.token_out())
+            .ok_or_else(|| {
+                SimulationError::InvalidInput(
+                    format!("Token 0x{:x} not found", params.token_in()),
+                    None,
+                )
+            })?;
+        let price_no_fee = cpmm_spot_price(&token_in, &token_out, self.reserve0, self.reserve1)?;
         let price = add_fee_markup(price_no_fee, cpmm_fee(UNISWAP_V2_FEE_BPS));
         Ok(MarginalPrice::new(price))
     }
 
     fn quote(&self, params: QuoteParams) -> SimulationResult<Quote> {
-        let amount_in = biguint_to_u256(params.amount_in());
-        let zero2one = params.token_in() < params.token_out();
-        let (reserve_in, reserve_out) =
-            if zero2one { (self.reserve0, self.reserve1) } else { (self.reserve1, self.reserve0) };
-        let fee = ProtocolFee::new(FEE_NUMERATOR, FEE_PRECISION);
-        let amount_out = cpmm_get_amount_out(amount_in, reserve_in, reserve_out, fee)?;
+        match params.amount() {
+            QuoteAmount::FixedIn(amount) => {
+                let amount_in = biguint_to_u256(amount);
+                let zero2one = params.token_in() < params.token_out();
+                let (reserve_in, reserve_out) = if zero2one {
+                    (self.reserve0, self.reserve1)
+                } else {
+                    (self.reserve1, self.reserve0)
+                };
+                let fee = ProtocolFee::new(FEE_NUMERATOR, FEE_PRECISION);
+                let amount_out = cpmm_get_amount_out(amount_in, reserve_in, reserve_out, fee)?;
 
-        let updated = if params.modify_state() {
-            let mut new_state = self.clone();
-            let (reserve0_mut, reserve1_mut) = (&mut new_state.reserve0, &mut new_state.reserve1);
-            if zero2one {
-                *reserve0_mut = safe_add_u256(self.reserve0, amount_in)?;
-                *reserve1_mut = safe_sub_u256(self.reserve1, amount_out)?;
-            } else {
-                *reserve0_mut = safe_sub_u256(self.reserve0, amount_out)?;
-                *reserve1_mut = safe_add_u256(self.reserve1, amount_in)?;
-            };
-            let new_state: Arc<dyn SwapQuoter> = Arc::new(new_state);
-            Some(new_state)
-        } else {
-            None
-        };
+                let updated = if params.modify_state() {
+                    let mut new_state = self.clone();
+                    let (reserve0_mut, reserve1_mut) =
+                        (&mut new_state.reserve0, &mut new_state.reserve1);
+                    if zero2one {
+                        *reserve0_mut = safe_add_u256(self.reserve0, amount_in)?;
+                        *reserve1_mut = safe_sub_u256(self.reserve1, amount_out)?;
+                    } else {
+                        *reserve0_mut = safe_sub_u256(self.reserve0, amount_out)?;
+                        *reserve1_mut = safe_add_u256(self.reserve1, amount_in)?;
+                    };
+                    let new_state: Arc<dyn SwapQuoter> = Arc::new(new_state);
+                    Some(new_state)
+                } else {
+                    None
+                };
 
-        Ok(Quote::new(u256_to_biguint(amount_out), BigUint::from(120_000u32), updated))
+                Ok(Quote::new(u256_to_biguint(amount_out), BigUint::from(120_000u32), updated))
+            }
+            QuoteAmount::FixedOut(_) => Err(SimulationError::InvalidInput(
+                "UniswapV2State does not support fixed out quote".to_string(),
+                None,
+            )),
+        }
     }
 
     fn swap_limits(&self, params: LimitsParams) -> SimulationResult<SwapLimits> {
@@ -150,11 +167,10 @@ impl SwapQuoter for UniswapV2State {
                     ));
                 }
 
-                let res = self.quote(QuoteParams::new(
-                    params.token_in(),
-                    params.token_out(),
-                    amount_in.clone(),
-                ))?;
+                let res = self.quote(
+                    QuoteParams::fixed_in(params.token_in(), params.token_out(), amount_in.clone())
+                        .with_new_state(),
+                )?;
                 Ok(Swap::new(amount_in, res.amount_out().clone(), res.new_state(), None))
             }
             SwapConstraint::TradeLimitPrice { .. } => Err(SimulationError::InvalidInput(
