@@ -123,6 +123,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_usv2_try_from() {
+        let c = component(18, 18);
+        let tokens = c
+            .tokens
+            .clone()
+            .into_iter()
+            .map(|t| (t.address.clone(), t.as_ref().clone()))
+            .collect();
         let snapshot = ComponentWithState {
             state: ResponseProtocolState {
                 component_id: "State1".to_owned(),
@@ -132,7 +139,7 @@ mod tests {
                 ]),
                 balances: HashMap::new(),
             },
-            component: Default::default(),
+            component: Arc::try_unwrap(c).unwrap().into(),
             component_tvl: None,
             entrypoints: Vec::new(),
         };
@@ -142,7 +149,7 @@ mod tests {
             snapshot,
             header(),
             &HashMap::new(),
-            &HashMap::new(),
+            &tokens,
             &decoder_context,
         )
         .await;
