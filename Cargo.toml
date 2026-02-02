@@ -104,7 +104,7 @@ tokio-stream = "0.1.16"
 dialoguer = "0.10.4"
 
 # Ekubo
-evm_ekubo_sdk = {version = "0.6.5", features = ["serde"]}
+evm_ekubo_sdk = { version = "0.6.5", features = ["serde"] }
 ekubo_sdk = { version = "=1.0.2", features = ["evm", "serde"] }
 
 # rfq
@@ -116,7 +116,6 @@ http = { version = "1.0", optional = true }
 prost = { version = "0.13", optional = true }
 alloy-chains = "0.2.18"
 hex-literal.workspace = true
-typetag = "0.2.21"
 
 
 [dev-dependencies]
