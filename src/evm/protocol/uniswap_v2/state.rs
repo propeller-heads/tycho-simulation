@@ -99,7 +99,7 @@ impl SwapQuoter for UniswapV2State {
                 let fee = ProtocolFee::new(FEE_NUMERATOR, FEE_PRECISION);
                 let amount_out = cpmm_get_amount_out(amount_in, reserve_in, reserve_out, fee)?;
 
-                let updated = if params.modify_state() {
+                let updated = if params.should_return_new_state() {
                     let mut new_state = self.clone();
                     let (reserve0_mut, reserve1_mut) =
                         (&mut new_state.reserve0, &mut new_state.reserve1);
@@ -168,8 +168,12 @@ impl SwapQuoter for UniswapV2State {
                 }
 
                 let res = self.quote(
-                    QuoteParams::fixed_in(params.token_in(), params.token_out(), amount_in.clone())
-                        .with_new_state(),
+                    QuoteParams::fixed_in(
+                        params.token_in(),
+                        params.token_out(),
+                        amount_in.clone(),
+                    )?
+                    .with_new_state(),
                 )?;
                 Ok(Swap::new(amount_in, res.amount_out().clone(), res.new_state(), None))
             }

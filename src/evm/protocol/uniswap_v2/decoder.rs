@@ -75,7 +75,10 @@ mod tests {
     use super::super::state::UniswapV2State;
     use crate::{
         evm::protocol::test_utils::try_decode_snapshot_with_defaults,
-        protocol::errors::InvalidSnapshotError,
+        protocol::{
+            errors::InvalidSnapshotError,
+            models::{DecoderContext, TryFromWithBlock},
+        },
     };
 
     fn header() -> BlockHeader {
@@ -85,6 +88,7 @@ mod tests {
             parent_hash: Bytes::from(vec![0; 32]),
             revert: false,
             timestamp: 1,
+            partial_block_index: None,
         }
     }
 
@@ -120,7 +124,6 @@ mod tests {
             NaiveDateTime::default(),
         ))
     }
-
 
     #[tokio::test]
     async fn test_usv2_try_from() {
