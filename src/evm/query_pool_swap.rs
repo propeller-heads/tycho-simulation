@@ -362,11 +362,16 @@ fn geometric_mean(a: &BigUint, b: &BigUint) -> BigUint {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use std::{collections::HashMap, str::FromStr, sync::Arc};
 
     use alloy::primitives::U256;
+    use chrono::NaiveDateTime;
     use rstest::rstest;
-    use tycho_common::{hex_bytes::Bytes, models::Chain, simulation::protocol_sim::Price};
+    use tycho_common::{
+        hex_bytes::Bytes,
+        models::{protocol::ProtocolComponent, Chain, ChangeType},
+        simulation::protocol_sim::Price,
+    };
 
     use super::*;
     use crate::evm::protocol::uniswap_v2::state::UniswapV2State;
@@ -619,6 +624,39 @@ mod tests {
     // Integration tests - Pool setup helpers
     // =========================================================================
 
+    fn component(t0_decimals: u32, token_1_decimals: u32) -> Arc<ProtocolComponent<Arc<Token>>> {
+        let t0 = Token::new(
+            &Bytes::from_str("0x0000000000000000000000000000000000000000").unwrap(),
+            "T0",
+            t0_decimals,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        );
+        let t1 = Token::new(
+            &Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap(),
+            "T0",
+            token_1_decimals,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        );
+        Arc::new(ProtocolComponent::<_>::new(
+            "0xtest",
+            "uniswap_v2",
+            "uniswap_v2_pool",
+            Chain::Ethereum,
+            vec![Arc::new(t0), Arc::new(t1)],
+            vec![],
+            HashMap::new(),
+            ChangeType::Creation,
+            Bytes::default(),
+            NaiveDateTime::default(),
+        ))
+    }
+
     mod pool_setup {
         use std::collections::HashMap;
 
@@ -652,6 +690,7 @@ mod tests {
             let state = UniswapV2State::new(
                 U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
                 U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(18u64)),
+                component(18, 18),
             );
             let token_in = create_token("0x0000000000000000000000000000000000000001", "DAI", 18);
             let token_out = create_token("0x0000000000000000000000000000000000000000", "WETH", 18);
@@ -662,6 +701,7 @@ mod tests {
             let state = UniswapV2State::new(
                 U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
                 U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(6u64)),
+                component(6, 18),
             );
             let token_in = create_token("0x0000000000000000000000000000000000000001", "USDC", 6);
             let token_out = create_token("0x0000000000000000000000000000000000000000", "WETH", 18);
@@ -957,7 +997,11 @@ mod tests {
 
     #[test]
     fn test_query_pool_swap_pool_target_price_unreachable() {
-        let state = UniswapV2State::new(U256::from(2_000_000u32), U256::from(1_000_000u32));
+        let state = UniswapV2State::new(
+            U256::from(2_000_000u32),
+            U256::from(1_000_000u32),
+            component(18, 18),
+        );
         let token_in = token_0();
         let token_out = token_1();
 
@@ -983,6 +1027,7 @@ mod tests {
         let state = UniswapV2State::new(
             U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
             U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(18u64)),
+            component(18, 18),
         );
         let token_in = create_token("0x0000000000000000000000000000000000000001", "DAI", 18);
         let token_out = create_token("0x0000000000000000000000000000000000000000", "WETH", 18);
@@ -1022,7 +1067,11 @@ mod tests {
 
     #[test]
     fn test_query_pool_swap_at_spot_price() {
-        let state = UniswapV2State::new(U256::from(2_000_000u32), U256::from(1_000_000u32));
+        let state = UniswapV2State::new(
+            U256::from(2_000_000u32),
+            U256::from(1_000_000u32),
+            component(18, 18),
+        );
         let token_in = token_0();
         let token_out = token_1();
 
@@ -1056,6 +1105,7 @@ mod tests {
         let state = UniswapV2State::new(
             U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
             U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(18u64)),
+            component(18, 18),
         );
         let token_in = create_token("0x0000000000000000000000000000000000000001", "DAI", 18);
         let token_out = create_token("0x0000000000000000000000000000000000000000", "WETH", 18);
@@ -1088,6 +1138,7 @@ mod tests {
         let state = UniswapV2State::new(
             U256::from_str("1000000000000000000000000").unwrap(),
             U256::from_str("2000000000000000000000000000").unwrap(),
+            component(18, 18),
         );
         let token_in = create_token("0x0000000000000000000000000000000000000001", "DAI", 18);
         let token_out = create_token("0x0000000000000000000000000000000000000000", "WETH", 18);

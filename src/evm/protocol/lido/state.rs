@@ -299,7 +299,7 @@ impl LidoState {
     fn st_eth_delta_transition(
         &mut self,
         delta: ProtocolStateDelta,
-    ) -> Result<(), TransitionError<String>> {
+    ) -> Result<(), TransitionError> {
         self.total_shares = BigUint::from_bytes_be(
             delta
                 .updated_attributes
@@ -356,7 +356,7 @@ impl LidoState {
     fn wst_eth_delta_transition(
         &mut self,
         delta: ProtocolStateDelta,
-    ) -> Result<(), TransitionError<String>> {
+    ) -> Result<(), TransitionError> {
         self.total_shares = BigUint::from_bytes_be(
             delta
                 .updated_attributes
@@ -484,7 +484,7 @@ impl ProtocolSim for LidoState {
         delta: ProtocolStateDelta,
         _tokens: &HashMap<Bytes, Token>,
         balances: &Balances,
-    ) -> Result<(), TransitionError<String>> {
+    ) -> Result<(), TransitionError> {
         for (component_id, balances) in balances.component_balances.iter() {
             if Bytes::from(component_id.as_str()) == self.id {
                 match self.pool_type {

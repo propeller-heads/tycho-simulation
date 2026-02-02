@@ -1,20 +1,20 @@
-use std::{any::Any, collections::HashMap};
+use std::sync::Arc;
 
 use alloy::primitives::U256;
 use num_bigint::BigUint;
 use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 use tycho_common::{
-    dto::ProtocolStateDelta,
-    models::token::Token,
+    models::{protocol::ProtocolComponent, token::Token},
     simulation::{
         errors::{SimulationError, TransitionError},
-        protocol_sim::{
-            Balances, GetAmountOutResult, PoolSwap, ProtocolSim, QueryPoolSwapParams,
-            SwapConstraint,
+        protocol_sim::ProtocolSim,
+        swap::{
+            LimitsParams, MarginalPrice, MarginalPriceParams, QuerySwapParams, Quote, QuoteAmount,
+            QuoteParams, Range, SimulationResult, Swap, SwapConstraint, SwapFee, SwapLimits,
+            SwapQuoter, Transition, TransitionParams,
         },
     },
-    Bytes,
 };
 
 use crate::evm::protocol::{
@@ -31,10 +31,13 @@ const UNISWAP_V2_FEE_BPS: u32 = 30; // 0.3% fee
 const FEE_PRECISION: U256 = U256::from_limbs([10000, 0, 0, 0]);
 const FEE_NUMERATOR: U256 = U256::from_limbs([9970, 0, 0, 0]);
 
+type Component = Arc<ProtocolComponent<Arc<Token>>>;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UniswapV2State {
     pub reserve0: U256,
     pub reserve1: U256,
+    pub component: Component,
 }
 
 impl UniswapV2State {
@@ -44,77 +47,109 @@ impl UniswapV2State {
     ///
     /// * `reserve0` - Reserve of token 0.
     /// * `reserve1` - Reserve of token 1.
-    pub fn new(reserve0: U256, reserve1: U256) -> Self {
-        UniswapV2State { reserve0, reserve1 }
+    pub fn new(reserve0: U256, reserve1: U256, component: Component) -> Self {
+        UniswapV2State { reserve0, reserve1, component }
     }
 }
 
 #[typetag::serde]
-impl ProtocolSim for UniswapV2State {
-    fn fee(&self) -> f64 {
-        cpmm_fee(UNISWAP_V2_FEE_BPS)
+impl SwapQuoter for UniswapV2State {
+    fn component(&self) -> Arc<ProtocolComponent<Arc<Token>>> {
+        self.component.clone()
     }
 
-    fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
-        let price = cpmm_spot_price(base, quote, self.reserve0, self.reserve1)?;
-        Ok(add_fee_markup(price, self.fee()))
+    fn fee(&self, _params: QuoteParams) -> SimulationResult<SwapFee> {
+        Ok(SwapFee::new(cpmm_fee(UNISWAP_V2_FEE_BPS)))
     }
 
-    fn get_amount_out(
-        &self,
-        amount_in: BigUint,
-        token_in: &Token,
-        token_out: &Token,
-    ) -> Result<GetAmountOutResult, SimulationError> {
-        let amount_in = biguint_to_u256(&amount_in);
-        let zero2one = token_in.address < token_out.address;
-        let (reserve_in, reserve_out) =
-            if zero2one { (self.reserve0, self.reserve1) } else { (self.reserve1, self.reserve0) };
-        let fee = ProtocolFee::new(FEE_NUMERATOR, FEE_PRECISION);
-        let amount_out = cpmm_get_amount_out(amount_in, reserve_in, reserve_out, fee)?;
-        let mut new_state = self.clone();
-        let (reserve0_mut, reserve1_mut) = (&mut new_state.reserve0, &mut new_state.reserve1);
-        if zero2one {
-            *reserve0_mut = safe_add_u256(self.reserve0, amount_in)?;
-            *reserve1_mut = safe_sub_u256(self.reserve1, amount_out)?;
-        } else {
-            *reserve0_mut = safe_sub_u256(self.reserve0, amount_out)?;
-            *reserve1_mut = safe_add_u256(self.reserve1, amount_in)?;
-        };
-        Ok(GetAmountOutResult::new(
-            u256_to_biguint(amount_out),
-            BigUint::from(120_000u32),
-            Box::new(new_state),
+    fn marginal_price(&self, params: MarginalPriceParams) -> SimulationResult<MarginalPrice> {
+        let component = self.component();
+        let token_in = component
+            .get_token(params.token_in())
+            .ok_or_else(|| {
+                SimulationError::InvalidInput(
+                    format!("Token 0x{:x} not found", params.token_in()),
+                    None,
+                )
+            })?;
+
+        let token_out = component
+            .get_token(params.token_out())
+            .ok_or_else(|| {
+                SimulationError::InvalidInput(
+                    format!("Token 0x{:x} not found", params.token_in()),
+                    None,
+                )
+            })?;
+        let price_no_fee = cpmm_spot_price(&token_in, &token_out, self.reserve0, self.reserve1)?;
+        let price = add_fee_markup(price_no_fee, cpmm_fee(UNISWAP_V2_FEE_BPS));
+        Ok(MarginalPrice::new(price))
+    }
+
+    fn quote(&self, params: QuoteParams) -> SimulationResult<Quote> {
+        match params.amount() {
+            QuoteAmount::FixedIn(amount) => {
+                let amount_in = biguint_to_u256(amount);
+                let zero2one = params.token_in() < params.token_out();
+                let (reserve_in, reserve_out) = if zero2one {
+                    (self.reserve0, self.reserve1)
+                } else {
+                    (self.reserve1, self.reserve0)
+                };
+                let fee = ProtocolFee::new(FEE_NUMERATOR, FEE_PRECISION);
+                let amount_out = cpmm_get_amount_out(amount_in, reserve_in, reserve_out, fee)?;
+
+                let updated = if params.modify_state() {
+                    let mut new_state = self.clone();
+                    let (reserve0_mut, reserve1_mut) =
+                        (&mut new_state.reserve0, &mut new_state.reserve1);
+                    if zero2one {
+                        *reserve0_mut = safe_add_u256(self.reserve0, amount_in)?;
+                        *reserve1_mut = safe_sub_u256(self.reserve1, amount_out)?;
+                    } else {
+                        *reserve0_mut = safe_sub_u256(self.reserve0, amount_out)?;
+                        *reserve1_mut = safe_add_u256(self.reserve1, amount_in)?;
+                    };
+                    let new_state: Arc<dyn SwapQuoter> = Arc::new(new_state);
+                    Some(new_state)
+                } else {
+                    None
+                };
+
+                Ok(Quote::new(u256_to_biguint(amount_out), BigUint::from(120_000u32), updated))
+            }
+            QuoteAmount::FixedOut(_) => Err(SimulationError::InvalidInput(
+                "UniswapV2State does not support fixed out quote".to_string(),
+                None,
+            )),
+        }
+    }
+
+    fn swap_limits(&self, params: LimitsParams) -> SimulationResult<SwapLimits> {
+        let limits = cpmm_get_limits(
+            params.token_in(),
+            params.token_out(),
+            self.reserve0,
+            self.reserve1,
+            UNISWAP_V2_FEE_BPS,
+        )?;
+
+        Ok(SwapLimits::new(
+            Range::new(BigUint::ZERO, limits.0)?,
+            Range::new(BigUint::ZERO, limits.1)?,
         ))
     }
 
-    fn get_limits(
-        &self,
-        sell_token: Bytes,
-        buy_token: Bytes,
-    ) -> Result<(BigUint, BigUint), SimulationError> {
-        cpmm_get_limits(sell_token, buy_token, self.reserve0, self.reserve1, UNISWAP_V2_FEE_BPS)
-    }
-
-    fn delta_transition(
-        &mut self,
-        delta: ProtocolStateDelta,
-        _tokens: &HashMap<Bytes, Token>,
-        _balances: &Balances,
-    ) -> Result<(), TransitionError<String>> {
-        let (reserve0_mut, reserve1_mut) = (&mut self.reserve0, &mut self.reserve1);
-        cpmm_delta_transition(delta, reserve0_mut, reserve1_mut)
-    }
-
-    fn query_pool_swap(&self, params: &QueryPoolSwapParams) -> Result<PoolSwap, SimulationError> {
+    fn query_swap(&self, params: QuerySwapParams) -> SimulationResult<Swap> {
         match params.swap_constraint() {
             SwapConstraint::PoolTargetPrice {
                 target: price,
                 tolerance: _,
                 min_amount_in: _,
                 max_amount_in: _,
+                ..
             } => {
-                let zero2one = params.token_in().address < params.token_out().address;
+                let zero2one = params.token_in() < params.token_out();
                 let (reserve_in, reserve_out) = if zero2one {
                     (self.reserve0, self.reserve1)
                 } else {
@@ -124,17 +159,19 @@ impl ProtocolSim for UniswapV2State {
                 let fee = ProtocolFee::new(FEE_NUMERATOR, FEE_PRECISION);
                 let (amount_in, _) = cpmm_swap_to_price(reserve_in, reserve_out, price, fee)?;
                 if amount_in.is_zero() {
-                    return Ok(PoolSwap::new(
+                    return Ok(Swap::new(
                         BigUint::ZERO,
                         BigUint::ZERO,
-                        Box::new(self.clone()),
+                        Some(Arc::new(self.clone())),
                         None,
                     ));
                 }
 
-                let res =
-                    self.get_amount_out(amount_in.clone(), params.token_in(), params.token_out())?;
-                Ok(PoolSwap::new(amount_in, res.amount, res.new_state, None))
+                let res = self.quote(
+                    QuoteParams::fixed_in(params.token_in(), params.token_out(), amount_in.clone())
+                        .with_new_state(),
+                )?;
+                Ok(Swap::new(amount_in, res.amount_out().clone(), res.new_state(), None))
             }
             SwapConstraint::TradeLimitPrice { .. } => Err(SimulationError::InvalidInput(
                 "UniswapV2State does not support TradeLimitPrice constraint in query_pool_swap"
@@ -144,28 +181,21 @@ impl ProtocolSim for UniswapV2State {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn ProtocolSim> {
+    fn delta_transition(
+        &mut self,
+        params: TransitionParams,
+    ) -> Result<Transition, TransitionError> {
+        let (reserve0_mut, reserve1_mut) = (&mut self.reserve0, &mut self.reserve1);
+        cpmm_delta_transition(params.delta(), reserve0_mut, reserve1_mut)?;
+        Ok(Transition::default())
+    }
+
+    fn clone_box(&self) -> Box<dyn SwapQuoter> {
         Box::new(self.clone())
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn eq(&self, other: &dyn ProtocolSim) -> bool {
-        if let Some(other_state) = other.as_any().downcast_ref::<Self>() {
-            let (self_reserve0, self_reserve1) = (self.reserve0, self.reserve1);
-            let (other_reserve0, other_reserve1) = (other_state.reserve0, other_state.reserve1);
-            self_reserve0 == other_reserve0 &&
-                self_reserve1 == other_reserve1 &&
-                self.fee() == other_state.fee()
-        } else {
-            false
-        }
+    fn to_protocol_sim(&self) -> Box<dyn ProtocolSim> {
+        Box::new(self.clone())
     }
 }
 
@@ -177,16 +207,17 @@ mod tests {
     };
 
     use approx::assert_ulps_eq;
+    use chrono::NaiveDateTime;
     use num_bigint::BigUint;
     use num_traits::One;
     use rstest::rstest;
     use tycho_common::{
         dto::ProtocolStateDelta,
         hex_bytes::Bytes,
-        models::{token::Token, Chain},
+        models::{token::Token, Chain, ChangeType},
         simulation::{
             errors::{SimulationError, TransitionError},
-            protocol_sim::{Balances, Price, ProtocolSim},
+            protocol_sim::{Balances, Price, ProtocolSim, QueryPoolSwapParams},
         },
     };
 
@@ -242,28 +273,11 @@ mod tests {
         #[case] amount_in: BigUint,
         #[case] exp: BigUint,
     ) {
-        let t0 = Token::new(
-            &Bytes::from_str("0x0000000000000000000000000000000000000000").unwrap(),
-            "T0",
-            token_0_decimals,
-            0,
-            &[Some(10_000)],
-            Chain::Ethereum,
-            100,
-        );
-        let t1 = Token::new(
-            &Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap(),
-            "T0",
-            token_1_decimals,
-            0,
-            &[Some(10_000)],
-            Chain::Ethereum,
-            100,
-        );
-        let state = UniswapV2State::new(r0, r1);
+        let c = component(token_0_decimals, token_1_decimals);
+        let state = UniswapV2State::new(r0, r1, c.clone());
 
         let res = state
-            .get_amount_out(amount_in.clone(), &t0, &t1)
+            .get_amount_out(amount_in.clone(), &c.tokens[0], &c.tokens[1])
             .unwrap();
 
         assert_eq!(res.amount, exp);
@@ -279,17 +293,11 @@ mod tests {
         assert_eq!(state.reserve1, r1);
     }
 
-    #[test]
-    fn test_get_amount_out_overflow() {
-        let r0 = U256::from_str("33372357002392258830279").unwrap();
-        let r1 = U256::from_str("43356945776493").unwrap();
-        let amount_in = (BigUint::one() << 256) - BigUint::one(); // U256 max value
-        let t0d = 18;
-        let t1d = 16;
+    fn component(t0_decimals: u32, token_1_decimals: u32) -> Component {
         let t0 = Token::new(
             &Bytes::from_str("0x0000000000000000000000000000000000000000").unwrap(),
             "T0",
-            t0d,
+            t0_decimals,
             0,
             &[Some(10_000)],
             Chain::Ethereum,
@@ -298,15 +306,36 @@ mod tests {
         let t1 = Token::new(
             &Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap(),
             "T0",
-            t1d,
+            token_1_decimals,
             0,
             &[Some(10_000)],
             Chain::Ethereum,
             100,
         );
-        let state = UniswapV2State::new(r0, r1);
+        Arc::new(ProtocolComponent::<_>::new(
+            "0xtest",
+            "uniswap_v2",
+            "uniswap_v2_pool",
+            Chain::Ethereum,
+            vec![Arc::new(t0), Arc::new(t1)],
+            vec![],
+            HashMap::new(),
+            ChangeType::Creation,
+            Bytes::default(),
+            NaiveDateTime::default(),
+        ))
+    }
 
-        let res = state.get_amount_out(amount_in, &t0, &t1);
+    #[test]
+    fn test_get_amount_out_overflow() {
+        let r0 = U256::from_str("33372357002392258830279").unwrap();
+        let r1 = U256::from_str("43356945776493").unwrap();
+        let amount_in = (BigUint::one() << 256) - BigUint::one(); // U256 max value
+        let c = component(18, 16);
+
+        let state = UniswapV2State::new(r0, r1, c.clone());
+
+        let res = state.get_amount_out(amount_in, &c.tokens[0], &c.tokens[1]);
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(matches!(err, SimulationError::FatalError(_)));
@@ -316,33 +345,21 @@ mod tests {
     #[case(true, 0.000823442321727627)] // 0.0008209719947624441 / 0.997
     #[case(false, 1221.7335469177287)] // 1218.0683462769755 / 0.997
     fn test_spot_price(#[case] zero_to_one: bool, #[case] exp: f64) {
+        let c = component(6, 18);
         let state = UniswapV2State::new(
             U256::from_str("36925554990922").unwrap(),
             U256::from_str("30314846538607556521556").unwrap(),
-        );
-        let usdc = Token::new(
-            &Bytes::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap(),
-            "USDC",
-            6,
-            0,
-            &[Some(10_000)],
-            Chain::Ethereum,
-            100,
-        );
-        let weth = Token::new(
-            &Bytes::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(),
-            "WETH",
-            18,
-            0,
-            &[Some(10_000)],
-            Chain::Ethereum,
-            100,
+            c.clone(),
         );
 
         let res = if zero_to_one {
-            state.spot_price(&usdc, &weth).unwrap()
+            state
+                .spot_price(&c.tokens[0], &c.tokens[1])
+                .unwrap()
         } else {
-            state.spot_price(&weth, &usdc).unwrap()
+            state
+                .spot_price(&c.tokens[1], &c.tokens[0])
+                .unwrap()
         };
 
         assert_ulps_eq!(res, exp);
@@ -353,17 +370,21 @@ mod tests {
         let state = UniswapV2State::new(
             U256::from_str("36925554990922").unwrap(),
             U256::from_str("30314846538607556521556").unwrap(),
+            component(18, 18),
         );
 
-        let res = state.fee();
+        let res = ProtocolSim::fee(&state);
 
         assert_ulps_eq!(res, 0.003);
     }
 
     #[test]
     fn test_delta_transition() {
-        let mut state =
-            UniswapV2State::new(U256::from_str("1000").unwrap(), U256::from_str("1000").unwrap());
+        let mut state = UniswapV2State::new(
+            U256::from_str("1000").unwrap(),
+            U256::from_str("1000").unwrap(),
+            component(18, 18),
+        );
         let attributes: HashMap<String, Bytes> = vec![
             ("reserve0".to_string(), Bytes::from(1500_u64.to_be_bytes().to_vec())),
             ("reserve1".to_string(), Bytes::from(2000_u64.to_be_bytes().to_vec())),
@@ -376,7 +397,8 @@ mod tests {
             deleted_attributes: HashSet::new(), // usv2 doesn't have any deletable attributes
         };
 
-        let res = state.delta_transition(delta, &HashMap::new(), &Balances::default());
+        let res =
+            ProtocolSim::delta_transition(&mut state, delta, &HashMap::new(), &Balances::default());
 
         assert!(res.is_ok());
         assert_eq!(state.reserve0, U256::from_str("1500").unwrap());
@@ -385,8 +407,11 @@ mod tests {
 
     #[test]
     fn test_delta_transition_missing_attribute() {
-        let mut state =
-            UniswapV2State::new(U256::from_str("1000").unwrap(), U256::from_str("1000").unwrap());
+        let mut state = UniswapV2State::new(
+            U256::from_str("1000").unwrap(),
+            U256::from_str("1000").unwrap(),
+            component(18, 18),
+        );
         let attributes: HashMap<String, Bytes> =
             vec![("reserve0".to_string(), Bytes::from(1500_u64.to_be_bytes().to_vec()))]
                 .into_iter()
@@ -397,7 +422,8 @@ mod tests {
             deleted_attributes: HashSet::new(),
         };
 
-        let res = state.delta_transition(delta, &HashMap::new(), &Balances::default());
+        let res =
+            ProtocolSim::delta_transition(&mut state, delta, &HashMap::new(), &Balances::default());
 
         assert!(res.is_err());
         // assert it errors for the missing reserve1 attribute delta
@@ -411,8 +437,11 @@ mod tests {
 
     #[test]
     fn test_get_limits_price_impact() {
-        let state =
-            UniswapV2State::new(U256::from_str("1000").unwrap(), U256::from_str("100000").unwrap());
+        let state = UniswapV2State::new(
+            U256::from_str("1000").unwrap(),
+            U256::from_str("100000").unwrap(),
+            component(18, 18),
+        );
 
         let (amount_in, _) = state
             .get_limits(
@@ -451,7 +480,11 @@ mod tests {
     fn test_swap_to_price_below_spot() {
         // Pool with reserve0=2000000, reserve1=1000000
         // Current price: reserve1/reserve0 = 1000000/2000000 = 0.5 token_out per token_in
-        let state = UniswapV2State::new(U256::from(2_000_000u32), U256::from(1_000_000u32));
+        let state = UniswapV2State::new(
+            U256::from(2_000_000u32),
+            U256::from(1_000_000u32),
+            component(18, 18),
+        );
 
         let token_in = token_0();
         let token_out = token_1();
@@ -462,7 +495,7 @@ mod tests {
         let params = &QueryPoolSwapParams::new(
             token_in.clone(),
             token_out.clone(),
-            SwapConstraint::PoolTargetPrice {
+            tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                 target: target_price,
                 tolerance: 0f64,
                 min_amount_in: None,
@@ -501,7 +534,11 @@ mod tests {
     #[test]
     fn test_swap_to_price_unreachable() {
         // Pool with 2:1 ratio
-        let state = UniswapV2State::new(U256::from(2_000_000u32), U256::from(1_000_000u32));
+        let state = UniswapV2State::new(
+            U256::from(2_000_000u32),
+            U256::from(1_000_000u32),
+            component(18, 18),
+        );
 
         let token_in = token_0();
         let token_out = token_1();
@@ -514,7 +551,7 @@ mod tests {
         let result = state.query_pool_swap(&QueryPoolSwapParams::new(
             token_in,
             token_out,
-            SwapConstraint::PoolTargetPrice {
+            tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                 target: target_price,
                 tolerance: 0f64,
                 min_amount_in: None,
@@ -527,7 +564,11 @@ mod tests {
 
     #[test]
     fn test_swap_to_price_at_spot_price() {
-        let state = UniswapV2State::new(U256::from(2_000_000u32), U256::from(1_000_000u32));
+        let state = UniswapV2State::new(
+            U256::from(2_000_000u32),
+            U256::from(1_000_000u32),
+            component(18, 18),
+        );
 
         let token_in = token_0();
         let token_out = token_1();
@@ -544,7 +585,7 @@ mod tests {
             .query_pool_swap(&QueryPoolSwapParams::new(
                 token_in.clone(),
                 token_out.clone(),
-                SwapConstraint::PoolTargetPrice {
+                tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                     target: target_price,
                     tolerance: 0f64,
                     min_amount_in: None,
@@ -568,7 +609,11 @@ mod tests {
 
     #[test]
     fn test_swap_to_price_slightly_below_spot() {
-        let state = UniswapV2State::new(U256::from(2_000_000u32), U256::from(1_000_000u32));
+        let state = UniswapV2State::new(
+            U256::from(2_000_000u32),
+            U256::from(1_000_000u32),
+            component(18, 18),
+        );
 
         let token_in = token_0();
         let token_out = token_1();
@@ -587,7 +632,7 @@ mod tests {
             .query_pool_swap(&QueryPoolSwapParams::new(
                 token_in,
                 token_out,
-                SwapConstraint::PoolTargetPrice {
+                tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                     target: target_price,
                     tolerance: 0f64,
                     min_amount_in: None,
@@ -608,6 +653,7 @@ mod tests {
         let state = UniswapV2State::new(
             U256::from_str("6770398782322527849696614").unwrap(),
             U256::from_str("5124813135806900540214").unwrap(),
+            component(18, 18),
         );
 
         let token_in = token_0();
@@ -626,7 +672,7 @@ mod tests {
             .query_pool_swap(&QueryPoolSwapParams::new(
                 token_in,
                 token_out,
-                SwapConstraint::PoolTargetPrice {
+                tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                     target: target_price,
                     tolerance: 0f64,
                     min_amount_in: None,
@@ -641,7 +687,11 @@ mod tests {
 
     #[test]
     fn test_swap_to_price_basic() {
-        let state = UniswapV2State::new(U256::from(1_000_000u32), U256::from(2_000_000u32));
+        let state = UniswapV2State::new(
+            U256::from(1_000_000u32),
+            U256::from(2_000_000u32),
+            component(18, 18),
+        );
 
         let token_in = token_0();
         let token_out = token_1();
@@ -652,7 +702,7 @@ mod tests {
             .query_pool_swap(&QueryPoolSwapParams::new(
                 token_in,
                 token_out,
-                SwapConstraint::PoolTargetPrice {
+                tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                     target: target_price,
                     tolerance: 0f64,
                     min_amount_in: None,
@@ -670,6 +720,7 @@ mod tests {
         let state = UniswapV2State::new(
             U256::from(1_000_000u128) * U256::from(1_000_000_000_000_000_000u128),
             U256::from(2_000_000u128) * U256::from(1_000_000_000_000_000_000u128),
+            component(18, 18),
         );
 
         let token_in = token_0();
@@ -684,7 +735,7 @@ mod tests {
             .query_pool_swap(&QueryPoolSwapParams::new(
                 token_in,
                 token_out,
-                SwapConstraint::PoolTargetPrice {
+                tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                     target: target_price,
                     tolerance: 0f64,
                     min_amount_in: None,
@@ -723,7 +774,7 @@ mod tests {
         let reserve_0 = U256::from_str("735952457913070155214197").unwrap();
         let reserve_1 = U256::from_str("735997725943000000000000").unwrap();
 
-        let pool = UniswapV2State::new(reserve_0, reserve_1);
+        let pool = UniswapV2State::new(reserve_0, reserve_1, component(18, 18));
 
         // Reserves: reserve_0 = DAI, reserve_1 = USDC (DAI address < USDC address)
         let reserve_usdc = reserve_1;
@@ -751,7 +802,7 @@ mod tests {
         let swap_above_limit = pool.query_pool_swap(&QueryPoolSwapParams::new(
             usdc.clone(),
             dai.clone(),
-            SwapConstraint::PoolTargetPrice {
+            tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                 target: target_price,
                 tolerance: 0f64,
                 min_amount_in: None,
@@ -775,7 +826,7 @@ mod tests {
             .query_pool_swap(&QueryPoolSwapParams::new(
                 usdc.clone(),
                 dai.clone(),
-                SwapConstraint::PoolTargetPrice {
+                tycho_common::simulation::protocol_sim::SwapConstraint::PoolTargetPrice {
                     target: target_price,
                     tolerance: 0f64,
                     min_amount_in: None,
