@@ -7,6 +7,7 @@ pub mod ekubo_v3;
 pub mod erc4626;
 pub mod filters;
 pub mod fluid;
+pub mod fluid_v2;
 pub mod lido;
 pub mod pancakeswap_v2;
 pub mod rocketpool;
