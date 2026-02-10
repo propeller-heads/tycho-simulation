@@ -1,15 +1,8 @@
-use std::{
-    any::Any,
-    collections::HashMap,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{any::Any, collections::HashMap};
 
 use alloy::primitives::{Sign, I256, U256};
-use num_bigint::{BigUint, ToBigUint};
-use num_traits::Euclid;
+use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
-use tracing::trace;
 use tycho_common::{
     dto::ProtocolStateDelta,
     models::token::Token,
@@ -20,22 +13,21 @@ use tycho_common::{
     Bytes,
 };
 
-use crate::evm::{
-    engine_db::{create_engine, SHARED_TYCHO_DB},
-    protocol::{
-        safe_math::{safe_add_u256, safe_div_u256, safe_mul_u256, safe_sub_u256},
-        u256_num::{biguint_to_u256, u256_to_biguint, u256_to_f64},
-        utils::{
-            add_fee_markup,
-            uniswap::{
-                liquidity_math, swap_math,
-                tick_list::TickList,
-                tick_math::{
-                    get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio, MAX_SQRT_RATIO, MAX_TICK,
-                    MIN_SQRT_RATIO, MIN_TICK,
-                },
-                StepComputation, SwapResults, SwapState,
+use crate::evm::protocol::{
+    safe_math::{safe_add_u256, safe_div_u256, safe_mul_u256, safe_sub_u256},
+    u256_num::{biguint_to_u256, u256_to_biguint, u256_to_f64},
+    utils::{
+        add_fee_markup,
+        uniswap::{
+            liquidity_math,
+            sqrt_price_math::sqrt_price_q96_to_f64,
+            swap_math,
+            tick_list::{TickInfo, TickList},
+            tick_math::{
+                get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio, MAX_SQRT_RATIO, MAX_TICK,
+                MIN_SQRT_RATIO, MIN_TICK,
             },
+            StepComputation, SwapState,
         },
     },
 };
@@ -81,8 +73,6 @@ pub struct FluidV2State {
 pub struct DexVariables {
     pub current_tick: i32,
     pub current_sqrt_price_x96: U256,
-    pub fee_growth_global0_x102: U256,
-    pub fee_growth_global1_x102: U256,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -106,6 +96,30 @@ pub struct DexVariables2 {
     pub decay_time_remaining: U256,
 }
 
+#[derive(Debug, Clone)]
+struct SwapInCalculatedVars {
+    token_out_num_precision: U256,
+    token_out_den_precision: U256,
+    token_out_exchange_price: U256,
+}
+
+#[derive(Debug, Clone)]
+struct SwapInPrepared {
+    zero_for_one: bool,
+    amount_in_raw_adjusted: U256,
+    vars: SwapInCalculatedVars,
+}
+
+#[derive(Debug, Clone)]
+struct SwapInInternalResult {
+    amount_out_raw_adjusted: U256,
+    amount_remaining: I256,
+    sqrt_price: U256,
+    liquidity: u128,
+    tick: i32,
+    gas_used: U256,
+}
+
 impl FluidV2State {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -125,7 +139,7 @@ impl FluidV2State {
         token0_supply_exchange_price: U256,
         token1_borrow_exchange_price: U256,
         token1_supply_exchange_price: U256,
-        ticks: Vec<crate::evm::protocol::utils::uniswap::tick_list::TickInfo>,
+        ticks: Vec<TickInfo>,
     ) -> Self {
         FluidV2State {
             dex_id,
@@ -148,148 +162,8 @@ impl FluidV2State {
         }
     }
 
-    fn swap_v3(
-        &self,
-        ticks: &TickList,
-        zero_for_one: bool,
-        amount_specified: I256,
-        sqrt_price_limit: U256,
-        fee_pips: u32,
-        mut liquidity: u128,
-        mut tick: i32,
-        mut sqrt_price: U256,
-    ) -> Result<SwapResults, SimulationError> {
-        if liquidity == 0 {
-            return Err(SimulationError::RecoverableError("No liquidity".to_string()));
-        }
-
-        if zero_for_one {
-            if sqrt_price_limit <= MIN_SQRT_RATIO || sqrt_price_limit >= sqrt_price {
-                return Err(SimulationError::InvalidInput(
-                    "Invalid sqrt price limit".to_string(),
-                    None,
-                ));
-            }
-        } else if sqrt_price_limit >= MAX_SQRT_RATIO || sqrt_price_limit <= sqrt_price {
-            return Err(SimulationError::InvalidInput("Invalid sqrt price limit".to_string(), None));
-        }
-
-        let exact_input = amount_specified > I256::from_raw(U256::from(0u64));
-        let mut state = SwapState {
-            amount_remaining: amount_specified,
-            amount_calculated: I256::from_raw(U256::from(0u64)),
-            sqrt_price,
-            tick,
-            liquidity,
-        };
-        let mut gas_used = U256::from(130_000);
-
-        while state.amount_remaining != I256::from_raw(U256::from(0u64)) &&
-            state.sqrt_price != sqrt_price_limit
-        {
-            let (mut next_tick, initialized) = match ticks
-                .next_initialized_tick_within_one_word(state.tick, zero_for_one)
-            {
-                Ok((tick, init)) => (tick, init),
-                Err(tick_err) => match tick_err.kind {
-                    crate::evm::protocol::utils::uniswap::tick_list::TickListErrorKind::TicksExeeded => {
-                        let mut new_state = self.clone();
-                        new_state.dex_variables2.active_liquidity =
-                            U256::from(state.liquidity);
-                        new_state.dex_variables.current_tick = state.tick;
-                        new_state.dex_variables.current_sqrt_price_x96 = state.sqrt_price;
-                        return Err(SimulationError::InvalidInput(
-                            "Ticks exceeded".into(),
-                            Some(GetAmountOutResult::new(
-                                u256_to_biguint(state.amount_calculated.abs().into_raw()),
-                                u256_to_biguint(gas_used),
-                                Box::new(new_state),
-                            )),
-                        ));
-                    }
-                    _ => {
-                        return Err(SimulationError::FatalError(
-                            "Unknown tick list error".to_string(),
-                        ));
-                    }
-                },
-            };
-
-            next_tick = next_tick.clamp(MIN_TICK, MAX_TICK);
-            let sqrt_price_next = get_sqrt_ratio_at_tick(next_tick)?;
-            let (sqrt_price_next, amount_in, amount_out, fee_amount) =
-                swap_math::compute_swap_step(
-                    state.sqrt_price,
-                    FluidV2State::get_sqrt_ratio_target(
-                        sqrt_price_next,
-                        sqrt_price_limit,
-                        zero_for_one,
-                    ),
-                    state.liquidity,
-                    state.amount_remaining,
-                    fee_pips,
-                )?;
-
-            let step = StepComputation {
-                sqrt_price_start: state.sqrt_price,
-                tick_next: next_tick,
-                initialized,
-                sqrt_price_next,
-                amount_in,
-                amount_out,
-                fee_amount,
-            };
-
-            state.sqrt_price = sqrt_price_next;
-            if exact_input {
-                state.amount_remaining -= I256::checked_from_sign_and_abs(
-                    Sign::Positive,
-                    safe_add_u256(step.amount_in, step.fee_amount)?,
-                )
-                .unwrap();
-                state.amount_calculated -=
-                    I256::checked_from_sign_and_abs(Sign::Positive, step.amount_out).unwrap();
-            } else {
-                state.amount_remaining +=
-                    I256::checked_from_sign_and_abs(Sign::Positive, step.amount_out).unwrap();
-                state.amount_calculated += I256::checked_from_sign_and_abs(
-                    Sign::Positive,
-                    safe_add_u256(step.amount_in, step.fee_amount)?,
-                )
-                .unwrap();
-            }
-
-            if state.sqrt_price == step.sqrt_price_next {
-                if step.initialized {
-                    let liquidity_raw = ticks
-                        .get_tick(step.tick_next)
-                        .unwrap()
-                        .net_liquidity;
-                    let liquidity_net = if zero_for_one { -liquidity_raw } else { liquidity_raw };
-                    state.liquidity =
-                        liquidity_math::add_liquidity_delta(state.liquidity, liquidity_net)?;
-                }
-                state.tick = if zero_for_one { step.tick_next - 1 } else { step.tick_next };
-            } else if state.sqrt_price != step.sqrt_price_start {
-                state.tick = get_tick_at_sqrt_ratio(state.sqrt_price)?;
-            }
-
-            gas_used = safe_add_u256(gas_used, U256::from(2000))?;
-        }
-
-        Ok(SwapResults {
-            amount_calculated: state.amount_calculated,
-            amount_specified,
-            amount_remaining: state.amount_remaining,
-            sqrt_price: state.sqrt_price,
-            liquidity: state.liquidity,
-            tick: state.tick,
-            gas_used,
-        })
-    }
-
     #[allow(clippy::too_many_arguments)]
-    fn swap_d3(
+    fn swap_in(
         &self,
         ticks: &TickList,
         zero_for_one: bool,
@@ -297,10 +171,10 @@ impl FluidV2State {
         sqrt_price_limit: U256,
         protocol_fee_pips: u32,
         lp_fee_pips: u32,
-        mut liquidity: u128,
-        mut tick: i32,
-        mut sqrt_price: U256,
-    ) -> Result<SwapResults, SimulationError> {
+        liquidity: u128,
+        tick: i32,
+        sqrt_price: U256,
+    ) -> Result<SwapInInternalResult, SimulationError> {
         if liquidity == 0 {
             return Err(SimulationError::RecoverableError("No liquidity".to_string()));
         }
@@ -325,6 +199,9 @@ impl FluidV2State {
             liquidity,
         };
         let mut cross_init_tick_loops: u64 = 0;
+        let mut amount_out_raw = U256::from(0u64);
+        let mut protocol_fee_accrued_raw = U256::from(0u64);
+        let mut lp_fee_accrued_raw = U256::from(0u64);
 
         let protocol_cut_fee = self
             .dex_variables2
@@ -336,7 +213,7 @@ impl FluidV2State {
             .to::<u32>();
         let mut constant_lp_fee_pips = lp_fee_pips;
 
-        // TODO: fee_version = 1 dynamic fee variables + controller override fetch.
+        // TODO: For `fee_version == 1`, apply dynamic-fee variables and controller override logic.
         if fee_version == 1 {
             if self
                 .dex_variables2
@@ -345,12 +222,12 @@ impl FluidV2State {
             {
                 constant_lp_fee_pips = self.dex_variables2.min_fee.to::<u32>();
             } else {
-                // TODO: dynamic fee path. For now, fall back to minFee to keep simulation running.
+                // TODO: Implement the dynamic-fee path. For now, fall back to `min_fee`.
                 constant_lp_fee_pips = self.dex_variables2.min_fee.to::<u32>();
             }
         }
-        // TODO: if fetchDynamicFeeFlag is on and controller is not swapper,
-        // fetchDynamicFeeForSwapIn should override constant_lp_fee_pips.
+        // TODO: If `fetch_dynamic_fee_flag` is enabled and controller != swapper,
+        // override `constant_lp_fee_pips` with `fetchDynamicFeeForSwapIn`.
 
         let active_liquidity_start = state.liquidity;
         let mut sqrt_price_start = state.sqrt_price;
@@ -378,7 +255,7 @@ impl FluidV2State {
                 } else {
                     safe_sub_u256(state.sqrt_price, sqrt_price_next)?
                 };
-                if safe_mul_u256(diff, four_decimals())? > state.sqrt_price {
+                if safe_mul_u256(diff, pow10_u256(4))? > state.sqrt_price {
                     return Err(SimulationError::InvalidInput(
                         "Sqrt price deviation too high".to_string(),
                         None,
@@ -396,7 +273,7 @@ impl FluidV2State {
                     ),
                     state.liquidity,
                     state.amount_remaining,
-                    0,
+                    0, // TODO: Only constant LP fee is currently supported here.
                 )?;
 
             let step = StepComputation {
@@ -469,6 +346,11 @@ impl FluidV2State {
                     I256::checked_from_sign_and_abs(Sign::Positive, step.amount_in).unwrap();
                 state.amount_calculated -=
                     I256::checked_from_sign_and_abs(Sign::Positive, step_amount_out).unwrap();
+
+                amount_out_raw = safe_add_u256(amount_out_raw, step_amount_out)?;
+                protocol_fee_accrued_raw =
+                    safe_add_u256(protocol_fee_accrued_raw, step_protocol_fee)?;
+                lp_fee_accrued_raw = safe_add_u256(lp_fee_accrued_raw, step_lp_fee)?;
             } else {
                 let amount_in_with_lp = safe_div_u256(
                     safe_mul_u256(step.amount_in, U256::from(1_000_000u64))?,
@@ -485,8 +367,9 @@ impl FluidV2State {
                     I256::checked_from_sign_and_abs(Sign::Positive, amount_in_with_fees).unwrap();
             }
 
-            // TODO: update feeGrowthGlobal and feeGrowthOutside on ticks.
+            // TODO: Update `feeGrowthGlobal` and per-tick `feeGrowthOutside`.
 
+            // If we reached the next price target, apply tick crossing updates.
             if state.sqrt_price == step.sqrt_price_next {
                 if step.initialized {
                     let liquidity_raw = ticks
@@ -513,35 +396,19 @@ impl FluidV2State {
         }
 
         verify_sqrt_price_change_limits(sqrt_price_start, state.sqrt_price)?;
-        // TODO: if fee_version == 1, update dynamic fee variables based on final price impact.
+        // TODO: For `fee_version == 1`, update dynamic-fee variables from final price impact.
 
         let gas_used = U256::from(GAS_BASE) +
             U256::from(GAS_CROSS_INIT_TICK.saturating_mul(cross_init_tick_loops));
 
-        Ok(SwapResults {
-            amount_calculated: state.amount_calculated,
-            amount_specified,
+        Ok(SwapInInternalResult {
+            amount_out_raw_adjusted: amount_out_raw,
             amount_remaining: state.amount_remaining,
             sqrt_price: state.sqrt_price,
             liquidity: state.liquidity,
             tick: state.tick,
             gas_used,
         })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn swap_d4(
-        &self,
-        _ticks: &TickList,
-        _zero_for_one: bool,
-        _amount_specified: I256,
-        _sqrt_price_limit: U256,
-        _fee_pips: u32,
-        _liquidity: u128,
-        _tick: i32,
-        _sqrt_price: U256,
-    ) -> Result<SwapResults, SimulationError> {
-        Err(SimulationError::InvalidInput("D4 swap algo not implemented".to_string(), None))
     }
 
     fn get_sqrt_ratio_target(
@@ -560,6 +427,171 @@ impl FluidV2State {
             sqrt_price_next
         }
     }
+
+    fn prepare_swap_in(
+        &self,
+        amount_in: U256,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<SwapInPrepared, SimulationError> {
+        let zero_for_one = if token_in.address == self.token0.address {
+            true
+        } else if token_in.address == self.token1.address {
+            false
+        } else {
+            return Err(SimulationError::InvalidInput(
+                "Token in not part of pool".to_string(),
+                None,
+            ));
+        };
+
+        if !(token_out.address == self.token0.address || token_out.address == self.token1.address) {
+            return Err(SimulationError::InvalidInput(
+                "Token out not part of pool".to_string(),
+                None,
+            ));
+        }
+
+        if amount_in < pow10_u256(4) || amount_in > max_x(128) {
+            return Err(SimulationError::InvalidInput("Amount out of limits".to_string(), None));
+        }
+
+        let (token_in_decimals, token_out_decimals) = if zero_for_one {
+            (self.dex_variables2.token0_decimals, self.dex_variables2.token1_decimals)
+        } else {
+            (self.dex_variables2.token1_decimals, self.dex_variables2.token0_decimals)
+        };
+
+        let (token_in_num_precision, token_in_den_precision) =
+            calculate_precisions(token_in_decimals);
+        let (token_out_num_precision, token_out_den_precision) =
+            calculate_precisions(token_out_decimals);
+
+        let (token_in_exchange_price, token_out_exchange_price) = if zero_for_one {
+            match self.dex_type {
+                DexType::D3 => {
+                    (self.token0_supply_exchange_price, self.token1_supply_exchange_price)
+                }
+                DexType::D4 => {
+                    (self.token0_borrow_exchange_price, self.token1_borrow_exchange_price)
+                }
+            }
+        } else {
+            match self.dex_type {
+                DexType::D3 => {
+                    (self.token1_supply_exchange_price, self.token0_supply_exchange_price)
+                }
+                DexType::D4 => {
+                    (self.token1_borrow_exchange_price, self.token0_borrow_exchange_price)
+                }
+            }
+        };
+
+        let amount_in_raw_adjusted = amount_to_adjusted(
+            amount_in,
+            token_in_num_precision,
+            token_in_den_precision,
+            token_in_exchange_price,
+        )?;
+        let amount_in_raw_adjusted = round_down_raw(amount_in_raw_adjusted);
+        if amount_in_raw_adjusted < pow10_u256(4) || amount_in_raw_adjusted > max_x(86) {
+            return Err(SimulationError::InvalidInput("Adjusted amount limits".to_string(), None));
+        }
+
+        Ok(SwapInPrepared {
+            zero_for_one,
+            amount_in_raw_adjusted,
+            vars: SwapInCalculatedVars {
+                token_out_num_precision,
+                token_out_den_precision,
+                token_out_exchange_price,
+            },
+        })
+    }
+
+    fn execute_swap_in_internal(
+        &self,
+        prepared: &SwapInPrepared,
+    ) -> Result<SwapInInternalResult, SimulationError> {
+        if self.tick_spacing <= 0 {
+            return Err(SimulationError::FatalError("Tick spacing must be positive".to_string()));
+        }
+
+        let tick_list = TickList::from(self.tick_spacing as u16, self.ticks.clone())?;
+        let (tick_min, tick_max) = match (self.ticks.first(), self.ticks.last()) {
+            (Some(min), Some(max)) => (min.index, max.index),
+            _ => return Err(SimulationError::FatalError("No ticks available".to_string())),
+        };
+        let tick_limit = if prepared.zero_for_one { tick_min } else { tick_max };
+        let mut sqrt_price_limit = get_sqrt_ratio_at_tick(tick_limit)?;
+        sqrt_price_limit = if prepared.zero_for_one {
+            safe_add_u256(sqrt_price_limit, U256::from(1u64))?
+        } else {
+            safe_sub_u256(sqrt_price_limit, U256::from(1u64))?
+        };
+
+        let amount_specified =
+            I256::checked_from_sign_and_abs(Sign::Positive, prepared.amount_in_raw_adjusted)
+                .ok_or_else(|| {
+                    SimulationError::InvalidInput("I256 overflow: amount_in".to_string(), None)
+                })?;
+
+        let (protocol_fee_pips, lp_fee_pips) = if prepared.zero_for_one {
+            (
+                self.dex_variables2
+                    .protocol_fee_0_to_1
+                    .to::<u32>(),
+                self.dex_variables2.lp_fee.to::<u32>(),
+            )
+        } else {
+            (
+                self.dex_variables2
+                    .protocol_fee_1_to_0
+                    .to::<u32>(),
+                self.dex_variables2.lp_fee.to::<u32>(),
+            )
+        };
+
+        self.swap_in(
+            &tick_list,
+            prepared.zero_for_one,
+            amount_specified,
+            sqrt_price_limit,
+            protocol_fee_pips,
+            lp_fee_pips,
+            self.dex_variables2
+                .active_liquidity
+                .to::<u128>(),
+            self.dex_variables.current_tick,
+            decode_sqrt_price(
+                self.dex_variables
+                    .current_sqrt_price_x96,
+                prepared.zero_for_one,
+            ),
+        )
+    }
+
+    fn effective_fee(&self, zero_for_one: bool) -> f64 {
+        let lp_fee_pips = if self.dynamic_fee {
+            // TODO: Dynamic fee is not fully supported yet.
+            self.dex_variables2.min_fee.to::<u32>()
+        } else {
+            self.dex_variables2.lp_fee.to::<u32>()
+        };
+        let protocol_fee_pips = if zero_for_one {
+            self.dex_variables2
+                .protocol_fee_0_to_1
+                .to::<u32>()
+        } else {
+            self.dex_variables2
+                .protocol_fee_1_to_0
+                .to::<u32>()
+        };
+
+        let protocol_fee = protocol_fee_pips as f64 / 1_000_000.0;
+        let lp_fee = lp_fee_pips as f64 / 1_000_000.0;
+        1.0 - ((1.0 - protocol_fee) * (1.0 - lp_fee))
+    }
 }
 
 impl DexVariables {
@@ -575,14 +607,15 @@ impl DexVariables {
         };
 
         let current_sqrt_price_x96 = (value >> 20u32) & u256_mask(72);
-        let fee_growth_global0_x102 = (value >> 92u32) & u256_mask(82);
-        let fee_growth_global1_x102 = (value >> 174u32) & u256_mask(82);
+        // Reserved for future support of packed fee-growth fields:
+        // let fee_growth_global0_x102 = (value >> 92u32) & u256_mask(82);
+        // let fee_growth_global1_x102 = (value >> 174u32) & u256_mask(82);
 
         Self {
             current_tick,
             current_sqrt_price_x96,
-            fee_growth_global0_x102,
-            fee_growth_global1_x102,
+            // fee_growth_global0_x102,
+            // fee_growth_global1_x102,
         }
     }
 }
@@ -655,10 +688,6 @@ fn pow10_u256(exp: u8) -> U256 {
     U256::from(10u64).pow(U256::from(exp as u64))
 }
 
-fn exchange_price_precision() -> U256 {
-    pow10_u256(12)
-}
-
 fn calculate_precisions(decimals: u8) -> (U256, U256) {
     if decimals > TOKENS_DECIMALS_PRECISION {
         (U256::from(1u64), pow10_u256(decimals - TOKENS_DECIMALS_PRECISION))
@@ -673,7 +702,7 @@ fn amount_to_adjusted(
     token_denominator_precision: U256,
     exchange_price: U256,
 ) -> Result<U256, SimulationError> {
-    let scaled = safe_mul_u256(amount, exchange_price_precision())?;
+    let scaled = safe_mul_u256(amount, pow10_u256(12))?;
     let scaled = safe_mul_u256(scaled, token_numerator_precision)?;
     let denominator = safe_mul_u256(exchange_price, token_denominator_precision)?;
     safe_div_u256(scaled, denominator)
@@ -687,40 +716,27 @@ fn adjusted_to_amount(
 ) -> Result<U256, SimulationError> {
     let scaled = safe_mul_u256(adjusted, token_denominator_precision)?;
     let scaled = safe_mul_u256(scaled, exchange_price)?;
-    let denominator = safe_mul_u256(token_numerator_precision, exchange_price_precision())?;
+    let denominator = safe_mul_u256(token_numerator_precision, pow10_u256(12))?;
     safe_div_u256(scaled, denominator)
 }
 
-fn four_decimals() -> U256 {
-    pow10_u256(4)
-}
-
-fn ten_decimals() -> U256 {
-    pow10_u256(10)
-}
-
-fn rounding_factor() -> U256 {
-    U256::from(ROUNDING_FACTOR)
-}
-
-fn rounding_factor_minus_one() -> U256 {
-    U256::from(ROUNDING_FACTOR_MINUS_ONE)
-}
-
 fn round_down_raw(amount: U256) -> U256 {
-    let scaled = amount.saturating_mul(rounding_factor_minus_one());
-    let mut out = if ROUNDING_FACTOR == 0 { amount } else { scaled / rounding_factor() };
+    let scaled = amount.saturating_mul(U256::from(ROUNDING_FACTOR_MINUS_ONE));
+    let mut out = if ROUNDING_FACTOR == 0 { amount } else { scaled / U256::from(ROUNDING_FACTOR) };
     if out > U256::from(0u64) {
         out = out.saturating_sub(U256::from(1u64));
     }
     out
 }
 
+// `sqrtPriceX96` is rounded down when stored.
+// For a 1->0 swap (price-increasing direction), this may slightly favor the swapper.
+// To keep the protocol conservative, round up by adding 1 to the coefficient when needed.
 fn decode_sqrt_price(raw: U256, swap0_to_1: bool) -> U256 {
     let mut coeff = raw >> DEFAULT_EXPONENT_SIZE;
     let exp = (raw & U256::from(DEFAULT_EXPONENT_MASK)).to::<u32>();
     if exp > 0 && !swap0_to_1 {
-        coeff = coeff + U256::from(1u64);
+        coeff += U256::from(1u64)
     }
     coeff << exp
 }
@@ -743,23 +759,6 @@ fn max_x(bits: u32) -> U256 {
     (U256::from(1u64) << bits) - U256::from(1u64)
 }
 
-fn verify_amount_limits(amount: U256) -> Result<(), SimulationError> {
-    if amount < four_decimals() || amount > max_x(128) {
-        return Err(SimulationError::InvalidInput("Amount out of limits".to_string(), None));
-    }
-    Ok(())
-}
-
-fn verify_adjusted_amount_limits(amount: U256) -> Result<(), SimulationError> {
-    if amount < four_decimals() || amount > max_x(86) {
-        return Err(SimulationError::InvalidInput(
-            "Adjusted amount out of limits".to_string(),
-            None,
-        ));
-    }
-    Ok(())
-}
-
 fn verify_sqrt_price_change_limits(
     sqrt_price_start: U256,
     sqrt_price_end: U256,
@@ -769,7 +768,7 @@ fn verify_sqrt_price_change_limits(
     } else {
         safe_sub_u256(sqrt_price_start, sqrt_price_end)?
     };
-    let percentage_change = safe_div_u256(safe_mul_u256(diff, ten_decimals())?, sqrt_price_start)?;
+    let percentage_change = safe_div_u256(safe_mul_u256(diff, pow10_u256(10))?, sqrt_price_start)?;
     if percentage_change > U256::from(MAX_SQRT_PRICE_CHANGE_PERCENTAGE) ||
         percentage_change < U256::from(MIN_SQRT_PRICE_CHANGE_PERCENTAGE)
     {
@@ -781,68 +780,31 @@ fn verify_sqrt_price_change_limits(
     Ok(())
 }
 
-fn is_nonzero_bytes(bytes: &Bytes) -> bool {
-    bytes.as_ref().iter().any(|b| *b != 0)
-}
-
 #[typetag::serde]
 impl ProtocolSim for FluidV2State {
     fn fee(&self) -> f64 {
-        todo!()
+        // Directional fee selection is not exposed by the trait; default to token0 -> token1.
+        self.effective_fee(true)
     }
 
     fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
-        todo!()
-    }
-
-    fn get_amount_out(
-        &self,
-        amount_in: BigUint,
-        token_in: &Token,
-        token_out: &Token,
-    ) -> Result<GetAmountOutResult, SimulationError> {
-        if amount_in == BigUint::from(0u32) {
-            return Ok(GetAmountOutResult::new(
-                BigUint::from(0u32),
-                BigUint::from(0u32),
-                Box::new(self.clone()),
-            ));
-        }
-
-        if is_nonzero_bytes(&self.controller) {
-            return Err(SimulationError::InvalidInput(
-                "Controller pools are not supported".to_string(),
-                None,
-            ));
-        }
-
-        let zero_for_one = if token_in.address == self.token0.address {
-            true
-        } else if token_in.address == self.token1.address {
-            false
-        } else {
-            return Err(SimulationError::InvalidInput(
-                "Token in not part of pool".to_string(),
-                None,
-            ));
-        };
-
-        if !(token_out.address == self.token0.address || token_out.address == self.token1.address) {
-            return Err(SimulationError::InvalidInput(
-                "Token out not part of pool".to_string(),
-                None,
-            ));
-        }
-
-        let amount_in_u256 = biguint_to_u256(&amount_in);
-        verify_amount_limits(amount_in_u256)?;
+        let zero_for_one =
+            if base.address == self.token0.address && quote.address == self.token1.address {
+                true
+            } else if base.address == self.token1.address && quote.address == self.token0.address {
+                false
+            } else {
+                return Err(SimulationError::InvalidInput(
+                    "Token pair not part of pool".to_string(),
+                    None,
+                ));
+            };
 
         let (token_in_decimals, token_out_decimals) = if zero_for_one {
             (self.dex_variables2.token0_decimals, self.dex_variables2.token1_decimals)
         } else {
             (self.dex_variables2.token1_decimals, self.dex_variables2.token0_decimals)
         };
-
         let (token_in_num_precision, token_in_den_precision) =
             calculate_precisions(token_in_decimals);
         let (token_out_num_precision, token_out_den_precision) =
@@ -868,92 +830,60 @@ impl ProtocolSim for FluidV2State {
             }
         };
 
-        let amount_in_adjusted = amount_to_adjusted(
-            amount_in_u256,
-            token_in_num_precision,
-            token_in_den_precision,
-            exchange_price_in,
-        )?;
-        let amount_in_adjusted = round_down_raw(amount_in_adjusted);
-        verify_adjusted_amount_limits(amount_in_adjusted)?;
+        let sqrt_price = decode_sqrt_price(
+            self.dex_variables
+                .current_sqrt_price_x96,
+            zero_for_one,
+        );
+        let adjusted_price = if zero_for_one {
+            sqrt_price_q96_to_f64(sqrt_price, token_in_decimals as u32, token_out_decimals as u32)?
+        } else {
+            1.0f64 /
+                sqrt_price_q96_to_f64(
+                    sqrt_price,
+                    token_out_decimals as u32,
+                    token_in_decimals as u32,
+                )?
+        };
 
-        if self.tick_spacing <= 0 {
-            return Err(SimulationError::FatalError("Tick spacing must be positive".to_string()));
+        let scale_num = u256_to_f64(token_in_num_precision)? *
+            u256_to_f64(token_out_den_precision)? *
+            u256_to_f64(exchange_price_out)?;
+        let scale_den = u256_to_f64(exchange_price_in)? *
+            u256_to_f64(token_in_den_precision)? *
+            u256_to_f64(token_out_num_precision)?;
+        let price = adjusted_price * (scale_num / scale_den);
+
+        let effective_fee = self.effective_fee(zero_for_one);
+        Ok(add_fee_markup(price, effective_fee))
+    }
+
+    fn get_amount_out(
+        &self,
+        amount_in: BigUint,
+        token_in: &Token,
+        token_out: &Token,
+    ) -> Result<GetAmountOutResult, SimulationError> {
+        if amount_in == BigUint::from(0u32) {
+            return Ok(GetAmountOutResult::new(
+                BigUint::from(0u32),
+                BigUint::from(0u32),
+                Box::new(self.clone()),
+            ));
         }
-        let liquidity = self
-            .dex_variables2
-            .active_liquidity
-            .to::<u128>();
-        let tick_list = TickList::from(self.tick_spacing as u16, self.ticks.clone())?;
 
-        let (tick_min, tick_max) = match (self.ticks.first(), self.ticks.last()) {
-            (Some(min), Some(max)) => (min.index, max.index),
-            _ => {
-                return Err(SimulationError::FatalError("No ticks available".to_string()));
-            }
-        };
-        let tick_limit = if zero_for_one { tick_min } else { tick_max };
-        let mut sqrt_price_limit = get_sqrt_ratio_at_tick(tick_limit)?;
-        sqrt_price_limit = if zero_for_one {
-            safe_add_u256(sqrt_price_limit, U256::from(1u64))?
-        } else {
-            safe_sub_u256(sqrt_price_limit, U256::from(1u64))?
-        };
+        if !self.controller.is_zero() {
+            return Err(SimulationError::InvalidInput(
+                "Controller pools are not supported".to_string(),
+                None,
+            ));
+        }
 
-        let amount_specified = I256::checked_from_sign_and_abs(Sign::Positive, amount_in_adjusted)
-            .ok_or_else(|| {
-                SimulationError::InvalidInput("I256 overflow: amount_in".to_string(), None)
-            })?;
+        let amount_in_u256 = biguint_to_u256(&amount_in);
+        let prepared = self.prepare_swap_in(amount_in_u256, token_in, token_out)?;
+        let internal = self.execute_swap_in_internal(&prepared)?;
 
-        let (protocol_fee_pips, lp_fee_pips) = if zero_for_one {
-            (
-                self.dex_variables2
-                    .protocol_fee_0_to_1
-                    .to::<u32>(),
-                self.dex_variables2.lp_fee.to::<u32>(),
-            )
-        } else {
-            (
-                self.dex_variables2
-                    .protocol_fee_1_to_0
-                    .to::<u32>(),
-                self.dex_variables2.lp_fee.to::<u32>(),
-            )
-        };
-
-        let result = match self.dex_type {
-            DexType::D3 => self.swap_d3(
-                &tick_list,
-                zero_for_one,
-                amount_specified,
-                sqrt_price_limit,
-                protocol_fee_pips,
-                lp_fee_pips,
-                liquidity,
-                self.dex_variables.current_tick,
-                decode_sqrt_price(
-                    self.dex_variables
-                        .current_sqrt_price_x96,
-                    zero_for_one,
-                ),
-            )?,
-            DexType::D4 => self.swap_d4(
-                &tick_list,
-                zero_for_one,
-                amount_specified,
-                sqrt_price_limit,
-                lp_fee_pips,
-                liquidity,
-                self.dex_variables.current_tick,
-                decode_sqrt_price(
-                    self.dex_variables
-                        .current_sqrt_price_x96,
-                    zero_for_one,
-                ),
-            )?,
-        };
-
-        if result.amount_remaining > I256::from_raw(U256::from(0u64)) {
+        if internal.amount_remaining > I256::from_raw(U256::from(0u64)) {
             return Err(SimulationError::InvalidInput("Next tick out of bounds".to_string(), None));
         }
 
@@ -962,43 +892,42 @@ impl ProtocolSim for FluidV2State {
                 decode_sqrt_price(
                     self.dex_variables
                         .current_sqrt_price_x96,
-                    zero_for_one,
+                    prepared.zero_for_one,
                 ),
-                result.sqrt_price,
+                internal.sqrt_price,
             )?;
         }
 
-        let amount_out_raw_adjusted = result
-            .amount_calculated
-            .abs()
-            .into_raw();
-        let amount_out_raw_adjusted = round_down_raw(amount_out_raw_adjusted);
-        verify_adjusted_amount_limits(amount_out_raw_adjusted)?;
+        let amount_out_raw_adjusted = round_down_raw(internal.amount_out_raw_adjusted);
+        if amount_out_raw_adjusted < pow10_u256(4) || amount_out_raw_adjusted > max_x(86) {
+            return Err(SimulationError::InvalidInput("Adjusted amount limits".to_string(), None));
+        }
         let mut amount_out = adjusted_to_amount(
             amount_out_raw_adjusted,
-            token_out_num_precision,
-            token_out_den_precision,
-            exchange_price_out,
+            prepared.vars.token_out_num_precision,
+            prepared.vars.token_out_den_precision,
+            prepared.vars.token_out_exchange_price,
         )?;
         if amount_out > U256::from(0u64) {
             amount_out = safe_sub_u256(amount_out, U256::from(1u64))?;
         }
-        verify_amount_limits(amount_out)?;
-
-        let pool_accounting_on = !self.dex_variables2.pool_accounting_flag;
+        if amount_out < pow10_u256(4) || amount_out > max_x(128) {
+            return Err(SimulationError::InvalidInput("Amount out of limits".to_string(), None));
+        }
         let mut new_state = self.clone();
-        new_state.dex_variables.current_tick = result.tick;
+        new_state.dex_variables.current_tick = internal.tick;
         new_state
             .dex_variables
-            .current_sqrt_price_x96 = encode_big_number(result.sqrt_price, 64);
+            .current_sqrt_price_x96 = encode_big_number(internal.sqrt_price, 64);
         new_state
             .dex_variables2
-            .active_liquidity = U256::from(result.liquidity);
+            .active_liquidity = U256::from(internal.liquidity);
 
-        if pool_accounting_on {
+        if !self.dex_variables2.pool_accounting_flag {
             let reserve_limit = max_x(128);
-            if zero_for_one {
-                let reserve_in = safe_add_u256(self.token0_reserve, amount_in_adjusted)?;
+            if prepared.zero_for_one {
+                let reserve_in =
+                    safe_add_u256(self.token0_reserve, prepared.amount_in_raw_adjusted)?;
                 if reserve_in > reserve_limit {
                     return Err(SimulationError::InvalidInput(
                         "Token reserves overflow".to_string(),
@@ -1015,7 +944,8 @@ impl ProtocolSim for FluidV2State {
                 new_state.token1_reserve =
                     safe_sub_u256(self.token1_reserve, amount_out_raw_adjusted)?;
             } else {
-                let reserve_in = safe_add_u256(self.token1_reserve, amount_in_adjusted)?;
+                let reserve_in =
+                    safe_add_u256(self.token1_reserve, prepared.amount_in_raw_adjusted)?;
                 if reserve_in > reserve_limit {
                     return Err(SimulationError::InvalidInput(
                         "Token reserves overflow".to_string(),
@@ -1036,15 +966,15 @@ impl ProtocolSim for FluidV2State {
 
         Ok(GetAmountOutResult::new(
             u256_to_biguint(amount_out),
-            u256_to_biguint(result.gas_used),
+            u256_to_biguint(internal.gas_used),
             Box::new(new_state),
         ))
     }
 
     fn get_limits(
         &self,
-        sell_token: Bytes,
-        buy_token: Bytes,
+        _sell_token: Bytes,
+        _buy_token: Bytes,
     ) -> Result<(BigUint, BigUint), SimulationError> {
         todo!()
     }
@@ -1052,25 +982,131 @@ impl ProtocolSim for FluidV2State {
     fn delta_transition(
         &mut self,
         delta: ProtocolStateDelta,
-        tokens: &HashMap<Bytes, Token>,
-        balances: &Balances,
+        _tokens: &HashMap<Bytes, Token>,
+        _balances: &Balances,
     ) -> Result<(), TransitionError<String>> {
-        todo!()
+        if let Some(dex_variables) = delta
+            .updated_attributes
+            .get("dex_variables")
+        {
+            self.dex_variables = DexVariables::from_packed(U256::from_be_slice(dex_variables));
+        }
+        if let Some(dex_variables2) = delta
+            .updated_attributes
+            .get("dex_variables2")
+        {
+            self.dex_variables2 = DexVariables2::from_packed(U256::from_be_slice(dex_variables2));
+        }
+        if let Some(token0_reserve) = delta
+            .updated_attributes
+            .get("token0/token_reserves")
+        {
+            self.token0_reserve = U256::from_be_slice(token0_reserve);
+        }
+        if let Some(token1_reserve) = delta
+            .updated_attributes
+            .get("token1/token_reserves")
+        {
+            self.token1_reserve = U256::from_be_slice(token1_reserve);
+        }
+        if let Some(token0_borrow_exchange_price) = delta
+            .updated_attributes
+            .get("token0/borrow_exchange_price")
+        {
+            self.token0_borrow_exchange_price = U256::from_be_slice(token0_borrow_exchange_price);
+        }
+        if let Some(token0_supply_exchange_price) = delta
+            .updated_attributes
+            .get("token0/supply_exchange_price")
+        {
+            self.token0_supply_exchange_price = U256::from_be_slice(token0_supply_exchange_price);
+        }
+        if let Some(token1_borrow_exchange_price) = delta
+            .updated_attributes
+            .get("token1/borrow_exchange_price")
+        {
+            self.token1_borrow_exchange_price = U256::from_be_slice(token1_borrow_exchange_price);
+        }
+        if let Some(token1_supply_exchange_price) = delta
+            .updated_attributes
+            .get("token1/supply_exchange_price")
+        {
+            self.token1_supply_exchange_price = U256::from_be_slice(token1_supply_exchange_price);
+        }
+
+        for (key, value) in &delta.updated_attributes {
+            if key.starts_with("ticks/") {
+                let parts: Vec<&str> = key.split('/').collect();
+                let tick_index = parts
+                    .get(1)
+                    .ok_or_else(|| {
+                        TransitionError::DecodeError(format!(
+                            "Malformed tick key in updated attributes: {key}"
+                        ))
+                    })?
+                    .parse::<i32>()
+                    .map_err(|err| TransitionError::DecodeError(err.to_string()))?;
+                let net_liquidity = i128::from(value.clone());
+
+                if let Some(existing) = self
+                    .ticks
+                    .iter_mut()
+                    .find(|tick| tick.index == tick_index)
+                {
+                    existing.net_liquidity = net_liquidity;
+                } else {
+                    let tick_info = crate::evm::protocol::utils::uniswap::tick_list::TickInfo::new(
+                        tick_index,
+                        net_liquidity,
+                    )
+                    .map_err(|err| TransitionError::DecodeError(err.to_string()))?;
+                    self.ticks.push(tick_info);
+                }
+            }
+        }
+
+        for key in &delta.deleted_attributes {
+            if key.starts_with("ticks/") {
+                let parts: Vec<&str> = key.split('/').collect();
+                let tick_index = parts
+                    .get(1)
+                    .ok_or_else(|| {
+                        TransitionError::DecodeError(format!(
+                            "Malformed tick key in deleted attributes: {key}"
+                        ))
+                    })?
+                    .parse::<i32>()
+                    .map_err(|err| TransitionError::DecodeError(err.to_string()))?;
+                self.ticks
+                    .retain(|tick| tick.index != tick_index);
+            }
+        }
+
+        self.ticks
+            .retain(|tick| tick.net_liquidity != 0);
+        self.ticks
+            .sort_by_key(|tick| tick.index);
+
+        Ok(())
     }
 
     fn clone_box(&self) -> Box<dyn ProtocolSim> {
-        todo!()
+        Box::new(self.clone())
     }
 
     fn as_any(&self) -> &dyn Any {
-        todo!()
+        self
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
-        todo!()
+        self
     }
 
     fn eq(&self, other: &dyn ProtocolSim) -> bool {
-        todo!()
+        if let Some(other_state) = other.as_any().downcast_ref::<Self>() {
+            self == other_state
+        } else {
+            false
+        }
     }
 }
