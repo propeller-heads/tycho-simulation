@@ -1,3 +1,23 @@
+## [0.239.0](https://github.com/propeller-heads/tycho-simulation/compare/0.238.0...0.239.0) (2026-02-09)
+
+
+### Features
+
+* add support for partial block updates to enable lower latency ([b168845](https://github.com/propeller-heads/tycho-simulation/commit/b168845cc578491d50533a9e4750ec7554de0871))
+* update Tycho dependencies to version 0.136.1 and rename partial_blocks method for clarity ([c72104b](https://github.com/propeller-heads/tycho-simulation/commit/c72104bd0f8529e49206db8227cd33e924b53af9))
+
+
+### Bug Fixes
+
+* replace custom header function with Default::default() for BlockHeader in tests to address tycho-client breaking changes ([d14685d](https://github.com/propeller-heads/tycho-simulation/commit/d14685daabf41b5d462fcb309faef58b5668530b))
+
+## [0.238.0](https://github.com/propeller-heads/tycho-simulation/compare/0.237.2...0.238.0) (2026-02-05)
+
+
+### Features
+
+* Notify SDK repo on new releases ([8b29bdc](https://github.com/propeller-heads/tycho-simulation/commit/8b29bdc46c63e25c987b770fe3c06c57e3667846))
+
 ## [0.237.2](https://github.com/propeller-heads/tycho-simulation/compare/0.237.1...0.237.2) (2026-02-02)
 
 
