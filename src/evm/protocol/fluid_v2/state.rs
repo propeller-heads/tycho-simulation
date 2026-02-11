@@ -20,7 +20,7 @@ use crate::evm::protocol::{
         add_fee_markup,
         uniswap::{
             liquidity_math,
-            sqrt_price_math::sqrt_price_q96_to_f64,
+            sqrt_price_math::{get_amount0_delta, get_amount1_delta, sqrt_price_q96_to_f64},
             swap_math,
             tick_list::{TickInfo, TickList},
             tick_math::{
@@ -887,17 +887,6 @@ impl ProtocolSim for FluidV2State {
             return Err(SimulationError::InvalidInput("Next tick out of bounds".to_string(), None));
         }
 
-        if matches!(self.dex_type, DexType::D4) {
-            verify_sqrt_price_change_limits(
-                decode_sqrt_price(
-                    self.dex_variables
-                        .current_sqrt_price_x96,
-                    prepared.zero_for_one,
-                ),
-                internal.sqrt_price,
-            )?;
-        }
-
         let amount_out_raw_adjusted = round_down_raw(internal.amount_out_raw_adjusted);
         if amount_out_raw_adjusted < pow10_u256(4) || amount_out_raw_adjusted > max_x(86) {
             return Err(SimulationError::InvalidInput("Adjusted amount limits".to_string(), None));
@@ -973,10 +962,162 @@ impl ProtocolSim for FluidV2State {
 
     fn get_limits(
         &self,
-        _sell_token: Bytes,
-        _buy_token: Bytes,
+        sell_token: Bytes,
+        buy_token: Bytes,
     ) -> Result<(BigUint, BigUint), SimulationError> {
-        todo!()
+        let zero_for_one = if sell_token == self.token0.address && buy_token == self.token1.address
+        {
+            true
+        } else if sell_token == self.token1.address && buy_token == self.token0.address {
+            false
+        } else {
+            return Err(SimulationError::InvalidInput(
+                "Token pair not part of pool".to_string(),
+                None,
+            ));
+        };
+
+        if self.ticks.is_empty() {
+            return Ok((BigUint::from(0u32), BigUint::from(0u32)));
+        }
+        if self.tick_spacing <= 0 {
+            return Err(SimulationError::FatalError("Tick spacing must be positive".to_string()));
+        }
+
+        let mut current_liquidity = self
+            .dex_variables2
+            .active_liquidity
+            .to::<u128>();
+        if current_liquidity == 0 {
+            return Ok((BigUint::from(0u32), BigUint::from(0u32)));
+        }
+
+        let ticks = TickList::from(self.tick_spacing as u16, self.ticks.clone())?;
+        let mut current_tick = self.dex_variables.current_tick;
+        let mut current_sqrt_price = decode_sqrt_price(
+            self.dex_variables
+                .current_sqrt_price_x96,
+            zero_for_one,
+        );
+
+        let mut total_amount_in_raw_adjusted = U256::ZERO;
+        let mut total_amount_out_raw_adjusted = U256::ZERO;
+
+        while let Ok((tick, initialized)) =
+            ticks.next_initialized_tick_within_one_word(current_tick, zero_for_one)
+        {
+            let next_tick = tick.clamp(MIN_TICK, MAX_TICK);
+            let sqrt_price_next = get_sqrt_ratio_at_tick(next_tick)?;
+
+            let (amount_in, amount_out) = if zero_for_one {
+                let amount0 = get_amount0_delta(
+                    sqrt_price_next,
+                    current_sqrt_price,
+                    current_liquidity,
+                    true,
+                )?;
+                let amount1 = get_amount1_delta(
+                    sqrt_price_next,
+                    current_sqrt_price,
+                    current_liquidity,
+                    false,
+                )?;
+                (amount0, amount1)
+            } else {
+                let amount0 = get_amount0_delta(
+                    sqrt_price_next,
+                    current_sqrt_price,
+                    current_liquidity,
+                    false,
+                )?;
+                let amount1 = get_amount1_delta(
+                    sqrt_price_next,
+                    current_sqrt_price,
+                    current_liquidity,
+                    true,
+                )?;
+                (amount1, amount0)
+            };
+
+            total_amount_in_raw_adjusted = safe_add_u256(total_amount_in_raw_adjusted, amount_in)?;
+            total_amount_out_raw_adjusted =
+                safe_add_u256(total_amount_out_raw_adjusted, amount_out)?;
+
+            if initialized {
+                let liquidity_raw = ticks
+                    .get_tick(next_tick)
+                    .unwrap()
+                    .net_liquidity;
+                let liquidity_delta = if zero_for_one { -liquidity_raw } else { liquidity_raw };
+                current_liquidity =
+                    liquidity_math::add_liquidity_delta(current_liquidity, liquidity_delta)?;
+                if current_liquidity == 0 {
+                    break;
+                }
+            }
+
+            current_tick = if zero_for_one { next_tick - 1 } else { next_tick };
+            current_sqrt_price = sqrt_price_next;
+        }
+
+        let (token_in_decimals, token_out_decimals) = if zero_for_one {
+            (self.dex_variables2.token0_decimals, self.dex_variables2.token1_decimals)
+        } else {
+            (self.dex_variables2.token1_decimals, self.dex_variables2.token0_decimals)
+        };
+        let (token_in_num_precision, token_in_den_precision) =
+            calculate_precisions(token_in_decimals);
+        let (token_out_num_precision, token_out_den_precision) =
+            calculate_precisions(token_out_decimals);
+
+        let (token_in_exchange_price, token_out_exchange_price) = if zero_for_one {
+            match self.dex_type {
+                DexType::D3 => {
+                    (self.token0_supply_exchange_price, self.token1_supply_exchange_price)
+                }
+                DexType::D4 => {
+                    (self.token0_borrow_exchange_price, self.token1_borrow_exchange_price)
+                }
+            }
+        } else {
+            match self.dex_type {
+                DexType::D3 => {
+                    (self.token1_supply_exchange_price, self.token0_supply_exchange_price)
+                }
+                DexType::D4 => {
+                    (self.token1_borrow_exchange_price, self.token0_borrow_exchange_price)
+                }
+            }
+        };
+
+        let amount_in_limit = adjusted_to_amount(
+            total_amount_in_raw_adjusted,
+            token_in_num_precision,
+            token_in_den_precision,
+            token_in_exchange_price,
+        )?;
+        let mut amount_out_limit = adjusted_to_amount(
+            total_amount_out_raw_adjusted,
+            token_out_num_precision,
+            token_out_den_precision,
+            token_out_exchange_price,
+        )?;
+
+        if self.dex_variables2.pool_accounting_flag {
+            let reserve_out_raw_adjusted =
+                if zero_for_one { self.token1_reserve } else { self.token0_reserve };
+            let reserve_out_limit = adjusted_to_amount(
+                reserve_out_raw_adjusted,
+                token_out_num_precision,
+                token_out_den_precision,
+                token_out_exchange_price,
+            )?;
+            if amount_out_limit > reserve_out_limit {
+                amount_out_limit = reserve_out_limit;
+            }
+        }
+
+        Ok((u256_to_biguint(amount_in_limit), u256_to_biguint(amount_out_limit)))
     }
 
     fn delta_transition(
@@ -1108,5 +1249,292 @@ impl ProtocolSim for FluidV2State {
         } else {
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::{HashMap, HashSet},
+        str::FromStr,
+    };
+
+    use tycho_common::{dto::ProtocolStateDelta, models::Chain};
+
+    use super::*;
+
+    fn u256(value: &str) -> U256 {
+        U256::from_str(value).unwrap()
+    }
+
+    fn u256_bytes(value: &str) -> Bytes {
+        Bytes::from(u256(value).to_be_bytes_vec())
+    }
+
+    fn i128_bytes(value: &str) -> Bytes {
+        Bytes::from(
+            i128::from_str(value)
+                .unwrap()
+                .to_be_bytes()
+                .to_vec(),
+        )
+    }
+
+    fn test_token(address: &str, symbol: &'static str, decimals: u32) -> Token {
+        Token::new(
+            &Bytes::from_str(address).unwrap(),
+            symbol,
+            decimals,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        )
+    }
+
+    fn test_state() -> FluidV2State {
+        FluidV2State::new(
+            Bytes::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            test_token("0x0000000000000000000000000000000000000001", "TK0", 18),
+            test_token("0x0000000000000000000000000000000000000002", "TK1", 6),
+            DexType::D3,
+            3000,
+            false,
+            60,
+            Bytes::zero(20),
+            DexVariables {
+                current_tick: 100,
+                current_sqrt_price_x96: u256("79228162514264337593543950336"),
+            },
+            DexVariables2 {
+                protocol_fee_0_to_1: U256::from(50u64),
+                protocol_fee_1_to_0: U256::from(70u64),
+                protocol_cut_fee: U256::from(10u64),
+                token0_decimals: 18,
+                token1_decimals: 6,
+                active_liquidity: u256("1000000"),
+                pool_accounting_flag: false,
+                fetch_dynamic_fee_flag: false,
+                fee_version: U256::from(0u64),
+                lp_fee: U256::from(3000u64),
+                max_decay_time: U256::from(0u64),
+                price_impact_to_fee_division_factor: U256::from(1u64),
+                min_fee: U256::from(200u64),
+                max_fee: U256::from(5000u64),
+                net_price_impact: 0,
+                last_update_timestamp: U256::from(0u64),
+                decay_time_remaining: U256::from(0u64),
+            },
+            u256("500000000000000"),
+            u256("700000000000"),
+            u256("1000000000000"),
+            u256("1000000000000"),
+            u256("1000000000000"),
+            u256("1000000000000"),
+            vec![TickInfo::new(-120, 1500).unwrap(), TickInfo::new(120, -1500).unwrap()],
+        )
+    }
+
+    #[test]
+    fn test_dex_variables_from_packed_with_sign_and_sqrt_price() {
+        let abs_tick = U256::from(12345u64);
+        let sqrt_price = u256("12345678901234567890");
+        let packed_negative = (sqrt_price << 20u32) | (abs_tick << 1u32);
+        let decoded_negative = DexVariables::from_packed(packed_negative);
+        assert_eq!(decoded_negative.current_tick, -12345);
+        assert_eq!(decoded_negative.current_sqrt_price_x96, sqrt_price);
+
+        let packed_positive = (sqrt_price << 20u32) | (abs_tick << 1u32) | U256::from(1u64);
+        let decoded_positive = DexVariables::from_packed(packed_positive);
+        assert_eq!(decoded_positive.current_tick, 12345);
+        assert_eq!(decoded_positive.current_sqrt_price_x96, sqrt_price);
+    }
+
+    #[test]
+    fn test_dex_variables2_from_packed_decodes_fields() {
+        let active_liquidity = u256("123456789012345678901234567890");
+        let packed = U256::from(21u64) |
+            (U256::from(34u64) << 12u32) |
+            (U256::from(11u64) << 24u32) |
+            (U256::from(15u64) << 30u32) |
+            (U256::from(6u64) << 34u32) |
+            (active_liquidity << 38u32) |
+            (U256::from(1u64) << 140u32) |
+            (U256::from(1u64) << 141u32) |
+            (U256::from(3u64) << 152u32) |
+            (U256::from(3600u64) << 156u32) |
+            (U256::from(42u64) << 168u32) |
+            (U256::from(150u64) << 176u32) |
+            (U256::from(400u64) << 192u32) |
+            (U256::from(1u64) << 208u32) |
+            (U256::from(777u64) << 209u32) |
+            (U256::from(12345u64) << 229u32) |
+            (U256::from(876u64) << 244u32);
+
+        let decoded = DexVariables2::from_packed(packed);
+
+        assert_eq!(decoded.protocol_fee_0_to_1, U256::from(21u64));
+        assert_eq!(decoded.protocol_fee_1_to_0, U256::from(34u64));
+        assert_eq!(decoded.protocol_cut_fee, U256::from(11u64));
+        assert_eq!(decoded.token0_decimals, 18);
+        assert_eq!(decoded.token1_decimals, 6);
+        assert_eq!(decoded.active_liquidity, active_liquidity);
+        assert!(decoded.pool_accounting_flag);
+        assert!(decoded.fetch_dynamic_fee_flag);
+        assert_eq!(decoded.fee_version, U256::from(3u64));
+        assert_eq!(decoded.lp_fee, U256::from(3600u64));
+        assert_eq!(decoded.max_decay_time, U256::from(3600u64));
+        assert_eq!(decoded.price_impact_to_fee_division_factor, U256::from(42u64),);
+        assert_eq!(decoded.min_fee, U256::from(150u64));
+        assert_eq!(decoded.max_fee, U256::from(400u64));
+        assert_eq!(decoded.net_price_impact, 777);
+        assert_eq!(decoded.last_update_timestamp, U256::from(12345u64));
+        assert_eq!(decoded.decay_time_remaining, U256::from(876u64));
+    }
+
+    #[test]
+    fn test_delta_transition_updates_state_and_ticks() {
+        let mut state = test_state();
+
+        let new_sqrt_price = u256("999999999999");
+        let new_dex_variables =
+            (new_sqrt_price << 20u32) | (U256::from(77u64) << 1u32) | U256::from(1u64);
+        let new_active_liquidity = u256("987654321012345678");
+        let new_dex_variables2 = U256::from(12u64) |
+            (U256::from(24u64) << 12u32) |
+            (U256::from(5u64) << 24u32) |
+            (U256::from(15u64) << 30u32) |
+            (U256::from(6u64) << 34u32) |
+            (new_active_liquidity << 38u32) |
+            (U256::from(1u64) << 152u32) |
+            (U256::from(2500u64) << 156u32) |
+            (U256::from(99u64) << 176u32) |
+            (U256::from(199u64) << 192u32);
+
+        let updated_attributes: HashMap<String, Bytes> = [
+            ("dex_variables".to_string(), Bytes::from(new_dex_variables.to_be_bytes_vec())),
+            ("dex_variables2".to_string(), Bytes::from(new_dex_variables2.to_be_bytes_vec())),
+            ("token0/token_reserves".to_string(), u256_bytes("111111111")),
+            ("token1/token_reserves".to_string(), u256_bytes("222222222")),
+            ("token0/borrow_exchange_price".to_string(), u256_bytes("333333333")),
+            ("token0/supply_exchange_price".to_string(), u256_bytes("444444444")),
+            ("token1/borrow_exchange_price".to_string(), u256_bytes("555555555")),
+            ("token1/supply_exchange_price".to_string(), u256_bytes("666666666")),
+            ("ticks/-120".to_string(), i128_bytes("2222")),
+            ("ticks/240".to_string(), i128_bytes("3333")),
+            ("ticks/0".to_string(), i128_bytes("0")),
+        ]
+        .into_iter()
+        .collect();
+
+        let deleted_attributes = HashSet::from([String::from("ticks/120")]);
+        let delta = ProtocolStateDelta {
+            component_id: "fluid-v2-test".to_string(),
+            updated_attributes,
+            deleted_attributes,
+        };
+
+        state
+            .delta_transition(delta, &HashMap::new(), &Balances::default())
+            .unwrap();
+
+        assert_eq!(state.dex_variables.current_tick, 77);
+        assert_eq!(
+            state
+                .dex_variables
+                .current_sqrt_price_x96,
+            new_sqrt_price
+        );
+        assert_eq!(state.dex_variables2.active_liquidity, new_active_liquidity);
+        assert_eq!(state.token0_reserve, u256("111111111"));
+        assert_eq!(state.token1_reserve, u256("222222222"));
+        assert_eq!(state.token0_borrow_exchange_price, u256("333333333"));
+        assert_eq!(state.token0_supply_exchange_price, u256("444444444"));
+        assert_eq!(state.token1_borrow_exchange_price, u256("555555555"));
+        assert_eq!(state.token1_supply_exchange_price, u256("666666666"));
+
+        assert_eq!(state.ticks.len(), 2);
+        assert_eq!(state.ticks[0].index, -120);
+        assert_eq!(state.ticks[0].net_liquidity, 2222);
+        assert_eq!(state.ticks[1].index, 240);
+        assert_eq!(state.ticks[1].net_liquidity, 3333);
+    }
+
+    #[test]
+    fn test_get_limits() {
+        let state = FluidV2State::new(
+            Bytes::from_str("0x8d1b5f8da63fa29b191672231d3845740a11fcbef6c76e077cfffe56cc27c707")
+                .unwrap(),
+            Token::new(
+                &Bytes::from_str("0x3c499c542cef5e3811e1192ce70d8cc03d5c3359").unwrap(),
+                "USDC",
+                6,
+                0,
+                &[Some(44_000)],
+                Chain::Ethereum,
+                10,
+            ),
+            Token::new(
+                &Bytes::from_str("0xc2132d05d31c914a87c6611c10748aeb04b58e8f").unwrap(),
+                "USDT0",
+                6,
+                0,
+                &[Some(44_000)],
+                Chain::Ethereum,
+                10,
+            ),
+            DexType::D4,
+            100,
+            false,
+            1,
+            Bytes::zero(20),
+            DexVariables {
+                current_tick: 20,
+                current_sqrt_price_x96: u256("2363625190206393341985"),
+            },
+            DexVariables2 {
+                protocol_fee_0_to_1: U256::from(0u64),
+                protocol_fee_1_to_0: U256::from(0u64),
+                protocol_cut_fee: U256::from(0u64),
+                token0_decimals: 0,
+                token1_decimals: 0,
+                active_liquidity: U256::from(0u64),
+                pool_accounting_flag: false,
+                fetch_dynamic_fee_flag: false,
+                fee_version: U256::from(0u64),
+                lp_fee: U256::from(0u64),
+                max_decay_time: U256::from(0u64),
+                price_impact_to_fee_division_factor: U256::from(0u64),
+                min_fee: U256::from(0u64),
+                max_fee: U256::from(0u64),
+                net_price_impact: 0,
+                last_update_timestamp: U256::from(0u64),
+                decay_time_remaining: U256::from(0u64),
+            },
+            u256("317527473125"),
+            u256("478945217925"),
+            u256("1018669616155"),
+            u256("1011576356290"),
+            u256("1016315199661"),
+            u256("1010140557270"),
+            vec![
+                TickInfo::new(-100, 79191010414114).unwrap(),
+                TickInfo::new(18, 4782182157850).unwrap(),
+                TickInfo::new(19, 17364292475071).unwrap(),
+                TickInfo::new(24, -17364292475071).unwrap(),
+                TickInfo::new(27, -4782182157850).unwrap(),
+                TickInfo::new(100, -79191010414114).unwrap(),
+            ],
+        );
+
+        let (limit_in, limit_out) = state
+            .get_limits(
+                Bytes::from_str("0x3c499c542cef5e3811e1192ce70d8cc03d5c3359").unwrap(),
+                Bytes::from_str("0xc2132d05d31c914a87c6611c10748aeb04b58e8f").unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(limit_in, BigUint::from(0u32));
+        assert_eq!(limit_out, BigUint::from(0u32));
     }
 }
