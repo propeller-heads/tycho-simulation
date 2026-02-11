@@ -1292,6 +1292,30 @@ mod tests {
         )
     }
 
+    fn usdc() -> Token {
+        Token::new(
+            &Bytes::from_str("0x3c499c542cef5e3811e1192ce70d8cc03d5c3359").unwrap(),
+            "USDC",
+            6,
+            0,
+            &[Some(44_000)],
+            Chain::Ethereum,
+            10,
+        )
+    }
+
+    fn usdt0() -> Token {
+        Token::new(
+            &Bytes::from_str("0xc2132d05d31c914a87c6611c10748aeb04b58e8f").unwrap(),
+            "USDT0",
+            6,
+            0,
+            &[Some(44_000)],
+            Chain::Ethereum,
+            10,
+        )
+    }
+
     fn test_state() -> FluidV2State {
         FluidV2State::new(
             Bytes::from_str("0x1111111111111111111111111111111111111111").unwrap(),
@@ -1332,6 +1356,57 @@ mod tests {
             u256("1000000000000"),
             u256("1000000000000"),
             vec![TickInfo::new(-120, 1500).unwrap(), TickInfo::new(120, -1500).unwrap()],
+        )
+    }
+
+    fn onchain_state() -> FluidV2State {
+        FluidV2State::new(
+            Bytes::from_str("0x8d1b5f8da63fa29b191672231d3845740a11fcbef6c76e077cfffe56cc27c707")
+                .unwrap(),
+            usdc(),
+            usdt0(),
+            DexType::D4,
+            100,
+            false,
+            1,
+            Bytes::zero(20),
+            DexVariables {
+                current_tick: 20,
+                current_sqrt_price_x96: u256("2363625190206393341985"),
+            },
+            DexVariables2 {
+                protocol_fee_0_to_1: U256::from(0u64),
+                protocol_fee_1_to_0: U256::from(0u64),
+                protocol_cut_fee: U256::from(0u64),
+                token0_decimals: 6,
+                token1_decimals: 6,
+                active_liquidity: U256::from(101337485047035u64),
+                pool_accounting_flag: false,
+                fetch_dynamic_fee_flag: false,
+                fee_version: U256::from(0u64),
+                lp_fee: U256::from(100u64),
+                max_decay_time: U256::from(0u64),
+                price_impact_to_fee_division_factor: U256::from(0u64),
+                min_fee: U256::from(0u64),
+                max_fee: U256::from(0u64),
+                net_price_impact: 0,
+                last_update_timestamp: U256::from(0u64),
+                decay_time_remaining: U256::from(0u64),
+            },
+            u256("317527473125"),
+            u256("478945217925"),
+            u256("1018669616155"),
+            u256("1011576356290"),
+            u256("1016315199661"),
+            u256("1010140557270"),
+            vec![
+                TickInfo::new(-100, 79191010414114).unwrap(),
+                TickInfo::new(18, 4782182157850).unwrap(),
+                TickInfo::new(19, 17364292475071).unwrap(),
+                TickInfo::new(24, -17364292475071).unwrap(),
+                TickInfo::new(27, -4782182157850).unwrap(),
+                TickInfo::new(100, -79191010414114).unwrap(),
+            ],
         )
     }
 
@@ -1462,70 +1537,7 @@ mod tests {
 
     #[test]
     fn test_get_limits() {
-        let state = FluidV2State::new(
-            Bytes::from_str("0x8d1b5f8da63fa29b191672231d3845740a11fcbef6c76e077cfffe56cc27c707")
-                .unwrap(),
-            Token::new(
-                &Bytes::from_str("0x3c499c542cef5e3811e1192ce70d8cc03d5c3359").unwrap(),
-                "USDC",
-                6,
-                0,
-                &[Some(44_000)],
-                Chain::Ethereum,
-                10,
-            ),
-            Token::new(
-                &Bytes::from_str("0xc2132d05d31c914a87c6611c10748aeb04b58e8f").unwrap(),
-                "USDT0",
-                6,
-                0,
-                &[Some(44_000)],
-                Chain::Ethereum,
-                10,
-            ),
-            DexType::D4,
-            100,
-            false,
-            1,
-            Bytes::zero(20),
-            DexVariables {
-                current_tick: 20,
-                current_sqrt_price_x96: u256("2363625190206393341985"),
-            },
-            DexVariables2 {
-                protocol_fee_0_to_1: U256::from(0u64),
-                protocol_fee_1_to_0: U256::from(0u64),
-                protocol_cut_fee: U256::from(0u64),
-                token0_decimals: 0,
-                token1_decimals: 0,
-                active_liquidity: U256::from(0u64),
-                pool_accounting_flag: false,
-                fetch_dynamic_fee_flag: false,
-                fee_version: U256::from(0u64),
-                lp_fee: U256::from(0u64),
-                max_decay_time: U256::from(0u64),
-                price_impact_to_fee_division_factor: U256::from(0u64),
-                min_fee: U256::from(0u64),
-                max_fee: U256::from(0u64),
-                net_price_impact: 0,
-                last_update_timestamp: U256::from(0u64),
-                decay_time_remaining: U256::from(0u64),
-            },
-            u256("317527473125"),
-            u256("478945217925"),
-            u256("1018669616155"),
-            u256("1011576356290"),
-            u256("1016315199661"),
-            u256("1010140557270"),
-            vec![
-                TickInfo::new(-100, 79191010414114).unwrap(),
-                TickInfo::new(18, 4782182157850).unwrap(),
-                TickInfo::new(19, 17364292475071).unwrap(),
-                TickInfo::new(24, -17364292475071).unwrap(),
-                TickInfo::new(27, -4782182157850).unwrap(),
-                TickInfo::new(100, -79191010414114).unwrap(),
-            ],
-        );
+        let state = onchain_state();
 
         let (limit_in, limit_out) = state
             .get_limits(
@@ -1534,7 +1546,16 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(limit_in, BigUint::from(0u32));
-        assert_eq!(limit_out, BigUint::from(0u32));
+        assert_eq!(limit_in, BigUint::from(489809940u32));
+        assert_eq!(limit_out, BigUint::from(486756162u32));
+    }
+
+    #[test]
+    fn test_get_amount_out() {
+        let state = onchain_state();
+        let res = state
+            .get_amount_out(BigUint::from_str("4898099").unwrap(), &usdc(), &usdt0())
+            .unwrap();
+        assert_eq!(res.amount, BigUint::from(4896168u32));
     }
 }
