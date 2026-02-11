@@ -1,2 +1,2 @@
 mod decoder;
-mod state;
+pub mod state;
