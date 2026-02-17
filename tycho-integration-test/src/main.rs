@@ -21,6 +21,7 @@ use rand::prelude::IndexedRandom;
 use tokio::{signal, sync::Semaphore};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
+use tycho_client::feed::SynchronizerState;
 use tycho_common::simulation::protocol_sim::ProtocolSim;
 use tycho_simulation::{
     evm::protocol::cowamm::constants::PROTOCOL_SYSTEM as COWAMM_PROTOCOL_SYSTEM,
@@ -765,27 +766,32 @@ fn select_components_to_process(
                 }
             }
 
-            for component_ids in current_state
-                .component_ids_by_protocol
-                .values()
-            {
-                let available_ids: Vec<_> = component_ids
-                    .iter()
-                    .filter(|id| {
-                        !update.update.states.keys().contains(id) && !all_selected_ids.contains(id)
-                    })
-                    .cloned()
-                    .collect();
+            for (protocol, component_ids) in &current_state.component_ids_by_protocol {
+                let protocol_sync_state = update.update.sync_states.get(protocol);
+                match protocol_sync_state {
+                    None => continue,
+                    Some(SynchronizerState::Ready(_)) => {
+                        let available_ids: Vec<_> = component_ids
+                            .iter()
+                            .filter(|id| {
+                                !update.update.states.keys().contains(id) &&
+                                    !all_selected_ids.contains(id)
+                            })
+                            .cloned()
+                            .collect();
 
-                let protocol_selected_ids: Vec<_> = available_ids
-                    .choose_multiple(
-                        &mut rand::rng(),
-                        (cli.max_simulations_stale as usize).min(available_ids.len()),
-                    )
-                    .cloned()
-                    .collect();
+                        let protocol_selected_ids: Vec<_> = available_ids
+                            .choose_multiple(
+                                &mut rand::rng(),
+                                (cli.max_simulations_stale as usize).min(available_ids.len()),
+                            )
+                            .cloned()
+                            .collect();
 
-                all_selected_ids.extend(protocol_selected_ids);
+                        all_selected_ids.extend(protocol_selected_ids);
+                    }
+                    _ => continue,
+                }
             }
             all_selected_ids
         };
@@ -1066,7 +1072,12 @@ fn process_execution_result(
     statistics: Option<Arc<RwLock<TestStatistics>>>,
 ) {
     match result {
-        TychoExecutionResult::Success { gas_used, amount_out } => {
+        TychoExecutionResult::Success {
+            gas_used,
+            amount_out,
+            state_overwrites,
+            overwrite_metadata,
+        } => {
             debug!(
                 event_type = "simulation_execution_success",
                 amount_out = amount_out.to_string(),
@@ -1092,6 +1103,22 @@ fn process_execution_result(
                     100.0
             };
 
+            // Generate Tenderly URL for debugging with state overrides
+            let overrides =
+                tenderly::TenderlySimParams { network: Some(chain_id), ..Default::default() };
+            let tenderly_url = tenderly::build_tenderly_url(
+                &overrides,
+                Some(&execution_info.transaction),
+                Some(&block),
+                Address::from_slice(&execution_info.solution.sender[..20]),
+            );
+
+            let overwrites_string = if let Some(overwrites) = state_overwrites.as_ref() {
+                tenderly::get_overwrites_string(overwrites, overwrite_metadata)
+            } else {
+                String::new()
+            };
+
             if !(-0.2..=0.2).contains(&slippage) {
                 error!(
                     event_type = "execution_slippage",
@@ -1101,7 +1128,8 @@ fn process_execution_result(
                     simulated_amount  = %amount_out,
                     executed_amount = %execution_info.expected_amount_out,
                     slippage_ratio = slippage,
-                    state = ?state_str,
+                    tenderly = tenderly_url,
+                    overwrites = %overwrites_string,
                     "Execution slippage: {:.2}%",
                     slippage
                 );
@@ -1114,6 +1142,8 @@ fn process_execution_result(
                     simulated_amount  = %amount_out,
                     executed_amount = %execution_info.expected_amount_out,
                     slippage_ratio = slippage,
+                    tenderly = tenderly_url,
+                    overwrites = %overwrites_string,
                     "Execution slippage: {:.2}%",
                     slippage
                 );

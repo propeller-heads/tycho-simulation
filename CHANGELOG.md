@@ -1,3 +1,107 @@
+## [0.241.2](https://github.com/propeller-heads/tycho-simulation/compare/0.241.1...0.241.2) (2026-02-13)
+
+
+### Bug Fixes
+
+* EkuboV2 failed to convert consumed amount to BigUint ([1a9e548](https://github.com/propeller-heads/tycho-simulation/commit/1a9e548d52db3ab4035323640fe8af7693239de7))
+
+## [0.241.1](https://github.com/propeller-heads/tycho-simulation/compare/0.241.0...0.241.1) (2026-02-12)
+
+
+### Bug Fixes
+
+* update tycho client version ([1a16b77](https://github.com/propeller-heads/tycho-simulation/commit/1a16b77aa825c5aa1c03adce710911a55d7cbb49))
+
+## [0.241.0](https://github.com/propeller-heads/tycho-simulation/compare/0.240.1...0.241.0) (2026-02-11)
+
+
+### Features
+
+* Add EtherFi protocol simulation ([5943d86](https://github.com/propeller-heads/tycho-simulation/commit/5943d8616e0566cb66d721cbb79da8e33a94cabf))
+* add serde support for etherfi ([0aa13be](https://github.com/propeller-heads/tycho-simulation/commit/0aa13be31510cd54f82804db379bc401930b1a8b))
+* Implement Etherfi state decoder and protocol simulation ([14bf0f9](https://github.com/propeller-heads/tycho-simulation/commit/14bf0f9d5dd0c32fd8ffa31c64922eac171c06b1))
+
+## [0.240.1](https://github.com/propeller-heads/tycho-simulation/compare/0.240.0...0.240.1) (2026-02-10)
+
+
+### Bug Fixes
+
+* increase per-tick gas cost to match Uniswap V3 pool cross() ([9656171](https://github.com/propeller-heads/tycho-simulation/commit/965617154fd9171909c76d3a7d5aecba127e7359))
+
+## [0.240.0](https://github.com/propeller-heads/tycho-simulation/compare/0.239.0...0.240.0) (2026-02-10)
+
+
+### Features
+
+* **integration test:** Include tenderly url for high slippage ([f5ca0f4](https://github.com/propeller-heads/tycho-simulation/commit/f5ca0f489143f0c713f6cd79bc31ce9b741026c8))
+
+## [0.239.0](https://github.com/propeller-heads/tycho-simulation/compare/0.238.0...0.239.0) (2026-02-09)
+
+
+### Features
+
+* add support for partial block updates to enable lower latency ([b168845](https://github.com/propeller-heads/tycho-simulation/commit/b168845cc578491d50533a9e4750ec7554de0871))
+* update Tycho dependencies to version 0.136.1 and rename partial_blocks method for clarity ([c72104b](https://github.com/propeller-heads/tycho-simulation/commit/c72104bd0f8529e49206db8227cd33e924b53af9))
+
+
+### Bug Fixes
+
+* replace custom header function with Default::default() for BlockHeader in tests to address tycho-client breaking changes ([d14685d](https://github.com/propeller-heads/tycho-simulation/commit/d14685daabf41b5d462fcb309faef58b5668530b))
+
+## [0.238.0](https://github.com/propeller-heads/tycho-simulation/compare/0.237.2...0.238.0) (2026-02-05)
+
+
+### Features
+
+* Notify SDK repo on new releases ([8b29bdc](https://github.com/propeller-heads/tycho-simulation/commit/8b29bdc46c63e25c987b770fe3c06c57e3667846))
+
+## [0.237.2](https://github.com/propeller-heads/tycho-simulation/compare/0.237.1...0.237.2) (2026-02-02)
+
+
+### Bug Fixes
+
+* **integration-test:** Don't select components from non ready protocols ([2e1b9df](https://github.com/propeller-heads/tycho-simulation/commit/2e1b9dfff811d3460be76a048f2f1c72e8660ccc))
+
+## [0.237.1](https://github.com/propeller-heads/tycho-simulation/compare/0.237.0...0.237.1) (2026-02-02)
+
+
+### Bug Fixes
+
+* Fix gibberish execution traces ([ce88300](https://github.com/propeller-heads/tycho-simulation/commit/ce88300f064b9243ce2c2495676bba0727a1ada6))
+
+## [0.237.0](https://github.com/propeller-heads/tycho-simulation/compare/0.236.0...0.237.0) (2026-02-02)
+
+
+### Features
+
+* add `serde` support for protocol states ([734894b](https://github.com/propeller-heads/tycho-simulation/commit/734894bc9218bbaf5a651c8ee8a435c48f3051b8))
+
+
+### Bug Fixes
+
+* fmt with nightly ([7bbaba9](https://github.com/propeller-heads/tycho-simulation/commit/7bbaba9ac7b967e768df4b7cec1499f8fd4e0c7e))
+* make cowamm serde ([b807773](https://github.com/propeller-heads/tycho-simulation/commit/b8077736a4d64a49946cd0bd035896a37256138d))
+
+## [0.236.0](https://github.com/propeller-heads/tycho-simulation/compare/0.235.0...0.236.0) (2026-01-30)
+
+
+### Features
+
+* Fix tycho-indexer dependencies ([042d64c](https://github.com/propeller-heads/tycho-simulation/commit/042d64c9559b5bd5f382dc97ae11b3fd24f2bb3e))
+
+
+### Bug Fixes
+
+* pin ekubo sdk version ([4cbb735](https://github.com/propeller-heads/tycho-simulation/commit/4cbb7354669ba8b7398dcdfc5787bf2134e11016))
+
+## [0.235.0](https://github.com/propeller-heads/tycho-simulation/compare/0.234.0...0.235.0) (2026-01-30)
+
+
+### Features
+
+* add Ekubo V3 to integration test protocols ([5746b0c](https://github.com/propeller-heads/tycho-simulation/commit/5746b0cd399baac03667db5fb6ab9c15630fecb2))
+* update tycho-execution to 0.155.0 ([d6e1ed3](https://github.com/propeller-heads/tycho-simulation/commit/d6e1ed322f041594bf7595070571be463980476c))
+
 ## [0.234.0](https://github.com/propeller-heads/tycho-simulation/compare/0.233.0...0.234.0) (2026-01-26)
 
 

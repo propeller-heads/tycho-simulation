@@ -13,6 +13,7 @@ use evm_ekubo_sdk::{
     },
 };
 use num_traits::Zero;
+use serde::{Deserialize, Serialize};
 use tycho_common::{
     simulation::errors::{SimulationError, TransitionError},
     Bytes,
@@ -23,7 +24,7 @@ use crate::{
     evm::protocol::ekubo::attributes::ticks_from_attributes, protocol::errors::InvalidSnapshotError,
 };
 
-#[derive(Debug, Clone, Eq)]
+#[derive(Debug, Clone, Eq, Serialize, Deserialize)]
 pub struct BasePool {
     imp: quoting::base_pool::BasePool,
     state: BasePoolState,
@@ -250,10 +251,13 @@ where
 
     let resources = resources_fn(quote.execution_resources);
 
-    Ok(quote.consumed_amount.saturating_sub(
-        WEI_UNDERESTIMATION_FACTOR *
-            (i128::from(resources.initialized_ticks_crossed) +
-                i128::from(resources.tick_spacings_crossed) / 256 +
-                1),
-    ))
+    Ok(quote
+        .consumed_amount
+        .saturating_sub(
+            WEI_UNDERESTIMATION_FACTOR *
+                (i128::from(resources.initialized_ticks_crossed) +
+                    i128::from(resources.tick_spacings_crossed) / 256 +
+                    1),
+        )
+        .max(0))
 }
