@@ -117,7 +117,7 @@ pub async fn simulate_swap_transaction(
         // Add protocol-specific overwrites for Angstrom hooks
         if let Some(first_swap) = info.solution.swaps.first() {
             if let Some(hook_identifier) = first_swap
-                .component
+                .component()
                 .static_attributes
                 .get("hook_identifier")
             {
@@ -187,11 +187,19 @@ pub async fn simulate_swap_transaction(
             SimulationResult::Success { return_data, gas_used } => {
                 match U256::abi_decode(&return_data) {
                     Ok(amount_out) => {
+                        let simulation_input = inputs
+                            .get(&simulation_id)
+                            .expect("Simulation must be present in inputs HashMap")
+                            .clone();
+                        let overwrite_metadata = simulation_input.overwrite_metadata;
+                        let state_overwrites = simulation_input.state_overwrites;
                         tycho_execution_results.insert(
                             simulation_id,
                             TychoExecutionResult::Success {
                                 amount_out: u256_to_biguint(amount_out),
                                 gas_used,
+                                state_overwrites,
+                                overwrite_metadata,
                             },
                         );
                     }

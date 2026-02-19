@@ -19,40 +19,43 @@ use tycho_common::{
 };
 
 use super::hooks::utils::{has_permission, HookOptions};
-use crate::evm::protocol::{
-    clmm::{clmm_swap_to_price, clmm_swap_to_trade_price},
-    safe_math::{safe_add_u256, safe_sub_u256},
-    u256_num::u256_to_biguint,
-    uniswap_v4::hooks::{
-        hook_handler::HookHandler,
-        models::{
-            AfterSwapParameters, BalanceDelta, BeforeSwapDelta, BeforeSwapParameters, StateContext,
-            SwapParams,
-        },
-    },
-    utils::{
-        add_fee_markup,
-        uniswap::{
-            i24_be_bytes_to_i32, liquidity_math, lp_fee,
-            lp_fee::is_dynamic,
-            sqrt_price_math::{get_amount0_delta, get_amount1_delta, sqrt_price_q96_to_f64},
-            swap_math,
-            tick_list::{TickInfo, TickList, TickListErrorKind},
-            tick_math::{
-                get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio, MAX_SQRT_RATIO, MAX_TICK,
-                MIN_SQRT_RATIO, MIN_TICK,
+use crate::{
+    evm::protocol::{
+        clmm::{clmm_swap_to_price, clmm_swap_to_trade_price},
+        safe_math::{safe_add_u256, safe_sub_u256},
+        u256_num::u256_to_biguint,
+        uniswap_v4::hooks::{
+            hook_handler::HookHandler,
+            models::{
+                AfterSwapParameters, BalanceDelta, BeforeSwapDelta, BeforeSwapParameters,
+                StateContext, SwapParams,
             },
-            StepComputation, SwapResults, SwapState, SwapToTradePriceResult,
         },
+        utils::{
+            add_fee_markup,
+            uniswap::{
+                i24_be_bytes_to_i32, liquidity_math,
+                lp_fee::{self, is_dynamic},
+                sqrt_price_math::{get_amount0_delta, get_amount1_delta, sqrt_price_q96_to_f64},
+                swap_math,
+                tick_list::{TickInfo, TickList, TickListErrorKind},
+                tick_math::{
+                    get_sqrt_ratio_at_tick, get_tick_at_sqrt_ratio, MAX_SQRT_RATIO, MAX_TICK,
+                    MIN_SQRT_RATIO, MIN_TICK,
+                },
+                StepComputation, SwapResults, SwapState, SwapToTradePriceResult,
+            },
+        },
+        vm::constants::EXTERNAL_ACCOUNT,
     },
-    vm::constants::EXTERNAL_ACCOUNT,
+    impl_non_serializable_protocol,
 };
 
 // Gas limit constants for capping get_limits calculations
 // These prevent simulations from exceeding Ethereum's block gas limit
 const SWAP_BASE_GAS: u64 = 130_000;
-// This gas is estimated from _nextInitializedTickWithinOneWord calls on Tenderly
-const GAS_PER_TICK: u64 = 2_500;
+// This gas is estimated from UniswapV3Pool cross() calls on Tenderly
+const GAS_PER_TICK: u64 = 17_540;
 // Conservative max gas budget for a single swap (Ethereum transaction gas limit)
 const MAX_SWAP_GAS: u64 = 16_700_000;
 const MAX_TICKS_CROSSED: u64 = (MAX_SWAP_GAS - SWAP_BASE_GAS) / GAS_PER_TICK;
@@ -70,6 +73,8 @@ pub struct UniswapV4State {
     pub hook: Option<Box<dyn HookHandler>>,
 }
 
+impl_non_serializable_protocol!(UniswapV4State, "not supported due vm state deps");
+
 impl fmt::Debug for UniswapV4State {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("UniswapV4State")
@@ -77,7 +82,6 @@ impl fmt::Debug for UniswapV4State {
             .field("sqrt_price", &self.sqrt_price)
             .field("fees", &self.fees)
             .field("tick", &self.tick)
-            .field("ticks", &self.ticks)
             .field("tick_spacing", &self.tick_spacing)
             .finish_non_exhaustive()
     }
@@ -587,6 +591,7 @@ impl UniswapV4State {
     }
 }
 
+#[typetag::serde]
 impl ProtocolSim for UniswapV4State {
     // Not possible to implement correctly with the current interface because we need to know the
     // swap direction.
@@ -1020,7 +1025,7 @@ impl ProtocolSim for UniswapV4State {
 
         // apply tick changes
         for (key, value) in delta.updated_attributes.iter() {
-            // tick liquidity keys are in the format "tick/{tick_index}/net_liquidity"
+            // tick liquidity keys are in the format "ticks/{tick_index}/net_liquidity"
             if key.starts_with("ticks/") {
                 let parts: Vec<&str> = key.split('/').collect();
                 self.ticks
@@ -1035,8 +1040,8 @@ impl ProtocolSim for UniswapV4State {
         }
         // delete ticks - ignores deletes for attributes other than tick liquidity
         for key in delta.deleted_attributes.iter() {
-            // tick liquidity keys are in the format "tick/{tick_index}/net_liquidity"
-            if key.starts_with("tick/") {
+            // tick liquidity keys are in the format "ticks/{tick_index}/net_liquidity"
+            if key.starts_with("ticks/") {
                 let parts: Vec<&str> = key.split('/').collect();
                 self.ticks
                     .set_tick_liquidity(
@@ -1404,8 +1409,7 @@ mod tests {
             )
             .expect("Invalid block hash"),
             parent_hash: Bytes::from(vec![0; 32]),
-            revert: false,
-            timestamp: 0,
+            ..Default::default()
         };
 
         let t0 = Token::new(
@@ -1482,8 +1486,7 @@ mod tests {
             )
             .expect("Invalid block hash"),
             parent_hash: Bytes::from(vec![0; 32]),
-            revert: false,
-            timestamp: 0,
+            ..Default::default()
         };
 
         let project_root = env!("CARGO_MANIFEST_DIR");
@@ -1819,13 +1822,12 @@ mod tests {
 
         let block = BlockHeader {
             number: 22689128,
-            parent_hash: Default::default(),
             hash: Bytes::from_str(
                 "0xfbfa716523d25d6d5248c18d001ca02b1caf10cabd1ab7321465e2262c41157b",
             )
             .expect("Invalid block hash"),
             timestamp: 1749739055,
-            revert: false,
+            ..Default::default()
         };
 
         // Pool ID: 0xdd8dd509e58ec98631b800dd6ba86ee569c517ffbd615853ed5ab815bbc48ccb
@@ -1973,13 +1975,12 @@ mod tests {
 
         let block = BlockHeader {
             number: 22689128,
-            parent_hash: Default::default(),
             hash: Bytes::from_str(
                 "0xfbfa716523d25d6d5248c18d001ca02b1caf10cabd1ab7321465e2262c41157b",
             )
             .expect("Invalid block hash"),
             timestamp: 1749739055,
-            revert: false,
+            ..Default::default()
         };
 
         let hook_address: Address = Address::from_str("0x69058613588536167ba0aa94f0cc1fe420ef28a8")

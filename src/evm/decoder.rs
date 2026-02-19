@@ -461,6 +461,8 @@ where
                                 let token_address = match bytes_to_address(&token.address) {
                                     Ok(addr) => addr,
                                     Err(_) => {
+                                        count_token_skips += 1;
+                                        msg_failed_components.insert(id.clone());
                                         warn!(
                                             "Token address could not be decoded {}, ignoring pool {:x?}",
                                             token.address, id
@@ -487,6 +489,7 @@ where
                             }
                             None => {
                                 count_token_skips += 1;
+                                msg_failed_components.insert(id.clone());
                                 debug!("Token not found {}, ignoring pool {:x?}", token, id);
                                 continue 'snapshot_loop;
                             }
@@ -1016,6 +1019,9 @@ mock! {
 }
 
 #[cfg(test)]
+crate::impl_non_serializable_protocol!(MockProtocolSim, "test protocol");
+
+#[cfg(test)]
 impl ProtocolSim for MockProtocolSim {
     fn fee(&self) -> f64 {
         self.fee()
@@ -1065,6 +1071,14 @@ impl ProtocolSim for MockProtocolSim {
 
     fn eq(&self, other: &dyn ProtocolSim) -> bool {
         self.eq(other)
+    }
+
+    fn typetag_name(&self) -> &'static str {
+        unreachable!()
+    }
+
+    fn typetag_deserialize(&self) {
+        unreachable!()
     }
 }
 

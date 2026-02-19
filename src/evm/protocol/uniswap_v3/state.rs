@@ -3,6 +3,7 @@ use std::{any::Any, collections::HashMap};
 use alloy::primitives::{Sign, I256, U256};
 use num_bigint::BigUint;
 use num_traits::Zero;
+use serde::{Deserialize, Serialize};
 use tracing::trace;
 use tycho_common::{
     dto::ProtocolStateDelta,
@@ -41,15 +42,15 @@ use crate::evm::protocol::{
 // Gas limit constants for capping get_limits calculations
 // These prevent simulations from exceeding Ethereum's block gas limit
 const SWAP_BASE_GAS: u64 = 130_000;
-// This gas is estimated from _nextInitializedTickWithinOneWord calls on Tenderly
-const GAS_PER_TICK: u64 = 2_500;
+// This gas is estimated from UniswapV3Pool cross() calls on Tenderly
+const GAS_PER_TICK: u64 = 17_540;
 // Conservative max gas budget for a single swap (Ethereum transaction gas limit)
 const MAX_SWAP_GAS: u64 = 16_700_000;
 const MAX_TICKS_CROSSED: u64 = (MAX_SWAP_GAS - SWAP_BASE_GAS) / GAS_PER_TICK;
 // Gas increment per swap iteration (used for tracking cumulative gas in swap loops)
 const GAS_PER_SWAP_STEP: u64 = 2_000;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UniswapV3State {
     liquidity: u128,
     sqrt_price: U256,
@@ -424,6 +425,7 @@ impl UniswapV3State {
     }
 }
 
+#[typetag::serde]
 impl ProtocolSim for UniswapV3State {
     fn fee(&self) -> f64 {
         (self.fee as u32) as f64 / 1_000_000.0
@@ -635,7 +637,7 @@ impl ProtocolSim for UniswapV3State {
 
         // apply tick changes
         for (key, value) in delta.updated_attributes.iter() {
-            // tick liquidity keys are in the format "tick/{tick_index}/net_liquidity"
+            // tick liquidity keys are in the format "ticks/{tick_index}/net_liquidity"
             if key.starts_with("ticks/") {
                 let parts: Vec<&str> = key.split('/').collect();
                 self.ticks
@@ -650,8 +652,8 @@ impl ProtocolSim for UniswapV3State {
         }
         // delete ticks - ignores deletes for attributes other than tick liquidity
         for key in delta.deleted_attributes.iter() {
-            // tick liquidity keys are in the format "tick/{tick_index}/net_liquidity"
-            if key.starts_with("tick/") {
+            // tick liquidity keys are in the format "ticks/{tick_index}/net_liquidity"
+            if key.starts_with("ticks/") {
                 let parts: Vec<&str> = key.split('/').collect();
                 self.ticks
                     .set_tick_liquidity(
@@ -1176,7 +1178,7 @@ mod tests {
             .get_limits(t0.address.clone(), t1.address.clone())
             .unwrap();
 
-        assert_eq!(&res.0, &BigUint::from_u128(20358481906554983980330155).unwrap()); // Crazy amount because of this tick: "ticks/-887272/net-liquidity": "0x10d73d"
+        assert_eq!(&res.0, &BigUint::from_u128(155144999154).unwrap()); // Crazy amount because of this tick: "ticks/-887272/net-liquidity": "0x10d73d"
 
         let out = usv3_state
             .get_amount_out(res.0, &t0, &t1)

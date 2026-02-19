@@ -1,4 +1,5 @@
 mod metrics;
+mod statistics;
 mod stream_processor;
 
 use std::{
@@ -20,8 +21,10 @@ use rand::prelude::IndexedRandom;
 use tokio::{signal, sync::Semaphore};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
+use tycho_client::feed::SynchronizerState;
 use tycho_common::simulation::protocol_sim::ProtocolSim;
 use tycho_simulation::{
+    evm::protocol::cowamm::constants::PROTOCOL_SYSTEM as COWAMM_PROTOCOL_SYSTEM,
     protocol::models::ProtocolComponent,
     rfq::protocols::hashflow::{client::HashflowClient, state::HashflowState},
     tycho_common::models::Chain,
@@ -36,9 +39,12 @@ use tycho_test::{
     validation::{batch_validate_components, get_validator, Validator},
 };
 
-use crate::stream_processor::{
-    protocol_stream_processor::ProtocolStreamProcessor, rfq_stream_processor::RFQStreamProcessor,
-    StreamUpdate, UpdateType,
+use crate::{
+    statistics::TestStatistics,
+    stream_processor::{
+        protocol_stream_processor::ProtocolStreamProcessor,
+        rfq_stream_processor::RFQStreamProcessor, StreamUpdate, UpdateType,
+    },
 };
 
 #[derive(Parser, Clone)]
@@ -107,6 +113,10 @@ struct Cli {
     /// If not provided, defaults to chain-specific protocols
     #[arg(long, value_delimiter = ',')]
     protocols: Option<Vec<String>>,
+
+    /// Maximum number of blocks to process before exiting (0 = run indefinitely)
+    #[arg(long, default_value_t = 0)]
+    max_blocks: u64,
 }
 
 impl Debug for Cli {
@@ -171,7 +181,10 @@ async fn main() -> miette::Result<()> {
 
     // Run main application with signal support
     let result = tokio::select! {
-        result = run(cli) => result,
+        result = tokio::spawn(run(cli)) => match result {
+          Ok(inner) => inner,
+          Err(e) => Err(miette!("run() panicked: {:?}", e)),
+        },
         _ = async {
             loop {
                 if shutdown_requested.load(std::sync::atomic::Ordering::SeqCst) {
@@ -254,8 +267,19 @@ async fn run(cli: Cli) -> miette::Result<()> {
     }
 
     let tycho_state = Arc::new(RwLock::new(TychoState::default()));
+    // Only collect statistics when max_blocks is set; avoids unbounded growth for indefinite runs
+    let statistics: Option<Arc<RwLock<TestStatistics>>> = if cli.max_blocks > 0 {
+        Some(Arc::new(RwLock::new(TestStatistics::default())))
+    } else {
+        None
+    };
 
     // Process streams updates
+    if cli.max_blocks > 0 {
+        info!("Running integration test for {} blocks", cli.max_blocks);
+    } else {
+        info!("Running integration test indefinitely");
+    }
     info!("Waiting for first protocol update...");
     let semaphore = Arc::new(Semaphore::new(cli.parallel_updates as usize));
 
@@ -313,9 +337,38 @@ async fn run(cli: Cli) -> miette::Result<()> {
                             }
                         };
 
+                        // Check if we've reached max blocks (only when stats are enabled)
+                        if cli.max_blocks > 0 {
+                            if let Some(stats) = statistics.as_ref() {
+                                let stats = stats
+                                    .read()
+                                    .expect("Failed to get read lock for statistics (max-block check)");
+                                if stats.blocks_processed >= cli.max_blocks {
+                                    drop(stats);
+                                    info!("Reached max blocks ({}), stopping...", cli.max_blocks);
+                                    break;
+                                }
+                                // Also check if this update's block would exceed our limit
+                                if update.update_type == UpdateType::Protocol {
+                                    let block_num = update.update.block_number_or_timestamp;
+                                    if !stats.blocks_seen.contains(&block_num)
+                                        && stats.blocks_processed >= cli.max_blocks
+                                    {
+                                        drop(stats);
+                                        info!(
+                                            "Next block would exceed max blocks ({}), stopping...",
+                                            cli.max_blocks
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
                         let cli = cli.clone();
                         let rpc_tools = rpc_tools.clone();
                         let tycho_state = tycho_state.clone();
+                        let statistics = statistics.clone();
                         let permit = semaphore
                             .clone()
                             .acquire_owned()
@@ -323,7 +376,7 @@ async fn run(cli: Cli) -> miette::Result<()> {
                             .into_diagnostic()
                             .wrap_err("Failed to acquire permit")?;
                         tokio::spawn(async move {
-                            if let Err(e) = process_update(cli, chain, rpc_tools, tycho_state, &update).await {
+                            if let Err(e) = process_update(cli, chain, rpc_tools, tycho_state, statistics, &update).await {
                                 warn!("{}", format_error_chain(&e));
                             }
                             drop(permit);
@@ -338,6 +391,15 @@ async fn run(cli: Cli) -> miette::Result<()> {
         }
     }
 
+    // Print summary before exiting (only when stats were collected)
+    if let Some(stats) = statistics {
+        let stats = stats
+            .read()
+            .expect("Failed to get read lock for statistics (print summary)");
+        stats.print_summary();
+        drop(stats);
+    }
+
     Ok(())
 }
 
@@ -346,6 +408,7 @@ async fn process_update(
     chain: Chain,
     rpc_tools: tycho_test::RPCTools,
     tycho_state: Arc<RwLock<TychoState>>,
+    statistics: Option<Arc<RwLock<TestStatistics>>>,
     update: &StreamUpdate,
 ) -> miette::Result<()> {
     info!(
@@ -408,18 +471,22 @@ async fn process_update(
             (update.received_at.as_secs_f64() - block.header.timestamp as f64).abs();
         metrics::record_block_processing_duration(latency_seconds);
 
-        let block_delay = block
-            .header
-            .number
-            .abs_diff(update.update.block_number_or_timestamp);
-        metrics::record_protocol_update_block_delay(block_delay);
-        // Consume messages that are older than the current block, to give the stream a chance
-        // to catch up
-        if block_delay > 0 {
-            warn!(
-                "Update block ({}) is behind the current block ({}), skipping to catch up.",
-                update.update.block_number_or_timestamp, block.header.number
-            );
+        let rpc_block_number = block.header.number;
+        let update_block_number = update.update.block_number_or_timestamp;
+        let block_diff = rpc_block_number.abs_diff(update_block_number);
+
+        if block_diff > 0 {
+            if rpc_block_number > update_block_number {
+                warn!(
+                    "Update block ({update_block_number}) is behind the current block ({rpc_block_number}), skipping to catch up.",
+                );
+                metrics::record_protocol_update_block_delay(block_diff);
+            } else {
+                warn!(
+                    "Update block ({update_block_number}) is ahead of the current block ({rpc_block_number}), skipping this update.",
+                );
+                // perf: consider waiting for the block to be mined instead of skipping
+            }
             metrics::record_protocol_update_skipped();
             return Ok(());
         }
@@ -427,6 +494,14 @@ async fn process_update(
         if update.is_first_update {
             info!("Skipping simulation on first protocol update...");
             return Ok(());
+        }
+
+        // Record block number for statistics
+        if let Some(stats) = statistics.as_ref() {
+            let mut stats = stats
+                .write()
+                .expect("Failed to get write lock for statistics (record block)");
+            stats.record_block_processed();
         }
     }
 
@@ -471,12 +546,24 @@ async fn process_update(
                             component_id = %component_id,
                             "State validation passed"
                         );
+                        if let Some(stats) = statistics.as_ref() {
+                            let mut stats = stats
+                                .write()
+                                .expect("Failed to get write lock for statistics (record validation success)");
+                            stats.record_validation_result(protocol, true);
+                        }
                     } else {
                         error!(
                             component_id = %component_id,
                             "State validation failed"
                         );
                         metrics::record_validation_failure(protocol);
+                        if let Some(stats) = statistics.as_ref() {
+                            let mut stats = stats
+                                .write()
+                                .expect("Failed to get write lock for statistics (record validation failure)");
+                            stats.record_validation_result(protocol, false);
+                        }
                     }
                 }
                 Err(e) => {
@@ -486,6 +573,12 @@ async fn process_update(
                         "Error validating component"
                     );
                     metrics::record_validation_failure(protocol);
+                    if let Some(stats) = statistics.as_ref() {
+                        let mut stats = stats.write().expect(
+                            "Failed to get write lock for statistics (record validation failure)",
+                        );
+                        stats.record_validation_result(protocol, false);
+                    }
                 }
             }
         }
@@ -497,6 +590,7 @@ async fn process_update(
 
     for (id, component, state) in components_to_process {
         let block = block.clone();
+        let statistics = statistics.clone();
         let permit = semaphore
             .clone()
             .acquire_owned()
@@ -506,7 +600,9 @@ async fn process_update(
 
         let task = tokio::spawn(async move {
             let simulation_id = generate_simulation_id(&component.protocol_system, &id);
-            let result = process_state(&simulation_id, chain, component, &block, id, state).await;
+            let result =
+                process_state(&simulation_id, chain, component, &block, id, state, statistics)
+                    .await;
             drop(permit);
             result
         });
@@ -565,16 +661,33 @@ async fn process_update(
                 None => "".to_string(),
             }
         };
+        // Record unique pool
+        if let Some(stats) = statistics.as_ref() {
+            let mut stats = stats
+                .write()
+                .expect("Failed to get write lock for statistics (record pool tested)");
+            stats.record_pool_tested(&execution_info.protocol_system, &execution_info.component_id);
+        }
+
         process_execution_result(
             simulation_id,
             result,
-            execution_info,
+            execution_info.clone(),
             state_str,
             (*block).clone(),
             chain.id().to_string(),
             &mut n_reverts,
             &mut n_failures,
+            statistics.clone(),
         );
+
+        // Record statistics
+        if let Some(stats) = statistics.as_ref() {
+            let mut stats = stats
+                .write()
+                .expect("Failed to get write lock for statistics (record simulation result)");
+            stats.record_execution_simulation_result(&execution_info.protocol_system, result);
+        }
     }
     if n_reverts > 0 || n_failures > 0 {
         warn!("For block {}, simulated {total_simulations} executions, {n_reverts} simulations reverted, {n_failures} executions setup failed", block.number())
@@ -594,6 +707,8 @@ fn select_components_to_process(
         Vec::new();
 
     // Collect updated components
+    // As the component ordering is semi-random, it is safe to just take the first N components and
+    // have a good coverage
     for (id, state) in update
         .update
         .states
@@ -651,27 +766,32 @@ fn select_components_to_process(
                 }
             }
 
-            for component_ids in current_state
-                .component_ids_by_protocol
-                .values()
-            {
-                let available_ids: Vec<_> = component_ids
-                    .iter()
-                    .filter(|id| {
-                        !update.update.states.keys().contains(id) && !all_selected_ids.contains(id)
-                    })
-                    .cloned()
-                    .collect();
+            for (protocol, component_ids) in &current_state.component_ids_by_protocol {
+                let protocol_sync_state = update.update.sync_states.get(protocol);
+                match protocol_sync_state {
+                    None => continue,
+                    Some(SynchronizerState::Ready(_)) => {
+                        let available_ids: Vec<_> = component_ids
+                            .iter()
+                            .filter(|id| {
+                                !update.update.states.keys().contains(id) &&
+                                    !all_selected_ids.contains(id)
+                            })
+                            .cloned()
+                            .collect();
 
-                let protocol_selected_ids: Vec<_> = available_ids
-                    .choose_multiple(
-                        &mut rand::rng(),
-                        (cli.max_simulations_stale as usize).min(available_ids.len()),
-                    )
-                    .cloned()
-                    .collect();
+                        let protocol_selected_ids: Vec<_> = available_ids
+                            .choose_multiple(
+                                &mut rand::rng(),
+                                (cli.max_simulations_stale as usize).min(available_ids.len()),
+                            )
+                            .cloned()
+                            .collect();
 
-                all_selected_ids.extend(protocol_selected_ids);
+                        all_selected_ids.extend(protocol_selected_ids);
+                    }
+                    _ => continue,
+                }
             }
             all_selected_ids
         };
@@ -716,6 +836,7 @@ async fn process_state(
     block: &Block,
     state_id: String,
     state: Box<dyn ProtocolSim>,
+    statistics: Option<Arc<RwLock<TestStatistics>>>,
 ) -> HashMap<String, TychoExecutionInput> {
     let tokens_len = component.tokens.len();
     if tokens_len < 2 {
@@ -769,6 +890,12 @@ async fn process_state(
             )) {
             Ok(limits) => {
                 metrics::record_get_limits_success(&component.protocol_system);
+                if let Some(stats) = statistics.as_ref() {
+                    let mut stats = stats.write().expect(
+                        "Failed to get write lock for statistics (record get_limits success)",
+                    );
+                    stats.record_get_limits(&component.protocol_system, true);
+                }
                 limits
             }
             Err(e) => {
@@ -785,6 +912,12 @@ async fn process_state(
                     "Get limits operation failed: {}", format_error_chain(&e)
                 );
                 metrics::record_get_limits_failure(&component.protocol_system);
+                if let Some(stats) = statistics.as_ref() {
+                    let mut stats = stats.write().expect(
+                        "Failed to get write lock for statistics (record get_limits failure)",
+                    );
+                    stats.record_get_limits(&component.protocol_system, false);
+                }
                 continue;
             }
         };
@@ -793,26 +926,21 @@ async fn process_state(
             token_in.symbol, token_out.symbol
         );
 
-        // Calculate amount_in as 0.1% of max_input
-        // For precision, multiply by 1000 then divide by 1000
-        let percentage = 0.001;
-        let percentage_biguint = BigUint::from((percentage * 1000.0) as u32);
-        let thousand = BigUint::from(1000u32);
-        let mut amount_in = (&max_input * &percentage_biguint) / &thousand;
+        // Calculate amount_in as percentage of max_input
+        const PERCENTAGE: f64 = 0.001; // 0.1%
+        const PRECISION: u64 = 1_000; // Supports up to 3 decimal places
+        let numerator = (PERCENTAGE * PRECISION as f64) as u64;
+        let mut amount_in = (&max_input * numerator) / PRECISION;
         if amount_in.is_zero() {
             debug!("Calculated amount_in is zero, skipping...");
             continue;
         }
-        if min_amount != BigUint::ZERO && amount_in < min_amount {
-            amount_in = min_amount.clone();
-        }
+        amount_in = amount_in.max(min_amount.clone());
 
         // Cap amount_in to avoid "amount exceeds 96 bits" error (it happens for uniswap v3 and v4
         // sometimes because the returned limits can be very high)
         let max_96_bit = BigUint::from(2u128.pow(96) - 1);
-        if amount_in > max_96_bit {
-            amount_in = max_96_bit - BigUint::from(1u32);
-        }
+        amount_in = amount_in.min(max_96_bit);
 
         // Get expected amount out using tycho-simulation and measure duration
         let start_time = std::time::Instant::now();
@@ -821,11 +949,17 @@ async fn process_state(
             .into_diagnostic()
             .wrap_err(format!(
                 "Error calculating amount out at {:.1}% with input of {amount_in} {}.",
-                percentage * 100.0,
+                PERCENTAGE * 100.0,
                 token_in.symbol,
             )) {
             Ok(res) => {
                 metrics::record_get_amount_out_success(&component.protocol_system);
+                if let Some(stats) = statistics.as_ref() {
+                    let mut stats = stats.write().expect(
+                        "Failed to get write lock for statistics (record get_amount_out success)",
+                    );
+                    stats.record_get_amount_out(&component.protocol_system, true);
+                }
                 res
             }
             Err(e) => {
@@ -843,6 +977,12 @@ async fn process_state(
                     "Get amount out operation failed: {}", format_error_chain(&e)
                 );
                 metrics::record_get_amount_out_failure(&component.protocol_system);
+                if let Some(stats) = statistics.as_ref() {
+                    let mut stats = stats.write().expect(
+                        "Failed to get write lock for statistics (record get_amount_out failure)",
+                    );
+                    stats.record_get_amount_out(&component.protocol_system, false);
+                }
                 continue;
             }
         };
@@ -864,6 +1004,12 @@ async fn process_state(
         if expected_amount_out == BigUint::ZERO {
             continue;
         }
+
+        if component.protocol_system == COWAMM_PROTOCOL_SYSTEM {
+            debug!("CowAMM protocol system is not supported for execution");
+            continue;
+        }
+
         // Simulate execution amount out against the RPC
         let (solution, transaction) = match encode_swap(
             &component,
@@ -923,9 +1069,15 @@ fn process_execution_result(
     chain_id: String,
     n_reverts: &mut i32,
     n_failures: &mut i32,
+    statistics: Option<Arc<RwLock<TestStatistics>>>,
 ) {
     match result {
-        TychoExecutionResult::Success { gas_used, amount_out } => {
+        TychoExecutionResult::Success {
+            gas_used,
+            amount_out,
+            state_overwrites,
+            overwrite_metadata,
+        } => {
             debug!(
                 event_type = "simulation_execution_success",
                 amount_out = amount_out.to_string(),
@@ -951,6 +1103,22 @@ fn process_execution_result(
                     100.0
             };
 
+            // Generate Tenderly URL for debugging with state overrides
+            let overrides =
+                tenderly::TenderlySimParams { network: Some(chain_id), ..Default::default() };
+            let tenderly_url = tenderly::build_tenderly_url(
+                &overrides,
+                Some(&execution_info.transaction),
+                Some(&block),
+                Address::from_slice(&execution_info.solution.sender[..20]),
+            );
+
+            let overwrites_string = if let Some(overwrites) = state_overwrites.as_ref() {
+                tenderly::get_overwrites_string(overwrites, overwrite_metadata)
+            } else {
+                String::new()
+            };
+
             if !(-0.2..=0.2).contains(&slippage) {
                 error!(
                     event_type = "execution_slippage",
@@ -960,7 +1128,8 @@ fn process_execution_result(
                     simulated_amount  = %amount_out,
                     executed_amount = %execution_info.expected_amount_out,
                     slippage_ratio = slippage,
-                    state = ?state_str,
+                    tenderly = tenderly_url,
+                    overwrites = %overwrites_string,
                     "Execution slippage: {:.2}%",
                     slippage
                 );
@@ -973,12 +1142,22 @@ fn process_execution_result(
                     simulated_amount  = %amount_out,
                     executed_amount = %execution_info.expected_amount_out,
                     slippage_ratio = slippage,
+                    tenderly = tenderly_url,
+                    overwrites = %overwrites_string,
                     "Execution slippage: {:.2}%",
                     slippage
                 );
             }
 
             metrics::record_execution_slippage(&execution_info.protocol_system, slippage);
+
+            // Record slippage in statistics
+            if let Some(ref stats) = statistics {
+                let mut stats = stats
+                    .write()
+                    .expect("Failed to get write lock for statistics (record slippage)");
+                stats.record_execution_slippage(&execution_info.protocol_system, slippage);
+            }
         }
         TychoExecutionResult::Revert { reason, state_overwrites, overwrite_metadata } => {
             *n_reverts += 1;
@@ -1089,7 +1268,7 @@ fn categorize_error(error_message: &str) -> &'static str {
 
 /// Generate a unique simulation ID based on protocol system and state ID
 fn generate_simulation_id(protocol_system: &str, state_id: &str) -> String {
-    let random_number: u32 = rand::random::<u32>() % 90000 + 10000; // Range 10000-99999
+    let random_number: u32 = rand::random_range(10000..=99999);
     let component_prefix = state_id
         .chars()
         .take(8)

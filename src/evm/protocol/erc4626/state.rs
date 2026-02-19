@@ -2,6 +2,7 @@ use std::{any::Any, collections::HashMap, fmt::Debug};
 
 use alloy::primitives::U256;
 use num_bigint::{BigUint, ToBigUint};
+use serde::{Deserialize, Serialize};
 use tracing::trace;
 use tycho_common::{
     dto::ProtocolStateDelta,
@@ -21,7 +22,7 @@ use crate::evm::{
     },
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ERC4626State {
     pool_address: Bytes,
     asset_token: Token,
@@ -54,6 +55,7 @@ impl ERC4626State {
     }
 }
 
+#[typetag::serde]
 impl ProtocolSim for ERC4626State {
     fn fee(&self) -> f64 {
         0f64
@@ -194,5 +196,12 @@ impl ProtocolSim for ERC4626State {
         } else {
             false
         }
+    }
+
+    fn query_pool_swap(
+        &self,
+        params: &tycho_common::simulation::protocol_sim::QueryPoolSwapParams,
+    ) -> Result<tycho_common::simulation::protocol_sim::PoolSwap, SimulationError> {
+        crate::evm::query_pool_swap::query_pool_swap(self, params)
     }
 }

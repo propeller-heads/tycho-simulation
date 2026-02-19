@@ -30,15 +30,19 @@ use tracing_subscriber::EnvFilter;
 use tycho_common::{models::token::Token, Bytes};
 use tycho_execution::encoding::{
     errors::EncodingError,
-    evm::{approvals::permit2::PermitSingle, encoder_builders::TychoRouterEncoderBuilder},
+    evm::{
+        approvals::permit2::PermitSingle, encoder_builders::TychoRouterEncoderBuilder,
+        swap_encoder::swap_encoder_registry::SwapEncoderRegistry,
+    },
     models,
-    models::{EncodedSolution, Solution, SwapBuilder, Transaction, UserTransferType},
+    models::{EncodedSolution, Solution, Swap, Transaction, UserTransferType},
 };
 use tycho_simulation::{
     evm::{
         engine_db::tycho_db::PreCachedDB,
         protocol::{
             ekubo::state::EkuboState,
+            ekubo_v3::state::EkuboV3State,
             filters::{balancer_v2_pool_filter, curve_pool_filter},
             pancakeswap_v2::state::PancakeswapV2State,
             u256_num::biguint_to_u256,
@@ -184,6 +188,7 @@ async fn main() {
                 // .exchange::<UniswapV4State>("uniswap_v4_hooks", tvl_filter.clone(),
                 // Some(uniswap_v4_angstrom_hook_pool_filter))
                 .exchange::<EkuboState>("ekubo_v2", tvl_filter.clone(), None)
+                .exchange::<EkuboV3State>("ekubo_v3", tvl_filter.clone(), None)
                 .exchange::<EVMPoolState<PreCachedDB>>(
                     "vm:curve",
                     tvl_filter.clone(),
@@ -218,9 +223,13 @@ async fn main() {
         .expect("Failed building protocol stream");
 
     // Initialize the encoder
+    let swap_encoder_registry = SwapEncoderRegistry::new(chain)
+        .add_default_encoders(None)
+        .expect("Failed to get default SwapEncoderRegistry");
     let encoder = TychoRouterEncoderBuilder::new()
         .chain(chain)
         .user_transfer_type(UserTransferType::TransferFromPermit2)
+        .swap_encoder_registry(swap_encoder_registry)
         .build()
         .expect("Failed to build encoder");
 
@@ -607,8 +616,7 @@ fn create_solution(
     expected_amount: BigUint,
 ) -> Solution {
     // Prepare data to encode. First we need to create a swap object
-    let simple_swap =
-        SwapBuilder::new(component, sell_token.address.clone(), buy_token.address.clone()).build();
+    let simple_swap = Swap::new(component, sell_token.address.clone(), buy_token.address.clone());
 
     // Compute a minimum amount out
     //
