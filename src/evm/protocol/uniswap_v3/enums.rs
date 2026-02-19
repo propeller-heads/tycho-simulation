@@ -2,11 +2,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FeeAmount {
-    Lowest = 100,      // 0.01%
-    Lowest2 = 200,     // 0.02%
-    Lowest3 = 300,     // 0.03%
-    Lowest4 = 400,     // 0.04%
-    Low = 500,         // 0.05%
+    Lowest = 100,  // 0.01%
+    Lowest2 = 200, // 0.02%
+    Lowest3 = 300, // 0.03%
+    Lowest4 = 400, // 0.04%
+    Low = 500,     // 0.05%
     /// 0.075% fee tier with tick_spacing=15, used by AlienBase V3 on Base.
     MediumLow2 = 750,
     MediumLow = 2500,  // 0.25% [Pancakeswap V3]
