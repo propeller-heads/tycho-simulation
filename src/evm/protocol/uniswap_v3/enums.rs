@@ -7,6 +7,7 @@ pub enum FeeAmount {
     Lowest3 = 300,     // 0.03%
     Lowest4 = 400,     // 0.04%
     Low = 500,         // 0.05%
+    MediumLow2 = 750,  // 0.075% [AlienBase V3]
     MediumLow = 2500,  // 0.25% [Pancakeswap V3]
     Medium = 3000,     // 0.3%
     MediumHigh = 5000, // 0.5% [Pancakeswap V3]
@@ -23,6 +24,7 @@ impl std::convert::TryFrom<i32> for FeeAmount {
             300 => Ok(FeeAmount::Lowest3),
             400 => Ok(FeeAmount::Lowest4),
             500 => Ok(FeeAmount::Low),
+            750 => Ok(FeeAmount::MediumLow2),
             2500 => Ok(FeeAmount::MediumLow),
             3000 => Ok(FeeAmount::Medium),
             5000 => Ok(FeeAmount::MediumHigh),

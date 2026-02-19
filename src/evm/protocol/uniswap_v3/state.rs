@@ -85,6 +85,7 @@ impl UniswapV3State {
             FeeAmount::Lowest3 => 3,
             FeeAmount::Lowest4 => 4,
             FeeAmount::Low => 10,
+            FeeAmount::MediumLow2 => 15,
             FeeAmount::MediumLow => 50,
             FeeAmount::Medium => 60,
             FeeAmount::MediumHigh => 100,
