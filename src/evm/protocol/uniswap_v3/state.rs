@@ -577,6 +577,12 @@ mod tests {
     };
 
     #[test]
+    fn test_tick_spacing_for_fee_750() {
+        let spacing = UniswapV3State::get_spacing(FeeAmount::MediumLow2);
+        assert_eq!(spacing, 15, "AlienBase V3 fee tier 750 should have tick_spacing=15");
+    }
+
+    #[test]
     fn test_get_amount_out_full_range_liquidity() {
         let token_x = Token::new(
             &Bytes::from_str("0x6b175474e89094c44da98b954eedeac495271d0f").unwrap(),

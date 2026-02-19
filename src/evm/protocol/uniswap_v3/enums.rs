@@ -7,7 +7,8 @@ pub enum FeeAmount {
     Lowest3 = 300,     // 0.03%
     Lowest4 = 400,     // 0.04%
     Low = 500,         // 0.05%
-    MediumLow2 = 750,  // 0.075% [AlienBase V3]
+    /// 0.075% fee tier with tick_spacing=15, used by AlienBase V3 on Base.
+    MediumLow2 = 750,
     MediumLow = 2500,  // 0.25% [Pancakeswap V3]
     Medium = 3000,     // 0.3%
     MediumHigh = 5000, // 0.5% [Pancakeswap V3]
@@ -31,5 +32,22 @@ impl std::convert::TryFrom<i32> for FeeAmount {
             10_000 => Ok(FeeAmount::High),
             _ => Err(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fee_amount_750_round_trip() {
+        let fee = FeeAmount::try_from(750).expect("750 should be a valid fee tier");
+        assert_eq!(fee, FeeAmount::MediumLow2);
+        assert_eq!(fee as i32, 750);
+    }
+
+    #[test]
+    fn test_fee_amount_unsupported_returns_err() {
+        assert!(FeeAmount::try_from(999).is_err());
     }
 }
