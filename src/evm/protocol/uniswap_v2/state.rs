@@ -48,6 +48,10 @@ impl UniswapV2State {
     }
 
     pub fn new_with_fee(reserve0: U256, reserve1: U256, fee_bps: u32) -> Self {
+        assert!(
+            fee_bps <= 10000,
+            "fee_bps must be <= 10000 (100%), got {fee_bps}"
+        );
         UniswapV2State { reserve0, reserve1, fee_bps }
     }
 
@@ -284,6 +288,36 @@ mod tests {
         // Assert that the old state is unchanged
         assert_eq!(state.reserve0, r0);
         assert_eq!(state.reserve1, r1);
+    }
+
+    #[test]
+    #[should_panic(expected = "fee_bps must be <= 10000")]
+    fn test_new_with_fee_exceeds_max() {
+        UniswapV2State::new_with_fee(U256::from(1000u32), U256::from(1000u32), 10001);
+    }
+
+    #[test]
+    fn test_new_with_fee_zero() {
+        let state = UniswapV2State::new_with_fee(
+            U256::from(1000u32),
+            U256::from(1000u32),
+            0,
+        );
+        assert_eq!(state.fee_bps, 0);
+        // fee_numerator should be 10000 (no fee deducted)
+        assert_eq!(state.fee_numerator(), U256::from(10000u32));
+    }
+
+    #[test]
+    fn test_new_with_fee_boundary() {
+        let state = UniswapV2State::new_with_fee(
+            U256::from(1000u32),
+            U256::from(1000u32),
+            10000,
+        );
+        assert_eq!(state.fee_bps, 10000);
+        // fee_numerator should be 0 (100% fee)
+        assert_eq!(state.fee_numerator(), U256::from(0u32));
     }
 
     #[test]
