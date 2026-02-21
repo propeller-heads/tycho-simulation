@@ -23,8 +23,21 @@ impl TryFromWithBlock<ComponentWithState, BlockHeader> for UniswapV2State {
         _all_tokens: &HashMap<Bytes, Token>,
         _decoder_context: &DecoderContext,
     ) -> Result<Self, Self::Error> {
+        let fee_bps = snapshot
+            .component
+            .static_attributes
+            .get("fee")
+            .map(|b| {
+                let bytes = b.as_ref();
+                let mut buf = [0u8; 4];
+                let start = 4usize.saturating_sub(bytes.len());
+                let src_start = bytes.len().saturating_sub(4);
+                buf[start..].copy_from_slice(&bytes[src_start..]);
+                u32::from_be_bytes(buf)
+            })
+            .unwrap_or(30);
         let (reserve0, reserve1) = cpmm_try_from_with_header(snapshot)?;
-        Ok(Self::new(reserve0, reserve1))
+        Ok(Self::new_with_fee(reserve0, reserve1, fee_bps))
     }
 }
 
@@ -63,6 +76,37 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), UniswapV2State::new(U256::from(0u64), U256::from(0u64)));
+    }
+
+    #[tokio::test]
+    async fn test_usv2_try_from_with_custom_fee() {
+        let mut component: tycho_common::dto::ProtocolComponent = Default::default();
+        // BigInt(25).to_signed_bytes_be() produces [25]
+        component
+            .static_attributes
+            .insert("fee".to_string(), Bytes::from(vec![25u8]));
+
+        let snapshot = ComponentWithState {
+            state: ResponseProtocolState {
+                component_id: "State1".to_owned(),
+                attributes: HashMap::from([
+                    ("reserve0".to_string(), Bytes::from(vec![0; 32])),
+                    ("reserve1".to_string(), Bytes::from(vec![0; 32])),
+                ]),
+                balances: HashMap::new(),
+            },
+            component,
+            component_tvl: None,
+            entrypoints: Vec::new(),
+        };
+
+        let result = try_decode_snapshot_with_defaults::<UniswapV2State>(snapshot).await;
+
+        assert!(result.is_ok());
+        let state = result.unwrap();
+        assert_eq!(state.fee_bps, 25);
+        assert_eq!(state.reserve0, U256::from(0u64));
+        assert_eq!(state.reserve1, U256::from(0u64));
     }
 
     #[tokio::test]
