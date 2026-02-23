@@ -1415,17 +1415,16 @@ mod tests {
             accumulated_out,
         );
 
-        // The quadratic should either return an error or a target that's >= current price
-        // (meaning nothing to do)
+        // Error is acceptable (target not achievable).
+        // If Ok, verify that when price didn't move, no swap was needed.
         if let Ok((sqrt_price_new, amount_in, _amount_out, _fee_amount, reached_target)) = result {
-            // If successful, either:
-            // 1. No swap needed (sqrt_price_new == sqrt_price_current)
-            // 2. Or we found a valid solution
             if sqrt_price_new == sqrt_price_current {
-                assert!(reached_target || amount_in.is_zero(), "Should indicate no swap needed");
+                assert!(
+                    reached_target || amount_in.is_zero(),
+                    "If price didn't move, should indicate no swap needed"
+                );
             }
         }
-        // Error is also acceptable - target not achievable
     }
 
     #[test]

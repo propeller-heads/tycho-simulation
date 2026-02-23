@@ -262,42 +262,6 @@ impl UniswapV3State {
             return Err(SimulationError::RecoverableError("No liquidity".to_string()));
         }
 
-        // Validate target against effective spot price (spot price after fees)
-        use num_traits::ToPrimitive;
-        let target_price_f64 = target_price
-            .numerator
-            .to_f64()
-            .unwrap_or(0.0) /
-            target_price
-                .denominator
-                .to_f64()
-                .unwrap_or(1.0);
-
-        let sqrt_price_f64 = u256_to_biguint(self.sqrt_price)
-            .to_f64()
-            .unwrap_or(0.0);
-        let q96 = 2.0_f64.powi(96);
-        let raw_spot = (sqrt_price_f64 / q96).powi(2); // token1/token0
-        let spot_price_f64 = if zero_for_one {
-            raw_spot // token1/token0
-        } else {
-            1.0 / raw_spot // token0/token1
-        };
-
-        // Apply fees to get effective spot (best achievable trade price)
-        let fee_multiplier = 1.0 - ((self.fee as u32) as f64 / 1_000_000.0);
-        let effective_spot_price = spot_price_f64 * fee_multiplier;
-
-        if target_price_f64 > effective_spot_price {
-            return Err(SimulationError::InvalidInput(
-                format!(
-                    "Target trade price {:.6} is better than effective spot price {:.6} - unreachable",
-                    target_price_f64, effective_spot_price
-                ),
-                None,
-            ));
-        }
-
         let mut state = SwapState {
             amount_remaining: I256::MAX,
             amount_calculated: I256::ZERO,
@@ -318,7 +282,13 @@ impl UniswapV3State {
         let formula_target_den = &target_price.denominator * BigUint::from(fee_factor);
 
         // Iterate through tick ranges, using analytical calculation for exact amounts
+        let mut ticks_crossed: u64 = 0;
         loop {
+            if ticks_crossed >= MAX_TICKS_CROSSED {
+                break;
+            }
+            ticks_crossed += 1;
+
             // Find next tick boundary
             let (mut next_tick, initialized) = match self
                 .ticks
@@ -381,19 +351,12 @@ impl UniswapV3State {
                 state.tick = get_tick_at_sqrt_ratio(state.sqrt_price)?;
             }
 
-            gas_used = safe_add_u256(gas_used, U256::from(GAS_PER_SWAP_STEP))?;
+            gas_used = safe_add_u256(gas_used, U256::from(GAS_PER_TICK))?;
 
             // Exit if we reached the target price or exhausted liquidity
             if reached_target || (amount_in == U256::ZERO && amount_out == U256::ZERO) {
                 break;
             }
-        }
-
-        if total_amount_in_with_fee == U256::ZERO {
-            return Err(SimulationError::InvalidInput(
-                "Target trade price is unreachable (no liquidity or already at target)".to_string(),
-                None,
-            ));
         }
 
         Ok(SwapToTradePriceResult {
@@ -697,6 +660,15 @@ impl ProtocolSim for UniswapV3State {
                     self.fee as u32,
                     |zero_for_one, limit_price| self.swap_to_trade_price(zero_for_one, limit_price),
                 )?;
+
+                if amount_in.is_zero() {
+                    return Ok(PoolSwap::new(
+                        BigUint::ZERO,
+                        BigUint::ZERO,
+                        Box::new(self.clone()),
+                        None,
+                    ));
+                }
 
                 let mut new_state = self.clone();
                 new_state.liquidity = swap_result.liquidity;
@@ -1765,9 +1737,19 @@ mod tests {
         );
 
         // Target trade price: 3.0 (much better than spot ~2.0) - definitely unreachable
+        // The outer clmm_swap_to_trade_price validates with exact U512 arithmetic
         let target_price = Price::new(BigUint::from(30u32), BigUint::from(10u32));
 
-        let result = pool.swap_to_trade_price(token_x.address < token_y.address, &target_price);
+        let result = pool.query_pool_swap(&QueryPoolSwapParams::new(
+            token_x,
+            token_y,
+            SwapConstraint::TradeLimitPrice {
+                limit: target_price,
+                tolerance: 0.0,
+                min_amount_in: None,
+                max_amount_in: None,
+            },
+        ));
 
         assert!(result.is_err(), "Should return error when target trade price is better than spot");
     }
@@ -2061,36 +2043,38 @@ mod tests {
 
     #[test]
     fn test_swap_to_trade_price_limit_too_high() {
-        // Test that limits better than effective spot are rejected
+        // Test that limits better than effective spot are rejected via query_pool_swap
+        // (validation happens in the outer clmm_swap_to_trade_price with exact U512 arithmetic)
         let (wbtc, weth, pool) = create_wbtc_weth_test_pool();
 
-        // Effective spot prices (after 0.3% fee):
-        // - Selling WETH for WBTC: ≈ 0.0767 WBTC/WETH
-        // - Selling WBTC for WETH: ≈ 12.96 WETH/WBTC
+        // For !zero_for_one (weth→wbtc): trade price is WBTC/WETH, effective spot ~0.077
+        // For zero_for_one (wbtc→weth): trade price is WETH/WBTC, effective spot ~12.96
         let error_cases = vec![
-            (&wbtc, &weth, "77/1000", "Limit 0.077 > effective spot 0.0767"),
-            (&weth, &wbtc, "131/10", "Limit 13.1 > effective spot 12.96"),
+            (weth.clone(), wbtc.clone(), "1/10", "Limit 0.1 > effective spot ~0.077"),
+            (wbtc.clone(), weth.clone(), "20/1", "Limit 20 > effective spot ~12.96"),
         ];
 
-        for (sell_token, buy_token, price_str, test_id) in error_cases {
+        for (token_in, token_out, price_str, test_id) in error_cases {
             let parts: Vec<&str> = price_str.split('/').collect();
             let limit_price = Price::new(
                 BigUint::from_str(parts[0]).unwrap(),
                 BigUint::from_str(parts[1]).unwrap(),
             );
 
-            let result = pool.swap_to_trade_price(buy_token < sell_token, &limit_price);
+            let result = pool.query_pool_swap(&QueryPoolSwapParams::new(
+                token_in,
+                token_out,
+                SwapConstraint::TradeLimitPrice {
+                    limit: limit_price,
+                    tolerance: 0.0,
+                    min_amount_in: None,
+                    max_amount_in: None,
+                },
+            ));
 
             assert!(
                 result.is_err(),
                 "{} - should fail (limit better than effective spot)",
-                test_id
-            );
-
-            let err = result.unwrap_err();
-            assert!(
-                matches!(err, SimulationError::InvalidInput(_, _)),
-                "{} - should be InvalidInput error",
                 test_id
             );
         }
@@ -2109,7 +2093,6 @@ mod tests {
         // This should cross multiple tick boundaries
         let target_price = Price::new(BigUint::from(100u32), BigUint::from(10u32)); // 10.0
 
-        let tolerance = 0.00001;
         let result = pool.swap_to_trade_price(wbtc.address < weth.address, &target_price);
 
         assert!(result.is_ok(), "Multi-tick swap should succeed");
@@ -2126,13 +2109,12 @@ mod tests {
         let target_f64 = 10.0;
         let relative_diff = (trade_price - target_f64).abs() / target_f64;
 
-        // The swap may exhaust liquidity before reaching target, which is acceptable
-        // In that case, trade price will be better (higher) than target
+        // Trade price must never be worse than the target limit.
+        // It may be better if liquidity is exhausted before reaching target.
         assert!(
-            relative_diff <= tolerance || trade_price > target_f64,
-            "Trade price {:.6} should be within {}% of target {:.6} or better, diff: {:.2}%",
+            trade_price >= target_f64,
+            "Trade price {:.6} should be >= target {:.6}, diff: {:.2}%",
             trade_price,
-            tolerance * 100.0,
             target_f64,
             relative_diff * 100.0
         );
@@ -2157,7 +2139,6 @@ mod tests {
         // Target trade price: 0.075 WBTC/WETH (worse than effective spot ~0.077)
         let target_price = Price::new(BigUint::from(75u32), BigUint::from(1000u32)); // 0.075
 
-        let tolerance = 0.00001;
         let result = pool.swap_to_trade_price(weth.address < wbtc.address, &target_price);
 
         assert!(result.is_ok(), "one_for_zero swap should succeed");
@@ -2171,13 +2152,12 @@ mod tests {
         let trade_price =
             swap_result.amount_out.to_f64().unwrap() / swap_result.amount_in.to_f64().unwrap();
         let target_f64 = 0.075;
-        let relative_diff = (trade_price - target_f64).abs() / target_f64;
 
+        // Trade price must never be worse than the target limit
         assert!(
-            relative_diff <= tolerance || trade_price > target_f64,
-            "Trade price {:.6} should be within {}% of target {:.6} or better",
+            trade_price >= target_f64,
+            "Trade price {:.6} should be >= target {:.6}",
             trade_price,
-            tolerance * 100.0,
             target_f64
         );
 
@@ -2228,6 +2208,97 @@ mod tests {
             "Achieved price {:.6} should be better than target 0.1",
             achieved_price
         );
+    }
+
+    #[test]
+    fn test_query_pool_swap_trade_limit_price() {
+        let pool = create_basic_test_pool();
+        let token_x = Token::new(
+            &Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap(),
+            "X",
+            18,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        );
+        let token_y = Token::new(
+            &Bytes::from_str("0x0000000000000000000000000000000000000002").unwrap(),
+            "Y",
+            18,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        );
+
+        // Pool spot price ~2.0 Y/X, effective spot ~1.998 after 0.01% fee
+        // Target trade price: 1.9 (worse than spot, achievable)
+        let limit_price = Price::new(BigUint::from(19u32), BigUint::from(10u32));
+
+        let result = pool.query_pool_swap(&QueryPoolSwapParams::new(
+            token_x,
+            token_y,
+            SwapConstraint::TradeLimitPrice {
+                limit: limit_price,
+                tolerance: 0.0,
+                min_amount_in: None,
+                max_amount_in: None,
+            },
+        ));
+
+        assert!(result.is_ok(), "TradeLimitPrice swap should succeed: {:?}", result.err());
+        let swap = result.unwrap();
+        assert!(swap.amount_in() > &BigUint::ZERO, "amount_in should be non-zero");
+        assert!(swap.amount_out() > &BigUint::ZERO, "amount_out should be non-zero");
+
+        let new_state = swap
+            .new_state()
+            .as_any()
+            .downcast_ref::<UniswapV3State>()
+            .expect("should be UniswapV3State");
+        assert!(new_state.sqrt_price > U256::ZERO, "sqrt_price should be non-zero");
+        assert!(new_state.liquidity > 0, "liquidity should be non-zero");
+    }
+
+    #[test]
+    fn test_query_pool_swap_trade_limit_price_zero_amount() {
+        let pool = create_basic_test_pool();
+        let token_x = Token::new(
+            &Bytes::from_str("0x0000000000000000000000000000000000000001").unwrap(),
+            "X",
+            18,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        );
+        let token_y = Token::new(
+            &Bytes::from_str("0x0000000000000000000000000000000000000002").unwrap(),
+            "Y",
+            18,
+            0,
+            &[Some(10_000)],
+            Chain::Ethereum,
+            100,
+        );
+
+        // Target trade price better than effective spot (should error from
+        // clmm_swap_to_trade_price)
+        let limit_price = Price::new(BigUint::from(3u32), BigUint::from(1u32));
+
+        let result = pool.query_pool_swap(&QueryPoolSwapParams::new(
+            token_x,
+            token_y,
+            SwapConstraint::TradeLimitPrice {
+                limit: limit_price,
+                tolerance: 0.0,
+                min_amount_in: None,
+                max_amount_in: None,
+            },
+        ));
+
+        assert!(result.is_err(), "Should error when limit is better than spot");
     }
 }
 

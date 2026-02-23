@@ -993,4 +993,34 @@ mod tests {
             relative_diff
         );
     }
+
+    #[test]
+    fn test_query_pool_swap_trade_limit_price_one_for_zero() {
+        let state =
+            PancakeswapV2State::new(U256::from(1_000_000_000u64), U256::from(1_000_000_000u64));
+
+        // Reverse direction: token1 -> token0 (one_for_zero)
+        let limit_price = Price::new(BigUint::from(2u32), BigUint::from(3u32));
+
+        let params = QueryPoolSwapParams::new(
+            token_1(),
+            token_0(),
+            SwapConstraint::TradeLimitPrice {
+                limit: limit_price,
+                tolerance: 0.01,
+                min_amount_in: None,
+                max_amount_in: None,
+            },
+        );
+
+        let result = state.query_pool_swap(&params);
+        assert!(
+            result.is_ok(),
+            "One_for_zero TradeLimitPrice swap should succeed: {:?}",
+            result.err()
+        );
+        let swap = result.unwrap();
+        assert!(swap.amount_in() > &BigUint::ZERO, "amount_in should be non-zero");
+        assert!(swap.amount_out() > &BigUint::ZERO, "amount_out should be non-zero");
+    }
 }
