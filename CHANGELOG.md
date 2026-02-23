@@ -1,3 +1,29 @@
+## [0.244.0](https://github.com/propeller-heads/tycho-simulation/compare/0.243.0...0.244.0) (2026-02-23)
+
+
+### Features
+
+* **evm:** wire query_pool_swap for remaining EVM protocols ([a129ced](https://github.com/propeller-heads/tycho-simulation/commit/a129ced3d510281600a193852aa53bd0bb373c17))
+
+## [0.243.0](https://github.com/propeller-heads/tycho-simulation/compare/0.242.0...0.243.0) (2026-02-20)
+
+
+### Features
+
+* remove rocketpool from the integration test setup ([18265ef](https://github.com/propeller-heads/tycho-simulation/commit/18265ef43a70b3e59e00a46e98cb1162ccd0820f))
+
+## [0.242.0](https://github.com/propeller-heads/tycho-simulation/compare/0.241.2...0.242.0) (2026-02-19)
+
+
+### Features
+
+* update tycho-client/common/ethereum to 0.143.0 and tycho-execution to 0.160.0 ([22fb2cf](https://github.com/propeller-heads/tycho-simulation/commit/22fb2cfed001645baa1ff2d143e17ac1b5da55e3))
+
+
+### Bug Fixes
+
+* adapt to PricePoint struct change in tycho-common 0.143.0 ([9f0c67d](https://github.com/propeller-heads/tycho-simulation/commit/9f0c67d51b085929ce495374f8288ef1a2c3a7dc))
+
 ## [0.241.2](https://github.com/propeller-heads/tycho-simulation/compare/0.241.1...0.241.2) (2026-02-13)
 
 
