@@ -1415,14 +1415,36 @@ mod tests {
             accumulated_out,
         );
 
-        // Error is acceptable (target not achievable).
-        // If Ok, verify that when price didn't move, no swap was needed.
-        if let Ok((sqrt_price_new, amount_in, _amount_out, _fee_amount, reached_target)) = result {
-            if sqrt_price_new == sqrt_price_current {
-                assert!(
-                    reached_target || amount_in.is_zero(),
-                    "If price didn't move, should indicate no swap needed"
-                );
+        match result {
+            Err(_) => {
+                // Target not achievable — acceptable outcome.
+            }
+            Ok((sqrt_price_new, amount_in, amount_out, _fee_amount, reached_target)) => {
+                if amount_in.is_zero() && amount_out.is_zero() {
+                    assert_eq!(
+                        sqrt_price_new, sqrt_price_current,
+                        "Price should not move when amounts are zero"
+                    );
+                } else {
+                    // The function found a swap within this tick. Verify the new cumulative
+                    // ratio moves toward the target (1.5) rather than away from it.
+                    let old_ratio =
+                        1_300_000_000_000_000_000u128 as f64 / 1_000_000_000_000_000_000u128 as f64; // 1.3
+                    let new_out = 1_300_000_000_000_000_000u128 + amount_out.to::<u128>();
+                    let new_in = 1_000_000_000_000_000_000u128 + amount_in.to::<u128>();
+                    let new_ratio = new_out as f64 / new_in as f64;
+                    assert!(
+                        new_ratio >= old_ratio,
+                        "Cumulative ratio should not worsen: old={old_ratio:.6}, new={new_ratio:.6}"
+                    );
+                    if !reached_target {
+                        // Didn't reach target — hit the tick boundary. Price must have moved.
+                        assert_ne!(
+                            sqrt_price_new, sqrt_price_current,
+                            "Price should move when amounts are non-zero and target not reached"
+                        );
+                    }
+                }
             }
         }
     }

@@ -232,7 +232,7 @@ where
     let result = swap_fn(zero_for_one, limit_price)?;
 
     if result.amount_in == U256::ZERO {
-        return Ok((BigUint::ZERO, BigUint::ZERO, SwapResults::default()));
+        return Ok((BigUint::ZERO, BigUint::ZERO, result.swap_state));
     }
 
     Ok((u256_to_biguint(result.amount_in), u256_to_biguint(result.amount_out), result.swap_state))

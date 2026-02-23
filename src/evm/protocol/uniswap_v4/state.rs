@@ -2985,9 +2985,10 @@ mod tests {
                         .unwrap();
                 let relative_diff = (trade_price - target_f64).abs() / target_f64;
 
-                // Trade price must never be worse than the target limit
+                // Trade price must never be worse than the target limit.
+                // Allow tiny epsilon for f64 imprecision in amount_out/amount_in division.
                 assert!(
-                    trade_price >= target_f64,
+                    trade_price >= target_f64 * (1.0 - 1e-9),
                     "{} - trade price {:.6} should be >= target {:.6}, diff: {:.2}%",
                     test_id,
                     trade_price,
@@ -3072,9 +3073,10 @@ mod tests {
         let trade_price = u256_to_f64(swap_result.amount_out).unwrap() /
             u256_to_f64(swap_result.amount_in).unwrap();
         let target_f64 = 0.47;
-        // Trade price must never be worse than the target limit
+        // Trade price must never be worse than the target limit.
+        // Allow tiny epsilon for f64 imprecision in amount_out/amount_in division.
         assert!(
-            trade_price >= target_f64,
+            trade_price >= target_f64 * (1.0 - 1e-9),
             "Trade price {:.6} should be >= target {:.6}",
             trade_price,
             target_f64
@@ -3272,8 +3274,9 @@ mod tests {
 
         // Trade price must never be worse than the target limit.
         // It may be better if liquidity is exhausted before reaching target.
+        // Allow tiny epsilon for f64 imprecision in amount_out/amount_in division.
         assert!(
-            trade_price >= target_f64,
+            trade_price >= target_f64 * (1.0 - 1e-9),
             "Trade price {:.6} should be >= target {:.6}, diff: {:.2}%",
             trade_price,
             target_f64,
