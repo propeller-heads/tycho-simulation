@@ -20,7 +20,7 @@ use tycho_common::{
 use crate::evm::protocol::{
     cpmm::protocol::{
         cpmm_delta_transition, cpmm_fee, cpmm_get_amount_out, cpmm_get_limits, cpmm_spot_price,
-        cpmm_swap_to_price, ProtocolFee,
+        cpmm_swap_to_price, cpmm_swap_to_trade_price, ProtocolFee,
     },
     safe_math::{safe_add_u256, safe_sub_u256},
     u256_num::{biguint_to_u256, u256_to_biguint},
@@ -136,11 +136,34 @@ impl ProtocolSim for PancakeswapV2State {
                     self.get_amount_out(amount_in.clone(), params.token_in(), params.token_out())?;
                 Ok(PoolSwap::new(amount_in, res.amount, res.new_state, None))
             }
-            SwapConstraint::TradeLimitPrice { .. } => Err(SimulationError::InvalidInput(
-                "PancakeSwapV2State does not support TradeLimitPrice constraint in query_pool_swap"
-                    .to_string(),
-                None,
-            )),
+            SwapConstraint::TradeLimitPrice {
+                limit,
+                tolerance: _,
+                min_amount_in: _,
+                max_amount_in: _,
+            } => {
+                let zero2one = params.token_in().address < params.token_out().address;
+                let (reserve_in, reserve_out) = if zero2one {
+                    (self.reserve0, self.reserve1)
+                } else {
+                    (self.reserve1, self.reserve0)
+                };
+
+                let fee = ProtocolFee::new(FEE_NUMERATOR, FEE_PRECISION);
+                let (amount_in, _) = cpmm_swap_to_trade_price(reserve_in, reserve_out, limit, fee)?;
+                if amount_in.is_zero() {
+                    return Ok(PoolSwap::new(
+                        BigUint::ZERO,
+                        BigUint::ZERO,
+                        Box::new(self.clone()),
+                        None,
+                    ));
+                }
+
+                let res =
+                    self.get_amount_out(amount_in.clone(), params.token_in(), params.token_out())?;
+                Ok(PoolSwap::new(amount_in, res.amount, res.new_state, None))
+            }
         }
     }
 
@@ -793,5 +816,211 @@ mod tests {
             actual_result.amount >= swap_below_limit.amount_out().clone(),
             "Actual swap should give at least predicted amount"
         );
+    }
+
+    #[test]
+    fn test_swap_to_trade_price_basic() {
+        let token0 = Token::new(
+            &Bytes::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            "T0",
+            18,
+            0,
+            &[Some(1000)],
+            Chain::Ethereum,
+            100,
+        );
+        let token1 = Token::new(
+            &Bytes::from_str("0x2222222222222222222222222222222222222222").unwrap(),
+            "T1",
+            18,
+            0,
+            &[Some(1000)],
+            Chain::Ethereum,
+            100,
+        );
+
+        let state = PancakeswapV2State::new(
+            U256::from(1_000_000_000u64), // reserve0
+            U256::from(1_000_000_000u64), // reserve1
+        );
+
+        // Price is in amount_out/amount_in convention (Q)
+        // Limit = 2/3 = 0.666... is worse than spot ~0.9975, so should be reachable
+        // When flipped to P convention: 3/2 = 1.5 > 1.0025 spot
+        let limit_price = Price::new(
+            BigUint::from(2u32), // numerator
+            BigUint::from(3u32), // denominator
+        );
+
+        let params = QueryPoolSwapParams::new(
+            token0,
+            token1,
+            SwapConstraint::TradeLimitPrice {
+                limit: limit_price,
+                tolerance: 0.01,
+                min_amount_in: None,
+                max_amount_in: None,
+            },
+        );
+
+        let result = state.query_pool_swap(&params);
+        assert!(result.is_ok(), "Trade limit price swap should succeed");
+
+        let swap = result.unwrap();
+        assert!(swap.amount_in() > &BigUint::ZERO, "Should swap non-zero amount");
+        assert!(swap.amount_out() > &BigUint::ZERO, "Should receive non-zero amount");
+    }
+
+    #[test]
+    fn test_swap_to_trade_price_unreachable() {
+        let token0 = Token::new(
+            &Bytes::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            "T0",
+            18,
+            0,
+            &[Some(1000)],
+            Chain::Ethereum,
+            100,
+        );
+        let token1 = Token::new(
+            &Bytes::from_str("0x2222222222222222222222222222222222222222").unwrap(),
+            "T1",
+            18,
+            0,
+            &[Some(1000)],
+            Chain::Ethereum,
+            100,
+        );
+
+        let state =
+            PancakeswapV2State::new(U256::from(1_000_000_000u64), U256::from(1_000_000_000u64));
+
+        // Limit better than spot (spot ~0.9975 after fees, this is 1.5)
+        // This should fail since you can't get a better price than spot
+        let limit_price = Price::new(BigUint::from(3u32), BigUint::from(2u32));
+
+        let params = QueryPoolSwapParams::new(
+            token0,
+            token1,
+            SwapConstraint::TradeLimitPrice {
+                limit: limit_price,
+                tolerance: 0.01,
+                min_amount_in: None,
+                max_amount_in: None,
+            },
+        );
+
+        let result = state.query_pool_swap(&params);
+        assert!(result.is_err(), "Should return error when limit is better than spot");
+    }
+
+    #[test]
+    fn test_swap_to_trade_price_verifies_trade_price() {
+        let token0 = Token::new(
+            &Bytes::from_str("0x1111111111111111111111111111111111111111").unwrap(),
+            "T0",
+            18,
+            0,
+            &[Some(1000)],
+            Chain::Ethereum,
+            100,
+        );
+        let token1 = Token::new(
+            &Bytes::from_str("0x2222222222222222222222222222222222222222").unwrap(),
+            "T1",
+            18,
+            0,
+            &[Some(1000)],
+            Chain::Ethereum,
+            100,
+        );
+
+        let state =
+            PancakeswapV2State::new(U256::from(1_000_000_000u64), U256::from(1_000_000_000u64));
+
+        // Limit = 2/3 = 0.666... is worse than spot ~0.9975
+        let limit_price = Price::new(BigUint::from(2u32), BigUint::from(3u32));
+
+        let params = QueryPoolSwapParams::new(
+            token0.clone(),
+            token1.clone(),
+            SwapConstraint::TradeLimitPrice {
+                limit: limit_price.clone(),
+                tolerance: 0.01,
+                min_amount_in: None,
+                max_amount_in: None,
+            },
+        );
+
+        let swap = state
+            .query_pool_swap(&params)
+            .expect("Swap should succeed");
+
+        // Verify actual trade price matches limit
+        let actual_amount_out = state
+            .get_amount_out(swap.amount_in().clone(), &token0, &token1)
+            .expect("get_amount_out failed");
+
+        let amount_in_f64 = swap
+            .amount_in()
+            .to_string()
+            .parse::<f64>()
+            .unwrap();
+        let actual_amount_out_f64 = actual_amount_out
+            .amount
+            .to_string()
+            .parse::<f64>()
+            .unwrap();
+        let actual_trade_price = actual_amount_out_f64 / amount_in_f64;
+
+        let limit_price_f64 = limit_price
+            .numerator
+            .to_string()
+            .parse::<f64>()
+            .unwrap() /
+            limit_price
+                .denominator
+                .to_string()
+                .parse::<f64>()
+                .unwrap();
+
+        let relative_diff = (actual_trade_price - limit_price_f64).abs() / limit_price_f64;
+        assert!(
+            relative_diff <= 0.01,
+            "Actual trade price {} should match limit {} within 1%, relative diff: {}",
+            actual_trade_price,
+            limit_price_f64,
+            relative_diff
+        );
+    }
+
+    #[test]
+    fn test_query_pool_swap_trade_limit_price_one_for_zero() {
+        let state =
+            PancakeswapV2State::new(U256::from(1_000_000_000u64), U256::from(1_000_000_000u64));
+
+        // Reverse direction: token1 -> token0 (one_for_zero)
+        let limit_price = Price::new(BigUint::from(2u32), BigUint::from(3u32));
+
+        let params = QueryPoolSwapParams::new(
+            token_1(),
+            token_0(),
+            SwapConstraint::TradeLimitPrice {
+                limit: limit_price,
+                tolerance: 0.01,
+                min_amount_in: None,
+                max_amount_in: None,
+            },
+        );
+
+        let result = state.query_pool_swap(&params);
+        assert!(
+            result.is_ok(),
+            "One_for_zero TradeLimitPrice swap should succeed: {:?}",
+            result.err()
+        );
+        let swap = result.unwrap();
+        assert!(swap.amount_in() > &BigUint::ZERO, "amount_in should be non-zero");
+        assert!(swap.amount_out() > &BigUint::ZERO, "amount_out should be non-zero");
     }
 }
