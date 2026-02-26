@@ -32,7 +32,7 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.17", default-features = false }
 
 # Utility
-ruint = { version = "1.17.0", features = ["num-traits"] }
+ruint = { version = "1.17.1", features = ["num-traits"] }
 num-traits = "0.2.17"
 num-bigint = { version = "0.4.6", features = ["serde"] }
 dotenv = "0.15.0"
