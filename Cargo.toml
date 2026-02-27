@@ -172,3 +172,6 @@ rfq = [
 
 [profile.bench]
 debug = true
+
+[package.metadata.cargo-machete]
+ignored = ["ruint"]
