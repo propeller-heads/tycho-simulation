@@ -85,6 +85,7 @@ impl UniswapV3State {
             FeeAmount::Lowest3 => 3,
             FeeAmount::Lowest4 => 4,
             FeeAmount::Low => 10,
+            FeeAmount::MediumLow2 => 15,
             FeeAmount::MediumLow => 50,
             FeeAmount::Medium => 60,
             FeeAmount::MediumHigh => 100,
@@ -574,6 +575,12 @@ mod tests {
         evm::protocol::utils::uniswap::sqrt_price_math::get_sqrt_price_q96,
         protocol::models::{DecoderContext, TryFromWithBlock},
     };
+
+    #[test]
+    fn test_tick_spacing_for_fee_750() {
+        let spacing = UniswapV3State::get_spacing(FeeAmount::MediumLow2);
+        assert_eq!(spacing, 15, "AlienBase V3 fee tier 750 should have tick_spacing=15");
+    }
 
     #[test]
     fn test_get_amount_out_full_range_liquidity() {
