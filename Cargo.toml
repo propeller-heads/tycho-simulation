@@ -148,6 +148,7 @@ evm = [
     "dep:foundry-block-explorers", "dep:revm", "dep:revm-inspectors", "dep:alloy", "dep:reqwest"
 ]
 rfq = ["dep:reqwest", "dep:async-trait", "dep:tokio-tungstenite", "dep:async-stream", "dep:http", "dep:prost"]
+test-utils = []
 
 [profile.bench]
 debug = true
