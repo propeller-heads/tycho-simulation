@@ -59,29 +59,29 @@ impl TryFromWithBlock<ComponentWithState, BlockHeader> for FluidV2State {
                 ))
             })?;
         let dex_type = snapshot
-            .component
-            .static_attributes
+            .state
+            .attributes
             .get("dex_type")
             .ok_or_else(|| InvalidSnapshotError::MissingAttribute("dex_type".to_string()))?
             .clone();
 
         let fee = snapshot
-            .component
-            .static_attributes
+            .state
+            .attributes
             .get("fee")
             .ok_or_else(|| InvalidSnapshotError::MissingAttribute("fee".to_string()))?
             .clone();
 
         let tick_spacing = snapshot
-            .component
-            .static_attributes
+            .state
+            .attributes
             .get("tick_spacing")
             .ok_or_else(|| InvalidSnapshotError::MissingAttribute("tick_spacing".to_string()))?
             .clone();
 
         let controller_bytes = snapshot
-            .component
-            .static_attributes
+            .state
+            .attributes
             .get("controller")
             .ok_or_else(|| InvalidSnapshotError::MissingAttribute("controller".to_string()))?
             .clone();
