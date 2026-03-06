@@ -42,9 +42,9 @@ hex = "0.4.3"
 async-trait = "0.1.88"
 
 # Tycho dependencies
-tycho-client = ">=0.143.0"
-tycho-common = ">=0.143.0"
-tycho-ethereum = ">=0.143.0"
+tycho-client = ">=0.146.0"
+tycho-common = ">=0.146.0"
+tycho-ethereum = ">=0.146.0"
 tycho-execution = ">=0.165.0"
 
 # EVM dependencies
