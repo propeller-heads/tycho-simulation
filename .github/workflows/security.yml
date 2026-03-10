@@ -51,3 +51,12 @@ jobs:
           else
             echo "cargo audit passed — no vulnerabilities found"
           fi
+
+  detect-unused-dependencies:
+    name: Cargo machete
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Machete
+        uses: bnjbvr/cargo-machete@main

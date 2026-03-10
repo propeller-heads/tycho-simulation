@@ -12,7 +12,6 @@ crate-type = ["cdylib"]
 num-bigint = "0.4.3"
 pyo3 = { version = "0.19", features = ["num-bigint", "extension-module"] }
 tycho-simulation = { path = "../" }
-tokio = { version = "1.38.0", features = ["full"] }
 alloy = { version = "1.0.6", features = ["providers"] }
 revm = { version = "27.0.3", features = [
     "alloydb",
