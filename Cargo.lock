@@ -1902,7 +1902,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.13.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2771,6 +2771,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
 
 [[package]]
+name = "dotenvy"
+version = "0.15.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
+
+[[package]]
 name = "downcast"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3626,7 +3632,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -5215,7 +5221,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -5252,7 +5258,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -7344,9 +7350,9 @@ dependencies = [
 
 [[package]]
 name = "tycho-client"
-version = "0.146.0"
+version = "0.147.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b9486a063a9bfd5d222e053b390f4d4afea02822348ab9182f8903d0e3e7a4a"
+checksum = "6d358f468c9e0e802511195a165107c2668b1c01d9ae96f7558712003ef5e7a4"
 dependencies = [
  "async-trait",
  "backoff",
@@ -7373,9 +7379,9 @@ dependencies = [
 
 [[package]]
 name = "tycho-common"
-version = "0.146.0"
+version = "0.147.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f0aefa9705f10521e9d4d5681e373472ec8045584b00e15ebedacd94010e6c5"
+checksum = "5e06340630099e17476a49fa9df7dcb474e8d9e91eb1196a7cfdedf6827de325"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7399,10 +7405,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "tycho-contracts"
+version = "0.39.1"
+dependencies = [
+ "alloy",
+ "chrono",
+ "clap",
+ "dotenvy",
+ "hex",
+ "num-bigint",
+ "once_cell",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tycho-common",
+]
+
+[[package]]
 name = "tycho-ethereum"
-version = "0.146.0"
+version = "0.147.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ff5ca1213d4f2f2e4133acd195d6b74be144a531da8adc0454dcfab68e9ab57"
+checksum = "c5f2f4ccd25c6fa0308e94dbd2248ba6d8a760042b3cd2bcf862963f1774416f"
 dependencies = [
  "alloy",
  "async-trait",
@@ -7418,27 +7443,6 @@ dependencies = [
  "tracing",
  "tycho-common",
  "unicode-segmentation",
-]
-
-[[package]]
-name = "tycho-execution"
-version = "0.165.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89406dc3ce6e8b851ad8ca9794070e236cee4378d110a89470eda067a6056ded"
-dependencies = [
- "alloy",
- "chrono",
- "clap",
- "dotenv",
- "hex",
- "num-bigint",
- "once_cell",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tycho-common",
 ]
 
 [[package]]
@@ -7522,8 +7526,9 @@ dependencies = [
  "tracing-subscriber 0.3.20",
  "tycho-client",
  "tycho-common",
+ "tycho-contracts",
  "tycho-ethereum",
- "tycho-execution",
+ "tycho-test",
  "typetag",
  "unicode-width 0.1.14",
  "uuid",
@@ -7556,8 +7561,8 @@ dependencies = [
  "tracing-subscriber 0.3.20",
  "tycho-client",
  "tycho-common",
+ "tycho-contracts",
  "tycho-ethereum",
- "tycho-execution",
  "tycho-simulation",
  "urlencoding",
 ]
