@@ -328,11 +328,14 @@ impl UniswapV3State {
 
             // Update state
             state.sqrt_price = sqrt_price_new;
-            state.amount_remaining -=
+            if let Some(v) =
                 I256::checked_from_sign_and_abs(Sign::Positive, step_amount_in_with_fee)
-                    .unwrap_or(I256::ZERO);
-            state.amount_calculated -=
-                I256::checked_from_sign_and_abs(Sign::Positive, amount_out).unwrap_or(I256::ZERO);
+            {
+                state.amount_remaining -= v;
+            }
+            if let Some(v) = I256::checked_from_sign_and_abs(Sign::Positive, amount_out) {
+                state.amount_calculated -= v;
+            }
 
             // Update tick and liquidity if we reached the tick boundary
             if state.sqrt_price == sqrt_price_limit {
@@ -364,13 +367,12 @@ impl UniswapV3State {
             amount_out: total_amount_out,
             swap_state: SwapResults {
                 amount_calculated: I256::checked_from_sign_and_abs(
-                    Sign::Positive,
+                    Sign::Negative,
                     total_amount_out,
                 )
                 .ok_or_else(|| {
                     SimulationError::FatalError("Failed to create amount_calculated".to_string())
-                })?
-                .wrapping_neg(),
+                })?,
                 amount_specified: I256::checked_from_sign_and_abs(
                     Sign::Positive,
                     total_amount_in_with_fee,

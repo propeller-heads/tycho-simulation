@@ -1,4 +1,4 @@
-use alloy::primitives::{I256, U256};
+use alloy::primitives::{Sign, I256, U256};
 use num_bigint::{BigInt, BigUint};
 use num_traits::Signed;
 use tycho_common::simulation::errors::SimulationError;
@@ -859,6 +859,23 @@ mod tests {
             0.00001,
         )
         .expect("Trade price should be within tolerance");
+
+        // Cross-validate: use compute_swap_step as an independent oracle.
+        // Feed sqrt_price_new as the target — compute_swap_step will compute amounts
+        // using the standard Uniswap delta functions, independently from the quadratic solver.
+        let large_amount =
+            I256::checked_from_sign_and_abs(Sign::Positive, U256::from(u128::MAX)).unwrap();
+        let (step_sqrt, step_in, step_out, _step_fee) = compute_swap_step(
+            sqrt_price_current,
+            sqrt_price_new,
+            liquidity,
+            large_amount,
+            fee_pips,
+        )
+        .expect("compute_swap_step should succeed");
+        assert_eq!(step_sqrt, sqrt_price_new, "compute_swap_step should arrive at same sqrt_price");
+        assert_eq!(step_in, amount_in, "compute_swap_step amount_in should match");
+        assert_eq!(step_out, amount_out, "compute_swap_step amount_out should match");
     }
 
     #[test]
@@ -1237,7 +1254,7 @@ mod tests {
             amount_out,
             &target_num,
             &target_den,
-            0.02, // 2% tolerance due to integer sqrt approximations
+            0.005, // 0.5% tolerance (integer sqrt introduces small rounding)
         )
         .expect("Cumulative trade price should be within tolerance");
     }
@@ -1335,7 +1352,7 @@ mod tests {
             amount_out,
             &target_price_num,
             &target_price_den,
-            0.02, // 2% tolerance
+            0.005, // 0.5% tolerance (integer sqrt introduces small rounding)
         )
         .expect("Cumulative trade price should be within tolerance");
     }
@@ -1379,73 +1396,57 @@ mod tests {
     }
 
     #[test]
-    fn test_accumulated_target_already_achieved() {
-        // Test where cumulative ratio already exceeds target (no swap needed)
+    fn test_accumulated_target_unreachable_due_to_worse_cumulative() {
+        // Accumulated ratio (1.3) is worse than target (1.5) for zero_for_one.
+        // The marginal price (pre-fee ~2.0) is better, so swapping more will pull
+        // the cumulative ratio TOWARD the target. The function should either:
+        // - Find the exact delta that achieves 1.5 cumulatively, or
+        // - Fall back to the tick boundary if the target requires too much movement.
         let sqrt_price_current = U256::from_str("112045541949572287496682733568").unwrap();
         let liquidity = 1_000_000_000_000_000_000u128;
         let fee_pips = 3000u32;
 
-        // Target price: 1.5
         let target_price_num = BigUint::from(15u64);
         let target_price_den = BigUint::from(10u64);
 
         let sqrt_ratio_limit = U256::from_str("79228162514264337593543950336").unwrap();
 
-        // Accumulated ratio is 1.4 (worse than target 1.5 for zero_for_one where we want high
-        // output) Wait - for zero_for_one, we're selling token0 for token1
-        // If target is 1.5 and current cumulative is 2.0 (better), then we need to swap more to
-        // worsen the ratio to 1.5. So this should trigger a swap.
-        //
-        // Let's test the case where cumulative is worse than target:
-        // Target is 1.5, cumulative is 1.3 - we can't improve it without swapping in the other
-        // direction.
         let accumulated_in = U256::from(1_000_000_000_000_000_000u128);
         let accumulated_out = U256::from(1_300_000_000_000_000_000u128); // ratio = 1.3
 
-        // This should fail because we can't achieve 1.5 by swapping more zero_for_one
-        // (the marginal trade price will be worse than 1.3, so cumulative will only get worse)
-        let result = compute_swap_to_trade_price(
-            sqrt_price_current,
-            sqrt_ratio_limit,
-            liquidity,
-            &target_price_num,
-            &target_price_den,
-            fee_pips,
-            accumulated_in,
-            accumulated_out,
-        );
+        let (sqrt_price_new, amount_in, amount_out, _fee_amount, reached_target) =
+            compute_swap_to_trade_price(
+                sqrt_price_current,
+                sqrt_ratio_limit,
+                liquidity,
+                &target_price_num,
+                &target_price_den,
+                fee_pips,
+                accumulated_in,
+                accumulated_out,
+            )
+            .expect("Should succeed — marginal price is better than target");
 
-        match result {
-            Err(_) => {
-                // Target not achievable — acceptable outcome.
-            }
-            Ok((sqrt_price_new, amount_in, amount_out, _fee_amount, reached_target)) => {
-                if amount_in.is_zero() && amount_out.is_zero() {
-                    assert_eq!(
-                        sqrt_price_new, sqrt_price_current,
-                        "Price should not move when amounts are zero"
-                    );
-                } else {
-                    // The function found a swap within this tick. Verify the new cumulative
-                    // ratio moves toward the target (1.5) rather than away from it.
-                    let old_ratio =
-                        1_300_000_000_000_000_000u128 as f64 / 1_000_000_000_000_000_000u128 as f64; // 1.3
-                    let new_out = 1_300_000_000_000_000_000u128 + amount_out.to::<u128>();
-                    let new_in = 1_000_000_000_000_000_000u128 + amount_in.to::<u128>();
-                    let new_ratio = new_out as f64 / new_in as f64;
-                    assert!(
-                        new_ratio >= old_ratio,
-                        "Cumulative ratio should not worsen: old={old_ratio:.6}, new={new_ratio:.6}"
-                    );
-                    if !reached_target {
-                        // Didn't reach target — hit the tick boundary. Price must have moved.
-                        assert_ne!(
-                            sqrt_price_new, sqrt_price_current,
-                            "Price should move when amounts are non-zero and target not reached"
-                        );
-                    }
-                }
-            }
+        assert!(amount_in > U256::ZERO, "Should swap some amount to improve cumulative ratio");
+        assert!(amount_out > U256::ZERO, "Should receive output");
+        assert!(sqrt_price_new < sqrt_price_current, "Price should decrease for zero_for_one");
+
+        let new_out = 1_300_000_000_000_000_000u128 + amount_out.to::<u128>();
+        let new_in = 1_000_000_000_000_000_000u128 + amount_in.to::<u128>();
+        let new_ratio = new_out as f64 / new_in as f64;
+        assert!(new_ratio > 1.3, "Cumulative ratio should improve from 1.3, got {new_ratio:.6}");
+
+        if reached_target {
+            verify_cumulative_trade_price_tolerance(
+                accumulated_in,
+                accumulated_out,
+                amount_in,
+                amount_out,
+                &target_price_num,
+                &target_price_den,
+                0.005,
+            )
+            .expect("If target reached, cumulative price should match");
         }
     }
 

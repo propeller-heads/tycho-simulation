@@ -844,31 +844,49 @@ mod tests {
             U256::from(1_000_000_000u64), // reserve1
         );
 
-        // Price is in amount_out/amount_in convention (Q)
-        // Limit = 2/3 = 0.666... is worse than spot ~0.9975, so should be reachable
-        // When flipped to P convention: 3/2 = 1.5 > 1.0025 spot
         let limit_price = Price::new(
             BigUint::from(2u32), // numerator
             BigUint::from(3u32), // denominator
         );
 
         let params = QueryPoolSwapParams::new(
-            token0,
-            token1,
+            token0.clone(),
+            token1.clone(),
             SwapConstraint::TradeLimitPrice {
-                limit: limit_price,
+                limit: limit_price.clone(),
                 tolerance: 0.01,
                 min_amount_in: None,
                 max_amount_in: None,
             },
         );
 
-        let result = state.query_pool_swap(&params);
-        assert!(result.is_ok(), "Trade limit price swap should succeed");
+        let swap = state
+            .query_pool_swap(&params)
+            .expect("Trade limit price swap should succeed");
 
-        let swap = result.unwrap();
         assert!(swap.amount_in() > &BigUint::ZERO, "Should swap non-zero amount");
         assert!(swap.amount_out() > &BigUint::ZERO, "Should receive non-zero amount");
+
+        let actual_out = state
+            .get_amount_out(swap.amount_in().clone(), &token0, &token1)
+            .expect("get_amount_out failed");
+        let amount_in_f64 = swap
+            .amount_in()
+            .to_string()
+            .parse::<f64>()
+            .unwrap();
+        let actual_out_f64 = actual_out
+            .amount
+            .to_string()
+            .parse::<f64>()
+            .unwrap();
+        let actual_trade_price = actual_out_f64 / amount_in_f64;
+        let limit_f64 = 2.0 / 3.0;
+        let relative_diff = (actual_trade_price - limit_f64).abs() / limit_f64;
+        assert!(
+            relative_diff <= 0.01,
+            "Trade price {actual_trade_price} should be within 1% of limit {limit_f64}, diff: {relative_diff}"
+        );
     }
 
     #[test]
@@ -999,28 +1017,45 @@ mod tests {
         let state =
             PancakeswapV2State::new(U256::from(1_000_000_000u64), U256::from(1_000_000_000u64));
 
-        // Reverse direction: token1 -> token0 (one_for_zero)
         let limit_price = Price::new(BigUint::from(2u32), BigUint::from(3u32));
 
         let params = QueryPoolSwapParams::new(
             token_1(),
             token_0(),
             SwapConstraint::TradeLimitPrice {
-                limit: limit_price,
+                limit: limit_price.clone(),
                 tolerance: 0.01,
                 min_amount_in: None,
                 max_amount_in: None,
             },
         );
 
-        let result = state.query_pool_swap(&params);
-        assert!(
-            result.is_ok(),
-            "One_for_zero TradeLimitPrice swap should succeed: {:?}",
-            result.err()
-        );
-        let swap = result.unwrap();
+        let swap = state
+            .query_pool_swap(&params)
+            .expect("One_for_zero TradeLimitPrice swap should succeed");
+
         assert!(swap.amount_in() > &BigUint::ZERO, "amount_in should be non-zero");
         assert!(swap.amount_out() > &BigUint::ZERO, "amount_out should be non-zero");
+
+        let actual_out = state
+            .get_amount_out(swap.amount_in().clone(), &token_1(), &token_0())
+            .expect("get_amount_out failed");
+        let amount_in_f64 = swap
+            .amount_in()
+            .to_string()
+            .parse::<f64>()
+            .unwrap();
+        let actual_out_f64 = actual_out
+            .amount
+            .to_string()
+            .parse::<f64>()
+            .unwrap();
+        let actual_trade_price = actual_out_f64 / amount_in_f64;
+        let limit_f64 = 2.0 / 3.0;
+        let relative_diff = (actual_trade_price - limit_f64).abs() / limit_f64;
+        assert!(
+            relative_diff <= 0.01,
+            "Trade price {actual_trade_price} should be within 1% of limit {limit_f64}, diff: {relative_diff}"
+        );
     }
 }
