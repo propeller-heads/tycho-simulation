@@ -33,7 +33,7 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.17", default-features = false }
 
 # Utility
-ruint = { version = "1.17.0", features = ["num-traits"] }
+ruint = { version = "1.17.1", features = ["num-traits"] }
 num-traits = "0.2.17"
 num-bigint = { version = "0.4.6", features = ["serde"] }
 dotenv = "0.15.0"
@@ -51,13 +51,18 @@ tycho-execution = ">=0.165.0"
 # EVM dependencies
 # Alloy's dyn-abi 1.4.0 has a security vulnerability, so we require at least 1.4.1
 alloy-dyn-abi = ">=1.4.1"
+# Force minimum version to fix RUSTSEC-2026-0007
+bytes = ">=1.11.1"
+# Force minimum version to fix RUSTSEC-2026-0037
+quinn-proto = ">=0.11.14"
+# Force minimum version to fix RUSTSEC-2026-0009
+time = ">=0.3.47"
 alloy = { version = "1.0.30", features = ["providers", "signer-local", "rpc-types-eth", "rand", "eip712"] }
 
 [dependencies]
 # Serialization/Deserialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-uuid = { version = "1.4.1", features = ["serde", "v4", "fast-rng", "macro-diagnostics"] }
 hex = { workspace = true }
 chrono = { version = "0.4.26", features = ["serde"] }
 typetag = { workspace = true }
@@ -82,8 +87,6 @@ enum_delegate = "0.2.0"
 strum = "0.25.0"
 strum_macros = "0.25.2"
 
-# Caching
-mini-moka = "0.10"
 lazy_static = "1.4.0"
 
 # Tycho dependencies
@@ -149,6 +152,11 @@ evm = [
     "dep:foundry-block-explorers", "dep:revm", "dep:revm-inspectors", "dep:alloy", "dep:reqwest"
 ]
 rfq = ["dep:reqwest", "dep:async-trait", "dep:tokio-tungstenite", "dep:async-stream", "dep:http", "dep:prost"]
+
+# ruint: used transitively via alloy/revm types; minimum version bumped for RUSTSEC-2025-0137
+# strum: used via strum_macros derive macros (EnumIter, Display, etc.)
+[package.metadata.cargo-machete]
+ignored = ["ruint", "strum"]
 
 [profile.bench]
 debug = true

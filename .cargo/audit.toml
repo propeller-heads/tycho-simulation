@@ -1,0 +1,4 @@
+[advisories]
+# pyo3 0.19.2 → >=0.24.1: major version jump, requires upstream update
+# tracing-subscriber 0.2.25 → >=0.3.20: transitive dep via ark-relations → revm, cannot update without upstream changes
+ignore = ["RUSTSEC-2025-0020", "RUSTSEC-2025-0055"]
