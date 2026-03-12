@@ -173,26 +173,30 @@ where
     let limit_num = U512::from(biguint_to_u256(&limit_price.numerator));
     let limit_den = U512::from(biguint_to_u256(&limit_price.denominator));
     let sqrt_price_512 = U512::from(sqrt_price);
-    let sqrt_price_squared = sqrt_price_512
-        .checked_mul(sqrt_price_512)
-        .ok_or_else(|| {
-            SimulationError::FatalError("Overflow in sqrt_price squared calculation".to_string())
-        })?;
     let two_192 = U512::from(1u64) << 192;
     let fee_factor = U512::from(1_000_000 - fee_pips);
     let fee_precision = U512::from(1_000_000u32);
 
+    // To avoid U512 overflow (sqrt_price² × fee_factor × limit_den can reach ~596 bits),
+    // we divide both sides of the comparison by sqrt_price, using divmod for exact results.
     let limit_is_better_than_spot = if zero_for_one {
-        // limit_num × 2^192 × 1_000_000 > sqrt_price² × (1_000_000 - fee_pips) × limit_den
+        // Original: limit_num × 2^192 × 1M > sqrt_price² × (1M-fee) × limit_den
+        // Divided by sqrt_price:
+        //   lhs / sqrt_price  vs  sqrt_price × (1M-fee) × limit_den
+        // where lhs = limit_num × 2^192 × 1M
         let lhs = limit_num
             .checked_mul(two_192)
             .and_then(|x| x.checked_mul(fee_precision));
-        let rhs = sqrt_price_squared
+        let rhs = sqrt_price_512
             .checked_mul(fee_factor)
             .and_then(|x| x.checked_mul(limit_den));
 
         match (lhs, rhs) {
-            (Some(l), Some(r)) => l > r,
+            (Some(l), Some(r)) => {
+                let q = l / sqrt_price_512;
+                let rem = l % sqrt_price_512;
+                q > r || (q == r && rem > U512::ZERO)
+            }
             _ => {
                 return Err(SimulationError::FatalError(
                     "Overflow in limit price comparison".to_string(),
@@ -200,16 +204,19 @@ where
             }
         }
     } else {
-        // limit_num × sqrt_price² × 1_000_000 > 2^192 × (1_000_000 - fee_pips) × limit_den
+        // Original: limit_num × sqrt_price² × 1M > 2^192 × (1M-fee) × limit_den
+        // Divided by sqrt_price:
+        //   limit_num × sqrt_price × 1M  vs  floor(2^192 × (1M-fee) × limit_den / sqrt_price)
+        // A×C > B  iff  A > floor(B/C)  (since A is an integer and B/C rounds down)
         let lhs = limit_num
-            .checked_mul(sqrt_price_squared)
+            .checked_mul(sqrt_price_512)
             .and_then(|x| x.checked_mul(fee_precision));
-        let rhs = two_192
+        let rhs_full = two_192
             .checked_mul(fee_factor)
             .and_then(|x| x.checked_mul(limit_den));
 
-        match (lhs, rhs) {
-            (Some(l), Some(r)) => l > r,
+        match (lhs, rhs_full) {
+            (Some(l), Some(r)) => l > r / sqrt_price_512,
             _ => {
                 return Err(SimulationError::FatalError(
                     "Overflow in limit price comparison".to_string(),

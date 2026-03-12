@@ -1004,8 +1004,8 @@ mod tests {
 
         let relative_diff = (actual_trade_price - limit_price_f64).abs() / limit_price_f64;
         assert!(
-            relative_diff <= 0.01,
-            "Actual trade price {} should match limit {} within 1%, relative diff: {}",
+            relative_diff <= 0.00001,
+            "Actual trade price {} should match limit {} within 0.001%, relative diff: {}",
             actual_trade_price,
             limit_price_f64,
             relative_diff

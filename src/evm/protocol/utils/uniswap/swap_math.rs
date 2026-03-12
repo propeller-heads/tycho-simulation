@@ -1,4 +1,4 @@
-use alloy::primitives::{Sign, I256, U256};
+use alloy::primitives::{I256, U256};
 use num_bigint::{BigInt, BigUint};
 use num_traits::Signed;
 use tycho_common::simulation::errors::SimulationError;
@@ -606,21 +606,27 @@ fn compute_sqrt_ratio_target(
     let delta = solve_quadratic(&b_num, &b_den, &c_num, &c_den)?;
 
     // S₁ = S₀ - delta (zero_for_one) or S₀ + delta (one_for_zero)
-    if zero_for_one {
+    let result = if zero_for_one {
         if *sqrt_ratio_current < delta {
             return Err(SimulationError::FatalError(
                 "sqrt_ratio_target would be negative".to_string(),
             ));
         }
-        Ok(sqrt_ratio_current - delta)
+        sqrt_ratio_current - delta
     } else {
-        Ok(sqrt_ratio_current + delta)
+        sqrt_ratio_current + delta
+    };
+
+    if result.to_bytes_le().len() > 32 {
+        return Err(SimulationError::FatalError("sqrt_ratio_target exceeds U256 range".to_string()));
     }
+
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
-    use alloy::primitives::U512;
+    use alloy::primitives::{Sign, I256, U512};
     use num_traits::ToPrimitive;
 
     use super::*;
@@ -1008,6 +1014,21 @@ mod tests {
             0.00001,
         )
         .expect("Trade price should be within tolerance");
+
+        // Cross-validate with compute_swap_step (independent oracle)
+        let large_amount =
+            I256::checked_from_sign_and_abs(Sign::Positive, U256::from(u128::MAX)).unwrap();
+        let (step_sqrt, step_in, step_out, _step_fee) = compute_swap_step(
+            sqrt_price_current,
+            sqrt_price_new,
+            liquidity,
+            large_amount,
+            fee_pips,
+        )
+        .expect("compute_swap_step should succeed");
+        assert_eq!(step_sqrt, sqrt_price_new, "compute_swap_step should arrive at same sqrt_price");
+        assert_eq!(step_in, amount_in, "compute_swap_step amount_in should match");
+        assert_eq!(step_out, amount_out, "compute_swap_step amount_out should match");
     }
 
     #[test]
@@ -1448,6 +1469,121 @@ mod tests {
             )
             .expect("If target reached, cumulative price should match");
         }
+    }
+
+    #[test]
+    fn test_negative_residual_accumulated_out_exceeds_target() {
+        // Negative residual: accumulated_out / accumulated_in > target
+        // The algorithm should find a delta where new marginal swaps pull cumulative
+        // ratio down toward the target.
+        let sqrt_price_current = U256::from_str("112045541949572287496682733568").unwrap();
+        let liquidity = 1_000_000_000_000_000_000u128;
+        let fee_pips = 3000u32;
+        let sqrt_ratio_limit = U256::from_str("79228162514264337593543950336").unwrap();
+
+        // Accumulated ratio = 2.1 (out/in), target = 1.95
+        // So residual = 1.95 * 100_000 - 210_000 = -15_000 (negative)
+        let accumulated_in = U256::from(100_000u128);
+        let accumulated_out = U256::from(210_000u128);
+
+        let target_num = BigUint::from(195u64);
+        let target_den = BigUint::from(100u64);
+
+        let (_sp, amount_in, amount_out, _fee, reached_target) = compute_swap_to_trade_price(
+            sqrt_price_current,
+            sqrt_ratio_limit,
+            liquidity,
+            &target_num,
+            &target_den,
+            fee_pips,
+            accumulated_in,
+            accumulated_out,
+        )
+        .expect("Should succeed with negative residual");
+
+        assert!(reached_target, "Should reach target");
+        assert!(amount_in > U256::ZERO, "Should swap some amount");
+        assert!(amount_out > U256::ZERO, "Should produce output");
+
+        // New marginal price is worse than current cumulative, pulling it toward target
+        let total_in = 100_000u128 + amount_in.to::<u128>();
+        let total_out = 210_000u128 + amount_out.to::<u128>();
+        let cumulative_ratio = total_out as f64 / total_in as f64;
+        let target_ratio = 1.95;
+        let relative_diff = (cumulative_ratio - target_ratio).abs() / target_ratio;
+        assert!(
+            relative_diff < 0.005,
+            "Cumulative ratio {cumulative_ratio:.6} should be close to target {target_ratio:.6}, diff: {relative_diff:.6}"
+        );
+    }
+
+    #[test]
+    fn test_rounding_direction_is_conservative() {
+        // The achieved trade price should never be BETTER than the target.
+        // For zero_for_one: actual amount_out/amount_in ≤ target
+        // For one_for_zero: actual amount_out/amount_in ≤ target
+        let sqrt_price_current = U256::from_str("112045541949572287496682733568").unwrap();
+        let liquidity = 1_000_000_000_000_000_000u128;
+        let fee_pips = 3000u32;
+
+        // zero_for_one: target = 1.9
+        let user_target_num = BigUint::from(19u64);
+        let user_target_den = BigUint::from(10u64);
+        let formula_target_num = &user_target_num * BigUint::from(1_000_000u32);
+        let formula_target_den = &user_target_den * BigUint::from(1_000_000u32 - fee_pips);
+        let sqrt_ratio_limit_z = U256::from_str("79228162514264337593543950336").unwrap();
+
+        let (_sp, amount_in_z, amount_out_z, _fee, reached) = compute_swap_to_trade_price(
+            sqrt_price_current,
+            sqrt_ratio_limit_z,
+            liquidity,
+            &formula_target_num,
+            &formula_target_den,
+            fee_pips,
+            U256::ZERO,
+            U256::ZERO,
+        )
+        .expect("zero_for_one should succeed");
+
+        assert!(reached, "Should reach target");
+        // achieved = amount_out / amount_in; must be ≤ target (formula target)
+        let achieved_cross =
+            U512::from(amount_out_z) * U512::from(biguint_to_u256(&formula_target_den));
+        let target_cross =
+            U512::from(biguint_to_u256(&formula_target_num)) * U512::from(amount_in_z);
+        assert!(
+            achieved_cross <= target_cross,
+            "zero_for_one: achieved price must not exceed target (conservative rounding)"
+        );
+
+        // one_for_zero: target = 0.485
+        let user_target_num_o = BigUint::from(485u64);
+        let user_target_den_o = BigUint::from(1000u64);
+        let formula_target_num_o = &user_target_num_o * BigUint::from(1_000_000u32);
+        let formula_target_den_o = &user_target_den_o * BigUint::from(1_000_000u32 - fee_pips);
+        let sqrt_ratio_limit_o = U256::from_str("150000000000000000000000000000").unwrap();
+
+        let (_sp, amount_in_o, amount_out_o, _fee, reached) = compute_swap_to_trade_price(
+            sqrt_price_current,
+            sqrt_ratio_limit_o,
+            liquidity,
+            &formula_target_num_o,
+            &formula_target_den_o,
+            fee_pips,
+            U256::ZERO,
+            U256::ZERO,
+        )
+        .expect("one_for_zero should succeed");
+
+        assert!(reached, "Should reach target");
+        let achieved_cross_o =
+            U512::from(amount_out_o) * U512::from(biguint_to_u256(&formula_target_den_o));
+        let target_cross_o =
+            U512::from(biguint_to_u256(&formula_target_num_o)) * U512::from(amount_in_o);
+        assert!(
+            achieved_cross_o <= target_cross_o,
+            "one_for_zero: achieved price must not exceed target (conservative rounding)"
+        );
     }
 
     #[test]

@@ -363,6 +363,10 @@ impl UniswapV4State {
             }
             ticks_crossed += 1;
 
+            if state.liquidity == 0 {
+                break;
+            }
+
             // Find next tick boundary
             let (mut next_tick, initialized) = match self
                 .ticks
