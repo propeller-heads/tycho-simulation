@@ -159,10 +159,10 @@ impl ProtocolStreamProcessor {
                 "uniswap_v4_hooks".to_string(),
                 "vm:maverick_v2".to_string(),
                 "fluid_v1".to_string(),
-                "rocketpool".to_string(),
                 "erc4626".to_string(),
                 "cowamm".to_string(),
                 "ekubo_v3".to_string(),
+                "rocketpool".to_string(),
             ],
             Chain::Base => vec![
                 "uniswap_v2".to_string(),
@@ -178,7 +178,7 @@ impl ProtocolStreamProcessor {
                     "uniswap_v4".to_string(),
                     "uniswap_v4_hooks".to_string(),
                     "velodrome_slipstreams".to_string(),
-                    "vm:curve".to_string(),
+                    // "vm:curve".to_string(), // Temporarily disabled due to indexing issues
                 ]
             }
             _ => vec![],
@@ -269,15 +269,15 @@ impl ProtocolStreamProcessor {
                     Some(erc4626_filter),
                 );
             }
-            "rocketpool" => {
-                stream = stream.exchange::<RocketpoolState>("rocketpool", tvl_filter.clone(), None);
-            }
             "velodrome_slipstreams" => {
                 stream = stream.exchange::<VelodromeSlipstreamsState>(
                     "velodrome_slipstreams",
                     tvl_filter.clone(),
                     None,
                 );
+            }
+            "rocketpool" => {
+                stream = stream.exchange::<RocketpoolState>("rocketpool", tvl_filter.clone(), None);
             }
             "cowamm" => {
                 stream = stream.exchange::<CowAMMState>("cowamm", tvl_filter.clone(), None);
