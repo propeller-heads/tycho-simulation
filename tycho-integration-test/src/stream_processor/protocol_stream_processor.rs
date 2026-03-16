@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, time::Duration, str::FromStr};
 
 use futures::{Stream, StreamExt};
 use miette::{miette, IntoDiagnostic, WrapErr};
@@ -6,7 +6,7 @@ use tokio::{sync::mpsc::Sender, task::JoinHandle};
 use tracing::{info, warn};
 use tycho_client::feed::component_tracker::ComponentFilter;
 use tycho_common::{
-    models::{token::Token, Chain},
+    models::{token::Token, Chain, ComponentId},
     Bytes,
 };
 use tycho_simulation::{
@@ -31,7 +31,7 @@ use tycho_simulation::{
         },
         stream::ProtocolStreamBuilder,
     },
-    protocol::models::Update,
+    protocol::models::{DecoderContext, Update},
 };
 
 use crate::stream_processor::{StreamUpdate, UpdateType};
@@ -192,6 +192,11 @@ impl ProtocolStreamProcessor {
         protocol: &str,
         tvl_filter: &ComponentFilter,
     ) -> miette::Result<ProtocolStreamBuilder> {
+        let ids = vec![
+            ComponentId::from_str("0x7d8b8344f2acc6c1edba0da1b5313af1e30c3369").unwrap(),
+        ];
+
+        let id_filter = ComponentFilter::Ids(ids);
         match protocol {
             "uniswap_v2" => {
                 stream = stream.exchange::<UniswapV2State>("uniswap_v2", tvl_filter.clone(), None);
@@ -231,10 +236,11 @@ impl ProtocolStreamProcessor {
                 stream = stream.exchange::<EkuboV3State>("ekubo_v3", tvl_filter.clone(), None);
             }
             "vm:curve" => {
-                stream = stream.exchange::<EVMPoolState<PreCachedDB>>(
+                stream = stream.exchange_with_decoder_context::<EVMPoolState<PreCachedDB>>(
                     "vm:curve",
-                    tvl_filter.clone(),
+                    id_filter.clone(),
                     None,
+                    DecoderContext::new().vm_traces(true)
                 );
             }
             "uniswap_v4_hooks" => {

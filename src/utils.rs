@@ -85,11 +85,8 @@ pub async fn load_all_tokens(
     let tokens = rpc_client
         .get_all_tokens(
             chain.into(),
-            min_quality.or(Some(100)),
-            max_days_since_last_trade.or(default_min_days
-                .get(&chain)
-                .or(Some(&42))
-                .copied()),
+            min_quality.or(Some(10)),
+            None,
             None,
             RPC_CLIENT_CONCURRENCY,
         )
