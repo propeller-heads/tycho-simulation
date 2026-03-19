@@ -1,14 +1,23 @@
 use alloy::primitives::{I256, U256};
-use num_bigint::{BigInt, BigUint};
-use num_traits::Signed;
+use num_bigint::BigUint;
+use ruint::aliases::{U1024, U2048};
 use tycho_common::simulation::errors::SimulationError;
 
 use super::sqrt_price_math;
 use crate::evm::protocol::{
     safe_math::safe_sub_u256,
-    u256_num::{biguint_to_u256, u256_to_biguint},
     utils::solidity_math::{mul_div, mul_div_rounding_up},
 };
+
+fn u1024_to_u256(val: U1024) -> U256 {
+    let bytes = val.to_le_bytes::<128>();
+    U256::from_le_slice(&bytes[..32])
+}
+
+fn u2048_to_u1024(val: U2048) -> U1024 {
+    let bytes = val.to_le_bytes::<256>();
+    U1024::from_le_bytes::<128>(bytes[..128].try_into().unwrap())
+}
 
 /// Computes the result of swapping some amount in, or amount out, given the parameters of the swap
 ///
@@ -262,6 +271,54 @@ pub(crate) fn compute_swap_step(
 /// * `fee_amount` - Fee charged for this tick
 /// * `reached_target` - Whether we achieved the target price (false if hit tick boundary first or
 ///   target was not achievable with the given accumulated amounts)
+type SignedU1024 = (bool, U1024);
+type SignedU2048 = (bool, U2048);
+
+fn biguint_to_u1024(value: &BigUint) -> U1024 {
+    let bytes = value.to_bytes_le();
+    let mut buf = [0u8; 128];
+    let len = bytes.len().min(128);
+    buf[..len].copy_from_slice(&bytes[..len]);
+    U1024::from_le_bytes(buf)
+}
+
+fn signed_sub_u1024(a: U1024, b: U1024) -> SignedU1024 {
+    if a >= b {
+        (true, a - b)
+    } else {
+        (false, b - a)
+    }
+}
+
+fn signed_sub_u2048(a: U2048, b: U2048) -> SignedU2048 {
+    if a >= b {
+        (true, a - b)
+    } else {
+        (false, b - a)
+    }
+}
+
+/// a_sign*a_mag - b_sign*b_mag
+fn signed_sub_signed_u1024(
+    (a_pos, a_mag): SignedU1024,
+    (b_pos, b_mag): SignedU1024,
+) -> SignedU1024 {
+    match (a_pos, b_pos) {
+        (true, true) => signed_sub_u1024(a_mag, b_mag),
+        (false, false) => {
+            let (pos, mag) = signed_sub_u1024(a_mag, b_mag);
+            (!pos, mag)
+        }
+        (true, false) => (true, a_mag + b_mag),
+        (false, true) => (false, a_mag + b_mag),
+    }
+}
+
+/// a_sign*a_mag + b_sign*b_mag
+fn signed_add_signed_u1024(a: SignedU1024, (b_pos, b_mag): SignedU1024) -> SignedU1024 {
+    signed_sub_signed_u1024(a, (!b_pos, b_mag))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_swap_to_trade_price(
     sqrt_ratio_current: U256,
@@ -278,74 +335,78 @@ pub(crate) fn compute_swap_to_trade_price(
         return Err(SimulationError::FatalError("Zero liquidity".to_string()));
     }
 
-    // Use BigUint for high-precision arithmetic
-    let q96 = BigUint::from(1u64) << 96; // 2^96
-    let sqrt_ratio_current_big = u256_to_biguint(sqrt_ratio_current);
-    let sqrt_ratio_limit_big = u256_to_biguint(sqrt_ratio_limit);
-    let liquidity_big = BigUint::from(liquidity);
-    let target_price_num = target_trade_price_num.clone();
-    let target_price_den = target_trade_price_den.clone();
-    let fee_factor_num = BigUint::from(1_000_000u32 - fee_pips);
-    let fee_factor_den = BigUint::from(1_000_000u32);
-    let acc_out = u256_to_biguint(accumulated_out);
-    let acc_in = u256_to_biguint(accumulated_in);
+    let s0 = U1024::from(sqrt_ratio_current);
+    let s_limit = U1024::from(sqrt_ratio_limit);
+    let price_num = biguint_to_u1024(target_trade_price_num);
+    let price_den = biguint_to_u1024(target_trade_price_den);
 
-    // residual = P × accumulated_in - accumulated_out (scaled by target_price_den)
-    // When residual > 0: we need more output to reach target
-    // When residual < 0: we have more output than needed
-    let residual =
-        BigInt::from(&target_price_num * &acc_in) - BigInt::from(&acc_out * &target_price_den);
+    // Zero-accumulated shortcut: single division instead of full quadratic.
+    // For z4o: T = S₀×S/Q² → S_target = P_num × Q¹⁹² / (P_den × S₀)
+    // For o4z: T = Q²/(S₀×S) → S_target = P_den × Q¹⁹² / (P_num × S₀)
+    let sqrt_ratio_target_result = if accumulated_in.is_zero() && accumulated_out.is_zero() {
+        let q192 = U1024::from(1u64) << 192;
+        let (num_price, den_price) =
+            if zero_for_one { (price_num, price_den) } else { (price_den, price_num) };
+        let numerator = num_price * q192;
+        let denominator = den_price * s0;
+        if denominator.is_zero() {
+            Err(SimulationError::FatalError("Zero denominator in shortcut".to_string()))
+        } else {
+            let s_target = numerator / denominator;
+            if s_target > U1024::from(U256::MAX) {
+                Err(SimulationError::FatalError("sqrt_ratio_target exceeds U256 range".to_string()))
+            } else {
+                Ok(s_target)
+            }
+        }
+    } else {
+        let liq = U1024::from(liquidity);
+        let q96 = U1024::from(1u64) << 96;
+        let acc_in = U1024::from(accumulated_in);
+        let acc_out = U1024::from(accumulated_out);
 
-    // Solve quadratic equation for the price delta
-    // If no valid solution exists (target not achievable), fall back to tick boundary
-    let sqrt_ratio_target_result = compute_sqrt_ratio_target(
-        &sqrt_ratio_current_big,
-        &liquidity_big,
-        &q96,
-        &target_price_num,
-        &target_price_den,
-        &fee_factor_num,
-        &fee_factor_den,
-        &residual,
-        zero_for_one,
-    );
+        let pos_term = price_num * acc_in;
+        let neg_term = acc_out * price_den;
+        let (residual_pos, residual_mag) = signed_sub_u1024(pos_term, neg_term);
 
-    // Check if target is valid and within bounds
+        compute_sqrt_ratio_target_ruint(
+            s0,
+            liq,
+            q96,
+            price_num,
+            price_den,
+            (residual_pos, residual_mag),
+            zero_for_one,
+        )
+    };
+
     let (sqrt_ratio_new, reached_target) = match sqrt_ratio_target_result {
-        Ok(sqrt_ratio_target) => {
+        Ok(s_target) => {
             if zero_for_one {
-                if sqrt_ratio_target >= sqrt_ratio_current_big {
-                    // Target is at or above current price - nothing to do
+                if s_target >= s0 {
                     return Ok((sqrt_ratio_current, U256::ZERO, U256::ZERO, U256::ZERO, true));
                 }
-                if sqrt_ratio_target < sqrt_ratio_limit_big {
-                    (sqrt_ratio_limit_big, false)
+                if s_target < s_limit {
+                    (s_limit, false)
                 } else {
-                    (sqrt_ratio_target, true)
+                    (s_target, true)
                 }
             } else {
-                if sqrt_ratio_target <= sqrt_ratio_current_big {
-                    // Target is at or below current price - nothing to do
+                if s_target <= s0 {
                     return Ok((sqrt_ratio_current, U256::ZERO, U256::ZERO, U256::ZERO, true));
                 }
-                if sqrt_ratio_target > sqrt_ratio_limit_big {
-                    (sqrt_ratio_limit_big, false)
+                if s_target > s_limit {
+                    (s_limit, false)
                 } else {
-                    (sqrt_ratio_target, true)
+                    (s_target, true)
                 }
             }
         }
-        Err(_) => {
-            // Target is not achievable with the given accumulated amounts
-            // Fall back to swapping to the tick boundary (maximum swap in this tick)
-            (sqrt_ratio_limit_big, false)
-        }
+        Err(_) => (s_limit, false),
     };
 
-    // Convert back to U256
-    let sqrt_ratio_new_u256 = biguint_to_u256(&sqrt_ratio_new);
+    let sqrt_ratio_new_u256 = u1024_to_u256(sqrt_ratio_new);
 
-    // Calculate amounts using the standard delta functions
     let (amount_in, amount_out) = if zero_for_one {
         let amount_in = sqrt_price_math::get_amount0_delta(
             sqrt_ratio_new_u256,
@@ -382,242 +443,164 @@ pub(crate) fn compute_swap_to_trade_price(
     Ok((sqrt_ratio_new_u256, amount_in, amount_out, fee_amount, reached_target))
 }
 
-/// Solves the quadratic equation x² + bx + c = 0 for the positive root.
-///
-/// Uses the numerically stable formula to avoid catastrophic cancellation:
-/// - When b > 0: x = -2c / (b + √(b² - 4c))  [stable for positive root]
-/// - When b ≤ 0: x = (-b + √(b² - 4c)) / 2   [standard formula]
-///
-/// # Arguments
-///
-/// * `b_num` - Numerator of coefficient b (can be negative)
-/// * `b_den` - Denominator of coefficient b (must be positive)
-/// * `c_num` - Numerator of coefficient c (can be negative)
-/// * `c_den` - Denominator of coefficient c (must be positive)
-///
-/// # Returns
-///
-/// The positive root as a BigUint, or an error if no positive real root exists.
-fn solve_quadratic(
-    b_num: &BigInt,
-    b_den: &BigUint,
-    c_num: &BigInt,
-    c_den: &BigUint,
-) -> Result<BigUint, SimulationError> {
-    // Discriminant: D = b² - 4c
-    // D = (b_num/b_den)² - 4*(c_num/c_den)
-    // D = (b_num² * c_den - 4 * c_num * b_den²) / (b_den² * c_den)
-    let b_den_sq = b_den * b_den;
-    let d_den = &b_den_sq * c_den;
+/// Solves x² + bx + c = 0 for the positive root using ruint fixed-width integers.
+/// b and c are represented as signed fractions: b = b_num/b_den, c = c_num/c_den.
+fn solve_quadratic_ruint(
+    (b_pos, b_mag): SignedU1024,
+    b_den: U1024,
+    (c_pos, c_mag): SignedU1024,
+    c_den: U1024,
+) -> Result<U1024, SimulationError> {
+    // D = b² - 4c = (b_num² * c_den - 4 * c_num * b_den²) / (b_den² * c_den)
+    let b_den_wide = U2048::from(b_den);
+    let b_mag_wide = U2048::from(b_mag);
+    let c_mag_wide = U2048::from(c_mag);
+    let c_den_wide = U2048::from(c_den);
 
-    let b_sq_term = b_num * b_num * BigInt::from(c_den.clone());
-    let four_c_term = BigInt::from(4u64) * c_num * BigInt::from(b_den_sq.clone());
-    let d_num = &b_sq_term - &four_c_term;
+    let b_den_sq = b_den_wide * b_den_wide;
 
-    if d_num.is_negative() {
+    // b_num² is always positive
+    let b_sq_term = b_mag_wide * b_mag_wide * c_den_wide;
+    // four_c: magnitude = 4 * c_mag * b_den², sign = c_pos
+    let four_c_mag = (c_mag_wide * b_den_sq) << 2;
+
+    // d_num = b_sq_term - (c_pos ? four_c_mag : -four_c_mag)
+    let (d_pos, d_mag) = if c_pos {
+        signed_sub_u2048(b_sq_term, four_c_mag)
+    } else {
+        (true, b_sq_term + four_c_mag)
+    };
+
+    if !d_pos {
         return Err(SimulationError::FatalError(
             "Negative discriminant - no real solution".to_string(),
         ));
     }
 
-    // sqrt(D) = sqrt(d_num) / sqrt(d_den)
-    let d_num_uint = d_num.magnitude();
-    let sqrt_d_num = d_num_uint.sqrt();
-    let sqrt_d_den = d_den.sqrt();
+    let d_den_val = b_den_sq * c_den_wide;
+    let sqrt_d_num = d_mag.root(2);
+    let sqrt_d_den = d_den_val.root(2);
 
     // Use numerically stable formula based on sign of b
-    let (x_num, x_den) = if !b_num.is_negative() {
-        // b >= 0: Use x = -2c / (b + sqrt(D)) to avoid catastrophic cancellation
-        // x = -2c / (b + sqrt(D))
-        // x = -2 * (c_num/c_den) / (b_num/b_den + sqrt_d_num/sqrt_d_den)
-        // x = -2 * c_num * b_den * sqrt_d_den / (c_den * (b_num * sqrt_d_den + sqrt_d_num * b_den))
-        let x_num = BigInt::from(-2i64) *
-            c_num *
-            BigInt::from(b_den.clone()) *
-            BigInt::from(sqrt_d_den.clone());
-        let x_den = BigInt::from(c_den.clone()) *
-            (b_num * BigInt::from(sqrt_d_den.clone()) +
-                BigInt::from(sqrt_d_num.clone()) * BigInt::from(b_den.clone()));
-        (x_num, x_den)
+    let (x_pos, x_mag, x_den_val) = if b_pos {
+        // b >= 0: x = -2c / (b + sqrt(D))
+        // x_num = -2 * c_num * b_den * sqrt_d_den, sign = !c_pos
+        // x_den = c_den * (b_num * sqrt_d_den + sqrt_d_num * b_den), sign = positive (both
+        // positive)
+        let x_num_mag = (c_mag_wide * b_den_wide * sqrt_d_den) << 1;
+        let x_num_pos = !c_pos;
+        let x_den_val = c_den_wide * (b_mag_wide * sqrt_d_den + sqrt_d_num * b_den_wide);
+        // x_den is always positive when b >= 0
+        (x_num_pos, x_num_mag, x_den_val)
     } else {
-        // b < 0: Use standard formula x = (-b + sqrt(D)) / 2
-        // x = (-b_num/b_den + sqrt_d_num/sqrt_d_den) / 2
-        // x = (-b_num * sqrt_d_den + sqrt_d_num * b_den) / (2 * b_den * sqrt_d_den)
-        let x_num = -b_num * BigInt::from(sqrt_d_den.clone()) +
-            BigInt::from(sqrt_d_num) * BigInt::from(b_den.clone());
-        let x_den = BigInt::from(2u64) * BigInt::from(b_den.clone()) * BigInt::from(sqrt_d_den);
-        (x_num, x_den)
+        // b < 0: x = (-b + sqrt(D)) / 2
+        // x_num = |b_num| * sqrt_d_den + sqrt_d_num * b_den (both positive)
+        // x_den = 2 * b_den * sqrt_d_den
+        let x_num_mag = b_mag_wide * sqrt_d_den + sqrt_d_num * b_den_wide;
+        let x_den_val = (b_den_wide * sqrt_d_den) << 1;
+        (true, x_num_mag, x_den_val)
     };
 
-    if x_num.is_negative() != x_den.is_negative() {
-        // Signs differ, so result would be negative
+    if !x_pos && x_mag != U2048::ZERO {
         return Err(SimulationError::FatalError("No positive solution".to_string()));
     }
 
-    // Both have same sign (both positive or both negative), take absolute values
-    let x_num_abs = x_num.magnitude().clone();
-    let x_den_abs = x_den.magnitude().clone();
+    // Round to nearest: (x_mag + x_den_val/2) / x_den_val
+    let result_wide = (x_mag + x_den_val / U2048::from(2u64)) / x_den_val;
 
-    // Add rounding: (x_num + x_den/2) / x_den for better precision
-    let x_num_rounded = x_num_abs + (&x_den_abs / BigUint::from(2u64));
-    let result = x_num_rounded / x_den_abs;
-
-    Ok(result)
+    Ok(u2048_to_u1024(result_wide))
 }
 
-/// Computes the quadratic coefficients for swap-to-trade-price with accumulated amounts.
-///
-/// Given the cumulative trade price constraint and Uniswap V3 swap formulas, this function
-/// computes the coefficients (b, c) for the quadratic equation x² + bx + c = 0, where x
-/// represents the sqrt_price delta needed to achieve the target cumulative trade price.
-///
-/// # Arguments
-///
-/// * `sqrt_ratio_current` - Current sqrt price (S₀) in Q96 format
-/// * `liquidity` - Active liquidity (L) in the current tick range
-/// * `q96` - The Q96 scaling factor (2^96)
-/// * `target_price_num` - Numerator of the target trade price (P)
-/// * `target_price_den` - Denominator of the target trade price
-/// * `fee_factor_num` - Numerator of fee factor γ = (1 - fee), i.e., (1_000_000 - fee_pips)
-/// * `fee_factor_den` - Denominator of fee factor (1_000_000)
-/// * `residual` - R × target_price_den, where R = P × accumulated_in - accumulated_out represents
-///   how much more output we need relative to what we have
-/// * `zero_for_one` - Swap direction: true for selling token0, false for selling token1
-///
-/// # Returns
-///
-/// A tuple (b_num, b_den, c_num, c_den) where b = b_num/b_den and c = c_num/c_den
-///
-/// # Coefficient Formulas
-///
-/// For zero_for_one (selling token0 for token1):
-/// - b = P×Q²/S₀ - S₀ - R×Q/L
-/// - c = R×Q×S₀/L
-///
-/// For one_for_zero (selling token1 for token0):
-/// - b = S₀ - Q²/(P×S₀) + R×Q/(P×L)
-/// - c = R×Q×S₀/(P×L)
-///
-/// Note: Fee factors are NOT included here because target_price is already fee-adjusted
-/// by the caller (formula_target = user_target / (1 - fee)).
-#[allow(clippy::too_many_arguments)]
-fn compute_quadratic_coefficients(
-    sqrt_ratio_current: &BigUint,
-    liquidity: &BigUint,
-    q96: &BigUint,
-    target_price_num: &BigUint,
-    target_price_den: &BigUint,
-    _fee_factor_num: &BigUint,
-    _fee_factor_den: &BigUint,
-    residual: &BigInt,
+/// Computes quadratic coefficients using ruint.
+/// Returns (b_num_signed, b_den, c_num_signed, c_den).
+fn compute_quadratic_coefficients_ruint(
+    s0: U1024,
+    liq: U1024,
+    q96: U1024,
+    price_num: U1024,
+    price_den: U1024,
+    residual: SignedU1024,
     zero_for_one: bool,
-) -> (BigInt, BigUint, BigInt, BigUint) {
+) -> (SignedU1024, U1024, SignedU1024, U1024) {
+    let q96_sq = q96 * q96;
+    let q96_times_s0 = q96 * s0;
+    let (res_pos, res_mag) = residual;
+
     if zero_for_one {
-        // b = P×Q²/S₀ - S₀ - R×Q/L
-        // Common denominator: sqrt_ratio_current × liquidity × target_price_den
-        let b_den = sqrt_ratio_current * liquidity * target_price_den;
+        // b_den = S₀ × L × P_den
+        let b_den = s0 * liq * price_den;
+        // term1 = P_num × Q² × L (positive)
+        let term1 = price_num * q96_sq * liq;
+        // term2 = S₀ × b_den = S₀² × L × P_den (positive)
+        let term2 = s0 * b_den;
+        // term3 = residual × Q × S₀ (signed, sign = res_pos)
+        let term3_mag = res_mag * q96_times_s0;
 
-        // Term1: P×Q²/S₀ scaled by b_den = P×Q²×L×target_price_den
-        let term1 = BigInt::from(target_price_num * q96 * q96 * liquidity);
-        // Term2: S₀ scaled by b_den = S₀²×L×target_price_den
-        let term2 = BigInt::from(sqrt_ratio_current * &b_den);
-        // Term3: R×Q/L scaled by b_den = R×Q×S₀×target_price_den
-        let term3 = residual * BigInt::from(q96 * sqrt_ratio_current);
+        // b_num = term1 - term2 - term3
+        let step1 = signed_sub_u1024(term1, term2);
+        let b_num = signed_sub_signed_u1024(step1, (res_pos, term3_mag));
 
-        let b_num = term1 - term2 - term3;
-
-        // c = R×Q×S₀/L
-        let c_num = residual * BigInt::from(q96 * sqrt_ratio_current);
-        let c_den = target_price_den * liquidity;
+        // c_num = residual × Q × S₀, c_den = P_den × L
+        let c_num = (res_pos, res_mag * q96_times_s0);
+        let c_den = price_den * liq;
 
         (b_num, b_den, c_num, c_den)
     } else {
-        // b = S₀ - Q²/(P×S₀) + R×Q/(P×L)
-        // Note: The +R term is derived from cross-multiplication of the trade price equation
-        // Common denominator: target_price_num × sqrt_ratio_current × liquidity × target_price_den
-        let b_den = target_price_num * sqrt_ratio_current * liquidity * target_price_den;
+        // b_den = P_num × S₀ × L × P_den
+        let b_den = price_num * s0 * liq * price_den;
+        // term1 = S₀ × b_den = S₀² × P_num × L × P_den (positive)
+        let term1 = s0 * b_den;
+        // term2 = Q² × P_den × L × P_den (positive)
+        let term2 = q96_sq * price_den * liq * price_den;
+        // term3 = residual × Q × S₀ × P_den (signed, sign = res_pos)
+        let term3_mag = res_mag * q96_times_s0 * price_den;
 
-        // Term1: S₀ scaled by b_den
-        let term1 = BigInt::from(sqrt_ratio_current * &b_den);
-        // Term2: Q²/(P×S₀) scaled by b_den = Q²×L×target_price_den²
-        let term2 = BigInt::from(q96 * q96 * target_price_den * liquidity * target_price_den);
-        // Term3: R×Q/(P×L) scaled by b_den = R×Q×S₀×target_price_den
-        let term3 = residual * BigInt::from(q96 * sqrt_ratio_current * target_price_den);
+        // b_num = term1 - term2 + term3
+        let step1 = signed_sub_u1024(term1, term2);
+        let b_num = signed_add_signed_u1024(step1, (res_pos, term3_mag));
 
-        let b_num = term1 - term2 + term3; // Note: +term3, not -term3
-
-        // c = R×Q×S₀/(P×L)
-        let c_num = residual * BigInt::from(q96 * sqrt_ratio_current);
-        let c_den = target_price_num * liquidity;
+        // c_num = residual × Q × S₀, c_den = P_num × L
+        let c_num = (res_pos, res_mag * q96_times_s0);
+        let c_den = price_num * liq;
 
         (b_num, b_den, c_num, c_den)
     }
 }
 
-/// Computes the target sqrt_ratio for swap-to-trade-price with accumulated amounts.
-///
-/// This function solves the quadratic equation derived from the cumulative trade price
-/// constraint `(accumulated_out + new_out) / (accumulated_in + new_in) = target_price`
-/// and returns the sqrt_ratio that achieves this target.
-///
-/// # Arguments
-///
-/// * `sqrt_ratio_current` - Current sqrt price (S₀) in Q96 format
-/// * `liquidity` - Active liquidity (L) in the current tick range
-/// * `q96` - The Q96 scaling factor (2^96)
-/// * `target_price_num` - Numerator of the target trade price
-/// * `target_price_den` - Denominator of the target trade price
-/// * `fee_factor_num` - Numerator of fee factor γ = (1 - fee), i.e., (1_000_000 - fee_pips)
-/// * `fee_factor_den` - Denominator of fee factor (1_000_000)
-/// * `residual` - R × target_price_den, where R = P × accumulated_in - accumulated_out
-/// * `zero_for_one` - Swap direction: true for selling token0, false for selling token1
-///
-/// # Returns
-///
-/// The target sqrt_ratio (S₁) that achieves the cumulative trade price:
-/// - For zero_for_one: S₁ = S₀ - delta (price decreases)
-/// - For one_for_zero: S₁ = S₀ + delta (price increases)
-#[allow(clippy::too_many_arguments)]
-fn compute_sqrt_ratio_target(
-    sqrt_ratio_current: &BigUint,
-    liquidity: &BigUint,
-    q96: &BigUint,
-    target_price_num: &BigUint,
-    target_price_den: &BigUint,
-    fee_factor_num: &BigUint,
-    fee_factor_den: &BigUint,
-    residual: &BigInt,
+/// Computes the target sqrt_ratio using ruint types.
+fn compute_sqrt_ratio_target_ruint(
+    s0: U1024,
+    liq: U1024,
+    q96: U1024,
+    price_num: U1024,
+    price_den: U1024,
+    residual: SignedU1024,
     zero_for_one: bool,
-) -> Result<BigUint, SimulationError> {
-    // Compute quadratic coefficients
-    let (b_num, b_den, c_num, c_den) = compute_quadratic_coefficients(
-        sqrt_ratio_current,
-        liquidity,
+) -> Result<U1024, SimulationError> {
+    let (b_num, b_den, c_num, c_den) = compute_quadratic_coefficients_ruint(
+        s0,
+        liq,
         q96,
-        target_price_num,
-        target_price_den,
-        fee_factor_num,
-        fee_factor_den,
+        price_num,
+        price_den,
         residual,
         zero_for_one,
     );
 
-    // Solve for delta (the sqrt_price change)
-    let delta = solve_quadratic(&b_num, &b_den, &c_num, &c_den)?;
+    let delta = solve_quadratic_ruint(b_num, b_den, c_num, c_den)?;
 
-    // S₁ = S₀ - delta (zero_for_one) or S₀ + delta (one_for_zero)
     let result = if zero_for_one {
-        if *sqrt_ratio_current < delta {
+        if s0 < delta {
             return Err(SimulationError::FatalError(
                 "sqrt_ratio_target would be negative".to_string(),
             ));
         }
-        sqrt_ratio_current - delta
+        s0 - delta
     } else {
-        sqrt_ratio_current + delta
+        s0 + delta
     };
 
-    if result.to_bytes_le().len() > 32 {
+    if result > U1024::from(U256::MAX) {
         return Err(SimulationError::FatalError("sqrt_ratio_target exceeds U256 range".to_string()));
     }
 
@@ -630,6 +613,7 @@ mod tests {
     use num_traits::ToPrimitive;
 
     use super::*;
+    use crate::evm::protocol::u256_num::{biguint_to_u256, u256_to_biguint};
 
     /// Verifies that the achieved trade price is within tolerance of the target trade price.
     ///
@@ -1656,5 +1640,172 @@ mod tests {
             )
             .expect("Final cumulative trade price should match target");
         }
+    }
+
+    #[test]
+    fn test_zero_accumulated_shortcut_matches_full_solver_z4o() {
+        let sqrt_price_current = U256::from_str("112045541949572287496682733568").unwrap();
+        let liquidity = 1_000_000_000_000_000_000u128;
+        let fee_pips = 3000u32;
+        let sqrt_ratio_limit = U256::from_str("79228162514264337593543950336").unwrap();
+
+        let user_target_num = BigUint::from(19u64);
+        let user_target_den = BigUint::from(10u64);
+        let formula_target_num = &user_target_num * BigUint::from(1_000_000u32);
+        let formula_target_den = &user_target_den * BigUint::from(1_000_000u32 - fee_pips);
+
+        let (sqrt_price_new, amount_in, amount_out, fee_amount, reached_target) =
+            compute_swap_to_trade_price(
+                sqrt_price_current,
+                sqrt_ratio_limit,
+                liquidity,
+                &formula_target_num,
+                &formula_target_den,
+                fee_pips,
+                U256::ZERO,
+                U256::ZERO,
+            )
+            .expect("Should succeed with zero accumulated");
+
+        assert!(reached_target, "Should reach target");
+        assert!(amount_in > U256::ZERO);
+        assert!(amount_out > U256::ZERO);
+        assert!(fee_amount > U256::ZERO);
+
+        verify_trade_price_tolerance(
+            amount_in,
+            amount_out,
+            &formula_target_num,
+            &formula_target_den,
+            0.00001,
+        )
+        .expect("Shortcut should match target within tolerance");
+
+        let large_amount =
+            I256::checked_from_sign_and_abs(Sign::Positive, U256::from(u128::MAX)).unwrap();
+        let (step_sqrt, step_in, step_out, _) = compute_swap_step(
+            sqrt_price_current,
+            sqrt_price_new,
+            liquidity,
+            large_amount,
+            fee_pips,
+        )
+        .expect("compute_swap_step should succeed");
+        assert_eq!(step_sqrt, sqrt_price_new);
+        assert_eq!(step_in, amount_in);
+        assert_eq!(step_out, amount_out);
+    }
+
+    #[test]
+    fn test_zero_accumulated_shortcut_matches_full_solver_o4z() {
+        let sqrt_price_current = U256::from_str("112045541949572287496682733568").unwrap();
+        let liquidity = 1_000_000_000_000_000_000u128;
+        let fee_pips = 3000u32;
+        let sqrt_ratio_limit = U256::from_str("150000000000000000000000000000").unwrap();
+
+        let user_target_num = BigUint::from(485u64);
+        let user_target_den = BigUint::from(1000u64);
+        let formula_target_num = &user_target_num * BigUint::from(1_000_000u32);
+        let formula_target_den = &user_target_den * BigUint::from(1_000_000u32 - fee_pips);
+
+        let (sqrt_price_new, amount_in, amount_out, fee_amount, reached_target) =
+            compute_swap_to_trade_price(
+                sqrt_price_current,
+                sqrt_ratio_limit,
+                liquidity,
+                &formula_target_num,
+                &formula_target_den,
+                fee_pips,
+                U256::ZERO,
+                U256::ZERO,
+            )
+            .expect("Should succeed with zero accumulated");
+
+        assert!(reached_target, "Should reach target");
+        assert!(amount_in > U256::ZERO);
+        assert!(amount_out > U256::ZERO);
+        assert!(fee_amount > U256::ZERO);
+
+        verify_trade_price_tolerance(
+            amount_in,
+            amount_out,
+            &formula_target_num,
+            &formula_target_den,
+            0.00001,
+        )
+        .expect("Shortcut should match target within tolerance");
+
+        let large_amount =
+            I256::checked_from_sign_and_abs(Sign::Positive, U256::from(u128::MAX)).unwrap();
+        let (step_sqrt, step_in, step_out, _) = compute_swap_step(
+            sqrt_price_current,
+            sqrt_price_new,
+            liquidity,
+            large_amount,
+            fee_pips,
+        )
+        .expect("compute_swap_step should succeed");
+        assert_eq!(step_sqrt, sqrt_price_new);
+        assert_eq!(step_in, amount_in);
+        assert_eq!(step_out, amount_out);
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_compute_swap_to_trade_price() {
+        use std::time::Instant;
+
+        let sqrt_price_current = U256::from_str("112045541949572287496682733568").unwrap();
+        let liquidity = 1_000_000_000_000_000_000u128;
+        let fee_pips = 3000u32;
+        let sqrt_ratio_limit = U256::from_str("79228162514264337593543950336").unwrap();
+
+        let user_target_num = BigUint::from(19u64);
+        let user_target_den = BigUint::from(10u64);
+        let formula_target_num = &user_target_num * BigUint::from(1_000_000u32);
+        let formula_target_den = &user_target_den * BigUint::from(1_000_000u32 - fee_pips);
+
+        let iterations = 10_000;
+
+        // Benchmark zero-accumulated (shortcut path)
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = std::hint::black_box(compute_swap_to_trade_price(
+                sqrt_price_current,
+                sqrt_ratio_limit,
+                liquidity,
+                &formula_target_num,
+                &formula_target_den,
+                fee_pips,
+                U256::ZERO,
+                U256::ZERO,
+            ));
+        }
+        let zero_accum_ns = start.elapsed().as_nanos() / iterations;
+
+        // Benchmark with accumulated (full quadratic path)
+        let accumulated_in = U256::from(100_000u128);
+        let accumulated_out = U256::from(190_000u128);
+        let target_num = BigUint::from(195u64);
+        let target_den = BigUint::from(100u64);
+
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let _ = std::hint::black_box(compute_swap_to_trade_price(
+                sqrt_price_current,
+                sqrt_ratio_limit,
+                liquidity,
+                &target_num,
+                &target_den,
+                fee_pips,
+                accumulated_in,
+                accumulated_out,
+            ));
+        }
+        let accum_ns = start.elapsed().as_nanos() / iterations;
+
+        println!("\n=== swap_to_trade_price benchmark ({iterations} iterations) ===");
+        println!("Zero-accumulated (shortcut): {} ns/iter", zero_accum_ns);
+        println!("With accumulated (quadratic): {} ns/iter", accum_ns);
     }
 }
