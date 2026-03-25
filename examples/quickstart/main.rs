@@ -42,7 +42,7 @@ use tycho_simulation::{
         engine_db::tycho_db::PreCachedDB,
         protocol::{
             ekubo::state::EkuboState,
-            ekubo_v3::{self, state::EkuboV3State},
+            ekubo_v3::state::EkuboV3State,
             erc4626::state::ERC4626State,
             filters::{balancer_v2_pool_filter, curve_pool_filter},
             fluid::FluidV1,
