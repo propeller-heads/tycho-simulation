@@ -42,8 +42,10 @@ use tycho_simulation::{
         engine_db::tycho_db::PreCachedDB,
         protocol::{
             ekubo::state::EkuboState,
-            ekubo_v3::{self, state::EkuboV3State},
+            ekubo_v3::state::EkuboV3State,
+            erc4626::state::ERC4626State,
             filters::{balancer_v2_pool_filter, curve_pool_filter},
+            fluid::FluidV1,
             pancakeswap_v2::state::PancakeswapV2State,
             u256_num::biguint_to_u256,
             uniswap_v2::state::UniswapV2State,
@@ -59,6 +61,8 @@ use tycho_simulation::{
     utils::{get_default_url, load_all_tokens},
 };
 use tycho_test::execution::models::Transaction;
+
+const NATIVE_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
 #[derive(Parser)]
 struct Cli {
@@ -189,16 +193,15 @@ async fn main() {
                 // .exchange::<UniswapV4State>("uniswap_v4_hooks", tvl_filter.clone(),
                 // Some(uniswap_v4_angstrom_hook_pool_filter))
                 .exchange::<EkuboState>("ekubo_v2", tvl_filter.clone(), None)
-                .exchange::<EkuboV3State>("ekubo_v3", tvl_filter.clone(), Some(ekubo_v3::filter_fn))
+                .exchange::<EkuboV3State>("ekubo_v3", tvl_filter.clone(), None)
+                .exchange::<FluidV1>("fluid_v1", tvl_filter.clone(), None)
+                .exchange::<ERC4626State>("erc4626", tvl_filter.clone(), None)
                 .exchange::<EVMPoolState<PreCachedDB>>(
                     "vm:curve",
                     tvl_filter.clone(),
                     Some(curve_pool_filter),
-                );
-            // COMING SOON!
-            // .exchange::<UniswapV4State>("uniswap_v4_hooks", tvl_filter.clone(),
-            // Some(uniswap_v4_pool_with_euler_hook_filter));
-            // .exchange::<EVMPoolState<PreCachedDB>>("vm:maverick_v2", tvl_filter.clone(), None);
+                )
+                .exchange::<EVMPoolState<PreCachedDB>>("vm:maverick_v2", tvl_filter.clone(), None);
         }
         Chain::Base => {
             protocol_stream = protocol_stream
@@ -300,7 +303,6 @@ async fn main() {
                 chain.id(),
                 encoded_solution.clone(),
                 &solution,
-                chain.native_token().address,
                 signer.clone(),
             )
             .expect("Failed to encode router call");
@@ -373,7 +375,7 @@ async fn main() {
 
             match choice {
                 "simulate" => {
-                    println!("\nSimulating by performing an approval (for permit2) and a swap transaction...");
+                    println!("\nSimulating swap transaction...");
 
                     let (approval_request, swap_request) = get_tx_requests(
                         provider.clone(),
@@ -385,11 +387,17 @@ async fn main() {
                     )
                     .await;
 
+                    let mut calls = Vec::new();
+                    if let Some(approval) = approval_request {
+                        calls.push(approval);
+                    }
+                    calls.push(swap_request);
+
                     let payload = SimulatePayload {
                         block_state_calls: vec![SimBlock {
                             block_overrides: None,
                             state_overrides: None,
-                            calls: vec![approval_request, swap_request],
+                            calls,
                         }],
                         trace_transfers: true,
                         validation: true,
@@ -629,6 +637,14 @@ fn create_solution(
     let multiplier = &bps - slippage_percent;
     let min_amount_out = (expected_amount * &multiplier) / &bps;
 
+    let native = Bytes::from_str(NATIVE_ADDRESS).expect("Valid native address");
+    // Native ETH can't use Permit2 (not an ERC20), so use the payable `singleSwap` entry point.
+    let transfer_type = if sell_token.address == native {
+        UserTransferType::TransferFrom
+    } else {
+        UserTransferType::TransferFromPermit2
+    };
+
     // Then we create a solution object with the previous swap
     Solution::new(
         user_address.clone(),
@@ -639,7 +655,7 @@ fn create_solution(
         min_amount_out,
         vec![simple_swap],
     )
-    .with_user_transfer_type(UserTransferType::TransferFromPermit2)
+    .with_user_transfer_type(transfer_type)
 }
 
 /// Encodes a transaction for the Tycho Router using the `singleSwapPermit2` method.
@@ -654,15 +670,11 @@ fn encode_tycho_router_call(
     chain_id: u64,
     encoded_solution: EncodedSolution,
     solution: &Solution,
-    native_address: Bytes,
     signer: PrivateKeySigner,
 ) -> Result<Transaction, EncodingError> {
-    let p = encoded_solution
-        .permit()
-        .expect("Permit object must be set");
-    let permit = PermitSingle::try_from(p)
-        .map_err(|_| EncodingError::InvalidInput("Invalid permit".to_string()))?;
-    let signature = sign_permit(chain_id, p, signer)?;
+    let native_address = Bytes::from_str(NATIVE_ADDRESS).expect("Valid native address");
+    let is_native = *solution.token_in() == native_address;
+
     let amount_in = biguint_to_u256(solution.amount_in());
     let min_amount_out = biguint_to_u256(solution.min_amount_out());
     let token_in = Address::from_slice(solution.token_in());
@@ -671,25 +683,40 @@ fn encode_tycho_router_call(
     let client_fee_params: (u16, Address, U256, U256, Vec<u8>) =
         (0, Address::ZERO, U256::ZERO, U256::ZERO, vec![]);
 
-    let method_calldata = (
-        amount_in,
-        token_in,
-        token_out,
-        min_amount_out,
-        receiver,
-        client_fee_params,
-        permit,
-        signature.as_bytes().to_vec(),
-        encoded_solution.swaps(),
-    )
-        .abi_encode();
+    let method_calldata = if is_native {
+        (
+            amount_in,
+            token_in,
+            token_out,
+            min_amount_out,
+            receiver,
+            client_fee_params,
+            encoded_solution.swaps(),
+        )
+            .abi_encode()
+    } else {
+        let p = encoded_solution
+            .permit()
+            .expect("Permit object must be set");
+        let permit = PermitSingle::try_from(p)
+            .map_err(|_| EncodingError::InvalidInput("Invalid permit".to_string()))?;
+        let signature = sign_permit(chain_id, p, signer)?;
+        (
+            amount_in,
+            token_in,
+            token_out,
+            min_amount_out,
+            receiver,
+            client_fee_params,
+            permit,
+            signature.as_bytes().to_vec(),
+            encoded_solution.swaps(),
+        )
+            .abi_encode()
+    };
 
     let contract_interaction = encode_input(encoded_solution.function_signature(), method_calldata);
-    let value = if *solution.token_in() == native_address {
-        solution.amount_in().clone()
-    } else {
-        BigUint::ZERO
-    };
+    let value = if is_native { solution.amount_in().clone() } else { BigUint::ZERO };
     Ok(Transaction::new(
         encoded_solution
             .interacting_with()
@@ -761,7 +788,7 @@ async fn get_tx_requests(
     sell_token_address: Address,
     tx: Transaction,
     chain_id: u64,
-) -> (TransactionRequest, TransactionRequest) {
+) -> (Option<TransactionRequest>, TransactionRequest) {
     let block = provider
         .get_block_by_number(BlockNumberOrTag::Latest)
         .await
@@ -775,29 +802,38 @@ async fn get_tx_requests(
     let max_priority_fee_per_gas = 1_000_000_000u64;
     let max_fee_per_gas = base_fee + max_priority_fee_per_gas;
 
-    let approve_function_signature = "approve(address,uint256)";
-    let args = (
-        Address::from_str("0x000000000022D473030F116dDEE9F6B43aC78BA3")
-            .expect("Couldn't convert to address"),
-        amount_in,
-    );
-    let data = encode_input(approve_function_signature, args.abi_encode());
     let nonce = provider
         .get_transaction_count(user_address)
         .await
         .expect("Failed to get nonce");
 
-    let approval_request = TransactionRequest {
-        to: Some(TxKind::Call(sell_token_address)),
-        from: Some(user_address),
-        value: None,
-        input: TransactionInput { input: Some(AlloyBytes::from(data)), data: None },
-        gas: Some(100_000u64),
-        chain_id: Some(chain_id),
-        max_fee_per_gas: Some(max_fee_per_gas.into()),
-        max_priority_fee_per_gas: Some(max_priority_fee_per_gas.into()),
-        nonce: Some(nonce),
-        ..Default::default()
+    let is_native = sell_token_address == Address::ZERO;
+
+    let (approval_request, swap_nonce) = if is_native {
+        (None, nonce)
+    } else {
+        let approve_function_signature = "approve(address,uint256)";
+        let args = (
+            Address::from_str("0x000000000022D473030F116dDEE9F6B43aC78BA3")
+                .expect("Couldn't convert to address"),
+            amount_in,
+        );
+        let data = encode_input(approve_function_signature, args.abi_encode());
+        (
+            Some(TransactionRequest {
+                to: Some(TxKind::Call(sell_token_address)),
+                from: Some(user_address),
+                value: None,
+                input: TransactionInput { input: Some(AlloyBytes::from(data)), data: None },
+                gas: Some(100_000u64),
+                chain_id: Some(chain_id),
+                max_fee_per_gas: Some(max_fee_per_gas.into()),
+                max_priority_fee_per_gas: Some(max_priority_fee_per_gas.into()),
+                nonce: Some(nonce),
+                ..Default::default()
+            }),
+            nonce + 1,
+        )
     };
 
     let swap_request = TransactionRequest {
@@ -809,7 +845,7 @@ async fn get_tx_requests(
         chain_id: Some(chain_id),
         max_fee_per_gas: Some(max_fee_per_gas.into()),
         max_priority_fee_per_gas: Some(max_priority_fee_per_gas.into()),
-        nonce: Some(nonce + 1),
+        nonce: Some(swap_nonce),
         ..Default::default()
     };
     (approval_request, swap_request)
@@ -887,7 +923,7 @@ async fn execute_swap_transaction(
     tx: Transaction,
     chain_id: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\nExecuting by performing an approval (for permit2) and a swap transaction...");
+    println!("\nExecuting swap transaction...");
     let (approval_request, swap_request) = get_tx_requests(
         provider.clone(),
         biguint_to_u256(amount_in),
@@ -898,16 +934,18 @@ async fn execute_swap_transaction(
     )
     .await;
 
-    let approval_receipt = provider
-        .send_transaction(approval_request)
-        .await?;
+    if let Some(approval) = approval_request {
+        let approval_receipt = provider
+            .send_transaction(approval)
+            .await?;
 
-    let approval_result = approval_receipt.get_receipt().await?;
-    println!(
-        "\nApproval transaction sent with hash: {hash:?} and status: {status:?}",
-        hash = approval_result.transaction_hash,
-        status = approval_result.status()
-    );
+        let approval_result = approval_receipt.get_receipt().await?;
+        println!(
+            "\nApproval transaction sent with hash: {hash:?} and status: {status:?}",
+            hash = approval_result.transaction_hash,
+            status = approval_result.status()
+        );
+    }
 
     let swap_receipt = provider
         .send_transaction(swap_request)

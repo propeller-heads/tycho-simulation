@@ -9,6 +9,7 @@ This quickstart guide enables you to:
 
 ```bash
 export RPC_URL=<your-rpc-url>
+export TYCHO_API_KEY=<your-tycho-key>
 cargo run --release --example quickstart
 ```
 
@@ -18,6 +19,7 @@ If you want a different trade or chain, you can do:
 
 ```bash
 export RPC_URL=<rpc-url-for-chain>
+export TYCHO_API_KEY=<your-tycho-key>
 cargo run --release --example quickstart -- --sell-token "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" --buy-token "0x4200000000000000000000000000000000000006" --sell-amount 10 --chain "base"
 ```
 
