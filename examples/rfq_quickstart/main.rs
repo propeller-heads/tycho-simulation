@@ -27,7 +27,8 @@ use tycho_common::{models::token::Token, simulation::protocol_sim::ProtocolSim, 
 use tycho_execution::encoding::{
     errors::EncodingError,
     evm::{
-        approvals::permit2::PermitSingle, encoder_builders::TychoRouterEncoderBuilder,
+        approvals::permit2::{Permit2, PermitSingle},
+        encoder_builders::TychoRouterEncoderBuilder,
         swap_encoder::swap_encoder_registry::SwapEncoderRegistry,
     },
     models,
@@ -771,12 +772,16 @@ fn encode_tycho_router_call(
     native_address: Bytes,
     signer: PrivateKeySigner,
 ) -> Result<Transaction, EncodingError> {
-    let p = encoded_solution
-        .permit()
-        .expect("Permit object must be set");
-    let permit = PermitSingle::try_from(p)
+    let permit2 = Permit2::new()?;
+    let permit_single = permit2.get_permit(
+        encoded_solution.interacting_with(),
+        solution.sender(),
+        solution.token_in(),
+        solution.amount_in(),
+    )?;
+    let permit = PermitSingle::try_from(&permit_single)
         .map_err(|_| EncodingError::InvalidInput("Invalid permit".to_string()))?;
-    let signature = sign_permit(chain_id, p, signer)?;
+    let signature = sign_permit(chain_id, &permit_single, signer)?;
     let amount_in = biguint_to_u256(solution.amount_in());
     let min_amount_out = biguint_to_u256(solution.min_amount_out());
     let token_in = Address::from_slice(solution.token_in());

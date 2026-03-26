@@ -7430,9 +7430,9 @@ dependencies = [
 
 [[package]]
 name = "tycho-execution"
-version = "0.169.0"
+version = "0.170.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c508534303c5c51590a0efdc3010fabdcbddd0a1aa12c531c2bb8ad929b072fa"
+checksum = "4e63bfe29aee2d12e1e49674056bfb94a264dd8d7bb66ca70200de0ab58eea06"
 dependencies = [
  "alloy",
  "chrono",
