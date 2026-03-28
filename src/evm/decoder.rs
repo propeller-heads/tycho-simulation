@@ -9,7 +9,9 @@ use alloy::primitives::{Address, U256};
 use thiserror::Error;
 use tokio::sync::{RwLock, RwLockReadGuard};
 use tracing::{debug, error, info, warn};
-use tycho_client::feed::{synchronizer::ComponentWithState, BlockHeader, FeedMessage, HeaderLike};
+use tycho_client::feed::{
+    synchronizer::ComponentWithState, BlockHeader, FeedMessage, HeaderLike, SynchronizerState,
+};
 use tycho_common::{
     dto::{ChangeType, ProtocolStateDelta},
     models::{token::Token, Chain},
@@ -226,11 +228,14 @@ where
         let mut msg_failed_components = HashSet::new();
 
         let header = msg
-            .state_msgs
+            .sync_states
             .values()
-            .next()
+            .filter_map(|s| match s {
+                SynchronizerState::Ready(b) | SynchronizerState::Delayed(b) => Some(b),
+                _ => None,
+            })
+            .max_by_key(|b| b.number)
             .ok_or_else(|| StreamDecodeError::Fatal("Missing block!".into()))?
-            .header
             .clone();
 
         let block_number_or_timestamp = header
