@@ -1,3 +1,40 @@
+## [0.252.0](https://github.com/propeller-heads/tycho-simulation/compare/0.251.1...0.252.0) (2026-03-26)
+
+
+### Features
+
+* Rollback tycho-execution Router v3 usage in simulation ([9eb709b](https://github.com/propeller-heads/tycho-simulation/commit/9eb709b8f3bfe1a274e30c310889663f00ba1919))
+
+## [0.251.1](https://github.com/propeller-heads/tycho-simulation/compare/0.251.0...0.251.1) (2026-03-25)
+
+
+### Bug Fixes
+
+* Add backward compatibility for Ekubo v3 attribute decoding ([384ede2](https://github.com/propeller-heads/tycho-simulation/commit/384ede2891fe8d9a717cc67567554a63a571bb14)), closes [#538](https://github.com/propeller-heads/tycho-simulation/issues/538)
+* add ekubo_v3 filter functions in examples ([4bdae22](https://github.com/propeller-heads/tycho-simulation/commit/4bdae22b5e6b11c5628aa843badcc366fb3b5faf))
+* Correct doc comment on extension_type_from_attributes_or_address ([95359de](https://github.com/propeller-heads/tycho-simulation/commit/95359def39a27009b42a73b862267d845be33f4e))
+* Fall through to address-based detection when extension_id is 0 or unknown ([ffcdf65](https://github.com/propeller-heads/tycho-simulation/commit/ffcdf65af032823bf622e961bfebafe76a65a9e8))
+
+## [0.251.0](https://github.com/propeller-heads/tycho-simulation/compare/0.250.1...0.251.0) (2026-03-25)
+
+
+### Features
+
+* Upgrade to use tycho_contracts (Router v3) ([41d783e](https://github.com/propeller-heads/tycho-simulation/commit/41d783e2abb205b1182a885571696b25140131e9))
+* Use newly deploy tycho-execution (Router v3) ([8201331](https://github.com/propeller-heads/tycho-simulation/commit/820133189419592c0b2e8e8e79b93db4b6a78463))
+
+
+### Bug Fixes
+
+* Update tycho-execution to 0.167.0 ([1d57d89](https://github.com/propeller-heads/tycho-simulation/commit/1d57d897d6fcfebd8a3499ba97819f904d75304b))
+
+## [0.250.1](https://github.com/propeller-heads/tycho-simulation/compare/0.250.0...0.250.1) (2026-03-24)
+
+
+### Bug Fixes
+
+* replace assert\! panics with error returns in sqrt_price_math ([bb6a1f8](https://github.com/propeller-heads/tycho-simulation/commit/bb6a1f84b5a5508b8611036efd600eb5a44d4e50))
+
 ## [0.250.0](https://github.com/propeller-heads/tycho-simulation/compare/0.249.0...0.250.0) (2026-03-16)
 
 

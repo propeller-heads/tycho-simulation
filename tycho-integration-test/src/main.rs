@@ -1051,7 +1051,6 @@ async fn process_state(
             amount_in.clone(),
             chain,
             None,
-            false,
         ) {
             Ok(res) => res,
             Err(e) => {
@@ -1142,7 +1141,7 @@ fn process_execution_result(
                 &overrides,
                 Some(&execution_info.transaction),
                 Some(&block),
-                Address::from_slice(&execution_info.solution.sender[..20]),
+                Address::from_slice(&execution_info.solution.sender()[..20]),
             );
 
             let overwrites_string = if let Some(overwrites) = state_overwrites.as_ref() {
@@ -1156,7 +1155,7 @@ fn process_execution_result(
                     event_type = "execution_slippage",
                     token_in = %execution_info.token_in,
                     token_out = %execution_info.token_out,
-                    amount_in = %execution_info.solution.given_amount,
+                    amount_in = %execution_info.solution.amount_in(),
                     simulated_amount  = %amount_out,
                     executed_amount = %execution_info.expected_amount_out,
                     slippage_ratio = slippage,
@@ -1214,7 +1213,7 @@ fn process_execution_result(
                 &overrides,
                 Some(&execution_info.transaction),
                 Some(&block),
-                Address::from_slice(&execution_info.solution.sender[..20]),
+                Address::from_slice(&execution_info.solution.sender()[..20]),
             );
 
             let overwrites_string = if let Some(overwrites) = state_overwrites.as_ref() {
@@ -1228,7 +1227,7 @@ fn process_execution_result(
                 error_message = %revert_reason,
                 error_name = %error_name,
                 error_category = %error_category,
-                amount_in =%execution_info.solution.given_amount,
+                amount_in =%execution_info.solution.amount_in(),
                 token_in = %execution_info.token_in,
                 token_out = %execution_info.token_out,
                 tenderly_url = %tenderly_url,
@@ -1251,7 +1250,7 @@ fn process_execution_result(
                 event_type = "simulation_execution_failure",
                 error_message = %error_msg,
                 error_category = %error_category,
-                amount_in =%execution_info.solution.given_amount,
+                amount_in =%execution_info.solution.amount_in(),
                 token_in = %execution_info.token_in,
                 token_out = %execution_info.token_out,
                 "Failed to simulate swap: {error_msg}"
