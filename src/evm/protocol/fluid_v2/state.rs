@@ -636,24 +636,54 @@ impl DexVariables2 {
         let fetch_dynamic_fee_flag = ((value >> 141u32) & U256::from(1u64)) == U256::from(1u64);
         let fee_version = (value >> 152u32) & u256_mask(4);
 
-        let lp_fee = (value >> 156u32) & u256_mask(16);
-        let max_decay_time = (value >> 156u32) & u256_mask(12);
-        let price_impact_to_fee_division_factor = (value >> 168u32) & u256_mask(8);
-        let min_fee = (value >> 176u32) & u256_mask(16);
-        let max_fee = (value >> 192u32) & u256_mask(16);
-
-        let net_price_impact_sign = ((value >> 208u32) & U256::from(1u64)) == U256::from(1u64);
-        let net_price_impact_abs = ((value >> 209u32) & u256_mask(20)).to::<u32>() as i64;
-        let net_price_impact = if net_price_impact_abs == 0 {
-            0
-        } else if net_price_impact_sign {
-            net_price_impact_abs
+        // Bits [156:] are interpreted differently based on fee_version.
+        // fee_version 0: [156:171] = lp_fee (16 bits), remaining bits unused.
+        // fee_version 1+: [156:167] = max_decay_time (12 bits),
+        //   [168:175] = price_impact_to_fee_division_factor, [176:191] = min_fee,
+        //   [192:207] = max_fee, [208] = net_price_impact sign, [209:228] = magnitude,
+        //   [229:243] = last_update_timestamp, [244:255] = decay_time_remaining.
+        let (
+            lp_fee,
+            max_decay_time,
+            price_impact_to_fee_division_factor,
+            min_fee,
+            max_fee,
+            net_price_impact,
+            last_update_timestamp,
+            decay_time_remaining,
+        ) = if fee_version == U256::ZERO {
+            let lp_fee = (value >> 156u32) & u256_mask(16);
+            (lp_fee, U256::ZERO, U256::ZERO, U256::ZERO, U256::ZERO, 0i64, U256::ZERO, U256::ZERO)
         } else {
-            -net_price_impact_abs
-        };
+            let max_decay_time = (value >> 156u32) & u256_mask(12);
+            let price_impact_to_fee_division_factor = (value >> 168u32) & u256_mask(8);
+            let min_fee = (value >> 176u32) & u256_mask(16);
+            let max_fee = (value >> 192u32) & u256_mask(16);
 
-        let last_update_timestamp = (value >> 229u32) & u256_mask(15);
-        let decay_time_remaining = (value >> 244u32) & u256_mask(12);
+            let net_price_impact_sign = ((value >> 208u32) & U256::from(1u64)) == U256::from(1u64);
+            let net_price_impact_abs = ((value >> 209u32) & u256_mask(20)).to::<u32>() as i64;
+            let net_price_impact = if net_price_impact_abs == 0 {
+                0
+            } else if net_price_impact_sign {
+                net_price_impact_abs
+            } else {
+                -net_price_impact_abs
+            };
+
+            let last_update_timestamp = (value >> 229u32) & u256_mask(15);
+            let decay_time_remaining = (value >> 244u32) & u256_mask(12);
+
+            (
+                U256::ZERO,
+                max_decay_time,
+                price_impact_to_fee_division_factor,
+                min_fee,
+                max_fee,
+                net_price_impact,
+                last_update_timestamp,
+                decay_time_remaining,
+            )
+        };
 
         Self {
             protocol_fee_0_to_1,
@@ -1125,7 +1155,7 @@ impl ProtocolSim for FluidV2State {
         delta: ProtocolStateDelta,
         _tokens: &HashMap<Bytes, Token>,
         _balances: &Balances,
-    ) -> Result<(), TransitionError<String>> {
+    ) -> Result<(), TransitionError> {
         if let Some(dex_variables) = delta
             .updated_attributes
             .get("dex_variables")
@@ -1457,7 +1487,8 @@ mod tests {
         assert!(decoded.pool_accounting_flag);
         assert!(decoded.fetch_dynamic_fee_flag);
         assert_eq!(decoded.fee_version, U256::from(3u64));
-        assert_eq!(decoded.lp_fee, U256::from(3600u64));
+        // fee_version != 0 → dynamic fee mode: lp_fee is unused, max_decay_time is active
+        assert_eq!(decoded.lp_fee, U256::ZERO);
         assert_eq!(decoded.max_decay_time, U256::from(3600u64));
         assert_eq!(decoded.price_impact_to_fee_division_factor, U256::from(42u64),);
         assert_eq!(decoded.min_fee, U256::from(150u64));
