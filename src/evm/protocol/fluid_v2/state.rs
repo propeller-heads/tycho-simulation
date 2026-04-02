@@ -213,6 +213,9 @@ impl FluidV2State {
             .to::<u32>();
         let mut constant_lp_fee_pips = lp_fee_pips;
 
+        // Keep the same high-level fee-version split as the Solidity module.
+        // For now we only simulate the static-fee shape and explicitly leave
+        // dynamic-fee/controller overrides out of scope.
         // TODO: For `fee_version == 1`, apply dynamic-fee variables and controller override logic.
         if fee_version == 1 {
             if self
@@ -247,6 +250,8 @@ impl FluidV2State {
 
             next_tick = next_tick.clamp(MIN_TICK, MAX_TICK);
             let sqrt_price_next = get_sqrt_ratio_at_tick(next_tick)?;
+            // Stored sqrt price is lossy-compressed; when that creates a tiny directional
+            // anomaly, align to the tick price as long as the deviation stays within 0.01%.
             if (zero_for_one && sqrt_price_next > state.sqrt_price) ||
                 (!zero_for_one && sqrt_price_next < state.sqrt_price)
             {
@@ -292,6 +297,8 @@ impl FluidV2State {
                 let mut step_protocol_fee = U256::from(0u64);
                 let mut step_lp_fee = U256::from(0u64);
 
+                // In swap-in, both protocol fee and LP fee are taken from tokenOut,
+                // matching the contract's exact-input flow.
                 if step_amount_out > U256::from(0u64) && protocol_fee_pips > 0 {
                     let numerator = safe_add_u256(
                         safe_mul_u256(step_amount_out, U256::from(protocol_fee_pips))?,
@@ -352,6 +359,8 @@ impl FluidV2State {
                     safe_add_u256(protocol_fee_accrued_raw, step_protocol_fee)?;
                 lp_fee_accrued_raw = safe_add_u256(lp_fee_accrued_raw, step_lp_fee)?;
             } else {
+                // This branch mirrors the exact-output math shape from the shared Uniswap
+                // helper, but the public simulator currently exposes only exact-input quotes.
                 let amount_in_with_lp = safe_div_u256(
                     safe_mul_u256(step.amount_in, U256::from(1_000_000u64))?,
                     safe_sub_u256(U256::from(1_000_000u64), U256::from(constant_lp_fee_pips))?,
@@ -487,6 +496,8 @@ impl FluidV2State {
             }
         };
 
+        // Convert token amount into the pool's raw-adjusted accounting unit using the
+        // exchange price, then round down so the simulator stays on the protocol side.
         let amount_in_raw_adjusted = amount_to_adjusted(
             amount_in,
             token_in_num_precision,
@@ -522,6 +533,8 @@ impl FluidV2State {
             (Some(min), Some(max)) => (min.index, max.index),
             _ => return Err(SimulationError::FatalError("No ticks available".to_string())),
         };
+        // Like the Solidity module, push the limit one unit inside the boundary tick so the
+        // swap can consume liquidity up to the last reachable initialized range.
         let tick_limit = if prepared.zero_for_one { tick_min } else { tick_max };
         let mut sqrt_price_limit = get_sqrt_ratio_at_tick(tick_limit)?;
         sqrt_price_limit = if prepared.zero_for_one {
@@ -732,6 +745,8 @@ fn amount_to_adjusted(
     token_denominator_precision: U256,
     exchange_price: U256,
 ) -> Result<U256, SimulationError> {
+    // Matches the contract's conversion between external token units and the
+    // internal raw-adjusted accounting unit (1e12 exchange-price precision).
     let scaled = safe_mul_u256(amount, pow10_u256(12))?;
     let scaled = safe_mul_u256(scaled, token_numerator_precision)?;
     let denominator = safe_mul_u256(exchange_price, token_denominator_precision)?;
@@ -751,6 +766,8 @@ fn adjusted_to_amount(
 }
 
 fn round_down_raw(amount: U256) -> U256 {
+    // Same conservative round-down used by swapIn entrypoint:
+    // amount * (ROUNDING_FACTOR - 1) / ROUNDING_FACTOR, then subtract 1 if non-zero.
     let scaled = amount.saturating_mul(U256::from(ROUNDING_FACTOR_MINUS_ONE));
     let mut out = if ROUNDING_FACTOR == 0 { amount } else { scaled / U256::from(ROUNDING_FACTOR) };
     if out > U256::from(0u64) {
@@ -917,7 +934,16 @@ impl ProtocolSim for FluidV2State {
             return Err(SimulationError::InvalidInput("Next tick out of bounds".to_string(), None));
         }
 
-        let amount_out_raw_adjusted = round_down_raw(internal.amount_out_raw_adjusted);
+        // Keep the internal raw output for state updates. The extra round-down below only
+        // affects the user-visible amount, just like the Solidity entrypoint.
+        let amount_out_raw_adjusted_for_state = internal.amount_out_raw_adjusted;
+        if amount_out_raw_adjusted_for_state < pow10_u256(4) ||
+            amount_out_raw_adjusted_for_state > max_x(86)
+        {
+            return Err(SimulationError::InvalidInput("Adjusted amount limits".to_string(), None));
+        }
+
+        let amount_out_raw_adjusted = round_down_raw(amount_out_raw_adjusted_for_state);
         if amount_out_raw_adjusted < pow10_u256(4) || amount_out_raw_adjusted > max_x(86) {
             return Err(SimulationError::InvalidInput("Adjusted amount limits".to_string(), None));
         }
@@ -942,6 +968,8 @@ impl ProtocolSim for FluidV2State {
             .dex_variables2
             .active_liquidity = U256::from(internal.liquidity);
 
+        // Reserve accounting follows `_swapIn`: tokenIn reserve increases by the prepared
+        // raw-adjusted input and tokenOut reserve decreases by the internal raw output.
         if !self.dex_variables2.pool_accounting_flag {
             let reserve_limit = max_x(128);
             if prepared.zero_for_one {
@@ -953,7 +981,7 @@ impl ProtocolSim for FluidV2State {
                         None,
                     ));
                 }
-                if self.token1_reserve < amount_out_raw_adjusted {
+                if self.token1_reserve < amount_out_raw_adjusted_for_state {
                     return Err(SimulationError::InvalidInput(
                         "Token reserves underflow".to_string(),
                         None,
@@ -961,7 +989,7 @@ impl ProtocolSim for FluidV2State {
                 }
                 new_state.token0_reserve = reserve_in;
                 new_state.token1_reserve =
-                    safe_sub_u256(self.token1_reserve, amount_out_raw_adjusted)?;
+                    safe_sub_u256(self.token1_reserve, amount_out_raw_adjusted_for_state)?;
             } else {
                 let reserve_in =
                     safe_add_u256(self.token1_reserve, prepared.amount_in_raw_adjusted)?;
@@ -971,7 +999,7 @@ impl ProtocolSim for FluidV2State {
                         None,
                     ));
                 }
-                if self.token0_reserve < amount_out_raw_adjusted {
+                if self.token0_reserve < amount_out_raw_adjusted_for_state {
                     return Err(SimulationError::InvalidInput(
                         "Token reserves underflow".to_string(),
                         None,
@@ -979,7 +1007,7 @@ impl ProtocolSim for FluidV2State {
                 }
                 new_state.token1_reserve = reserve_in;
                 new_state.token0_reserve =
-                    safe_sub_u256(self.token0_reserve, amount_out_raw_adjusted)?;
+                    safe_sub_u256(self.token0_reserve, amount_out_raw_adjusted_for_state)?;
             }
         }
 
@@ -1133,7 +1161,9 @@ impl ProtocolSim for FluidV2State {
             token_out_exchange_price,
         )?;
 
-        if self.dex_variables2.pool_accounting_flag {
+        // Reserve caps apply only when pool accounting is disabled, matching the on-chain
+        // reserve checks inside `_swapIn` / `_swapOut`.
+        if !self.dex_variables2.pool_accounting_flag {
             let reserve_out_raw_adjusted =
                 if zero_for_one { self.token1_reserve } else { self.token0_reserve };
             let reserve_out_limit = adjusted_to_amount(
@@ -1582,11 +1612,56 @@ mod tests {
     }
 
     #[test]
+    fn test_get_limits_only_caps_with_reserve_accounting() {
+        let mut capped_state = onchain_state();
+        capped_state
+            .dex_variables2
+            .pool_accounting_flag = false;
+        capped_state.token1_reserve = U256::from(1_000_000u64);
+
+        let (_, capped_limit_out) = capped_state
+            .get_limits(usdc().address.clone(), usdt0().address.clone())
+            .unwrap();
+
+        let mut uncapped_state = capped_state.clone();
+        uncapped_state
+            .dex_variables2
+            .pool_accounting_flag = true;
+
+        let (_, uncapped_limit_out) = uncapped_state
+            .get_limits(usdc().address.clone(), usdt0().address.clone())
+            .unwrap();
+
+        assert_eq!(capped_limit_out, BigUint::from(1_016u32));
+        assert_eq!(uncapped_limit_out, BigUint::from(486_756_162u32));
+    }
+
+    #[test]
     fn test_get_amount_out() {
         let state = onchain_state();
         let res = state
             .get_amount_out(BigUint::from_str("4898099").unwrap(), &usdc(), &usdt0())
             .unwrap();
         assert_eq!(res.amount, BigUint::from(4896168u32));
+
+        let prepared = state
+            .prepare_swap_in(U256::from(4_898_099u64), &usdc(), &usdt0())
+            .unwrap();
+        let internal = state
+            .execute_swap_in_internal(&prepared)
+            .unwrap();
+        let rounded_amount_out_raw = round_down_raw(internal.amount_out_raw_adjusted);
+
+        let new_state = res
+            .new_state
+            .as_any()
+            .downcast_ref::<FluidV2State>()
+            .unwrap();
+
+        assert_eq!(
+            new_state.token1_reserve,
+            state.token1_reserve - internal.amount_out_raw_adjusted
+        );
+        assert_ne!(new_state.token1_reserve, state.token1_reserve - rounded_amount_out_raw);
     }
 }
