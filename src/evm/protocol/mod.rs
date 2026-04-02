@@ -2,6 +2,7 @@ pub mod aerodrome_slipstreams;
 mod clmm;
 pub mod cowamm;
 mod cpmm;
+pub mod curve_stableswap;
 pub mod ekubo;
 pub mod ekubo_v3;
 pub mod erc4626;
