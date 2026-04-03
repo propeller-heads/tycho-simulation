@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use alloy::primitives::U256;
 use tycho_client::feed::{synchronizer::ComponentWithState, BlockHeader};
-use tycho_common::{dto::ProtocolComponent, models::token::Token, Bytes};
+use tycho_common::{models::token::Token, Bytes};
 
 use crate::{
     evm::protocol::cowamm::state::CowAMMState,
@@ -136,32 +136,32 @@ pub fn static_attributes() -> HashMap<String, Bytes> {
     ])
 }
 
-pub fn component() -> ProtocolComponent {
-    ProtocolComponent { static_attributes: static_attributes(), ..Default::default() }
-}
-
-pub fn state() -> CowAMMState {
-    CowAMMState::new(
-        Bytes::from(vec![0; 32]),
-        Bytes::from(vec![0; 32]),
-        Bytes::from(vec![0; 32]),
-        U256::from(0),
-        U256::from(0),
-        Bytes::from(vec![0; 32]),
-        U256::from(0),
-        U256::from(0),
-        U256::from(0),
-        0u64,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
-    use tycho_common::dto::ResponseProtocolState;
+    use tycho_common::dto::{ProtocolComponent, ResponseProtocolState};
 
     use super::*;
     use crate::evm::protocol::test_utils::try_decode_snapshot_with_defaults;
+
+    fn component() -> ProtocolComponent {
+        ProtocolComponent { static_attributes: static_attributes(), ..Default::default() }
+    }
+
+    fn state() -> CowAMMState {
+        CowAMMState::new(
+            Bytes::from(vec![0; 32]),
+            Bytes::from(vec![0; 32]),
+            Bytes::from(vec![0; 32]),
+            U256::from(0),
+            U256::from(0),
+            Bytes::from(vec![0; 32]),
+            U256::from(0),
+            U256::from(0),
+            U256::from(0),
+            0u64,
+        )
+    }
 
     #[tokio::test]
     async fn test_cowamm_try_from_with_block() {
