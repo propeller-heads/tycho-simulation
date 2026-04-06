@@ -41,6 +41,7 @@ itertools = "0.10.5"
 hex-literal = "0.4.1"
 hex = "0.4.3"
 async-trait = "0.1.88"
+chrono = { version = "0.4.26", features = ["serde"] }
 
 # Tycho dependencies
 tycho-client = ">=0.147.1"

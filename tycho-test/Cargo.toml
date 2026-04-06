@@ -31,3 +31,4 @@ tycho-ethereum = { workspace = true }
 tycho-execution = ">=0.169.0"
 tycho-simulation = { path = "..", features = ["evm"] }
 urlencoding = "2.1.3"
+chrono = { workspace = true }
