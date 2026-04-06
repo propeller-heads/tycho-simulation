@@ -700,7 +700,7 @@ mod tests {
             let state = UniswapV2State::new(
                 U256::from(1000u64) * U256::from(10u64).pow(U256::from(18u64)),
                 U256::from(2_000_000u64) * U256::from(10u64).pow(U256::from(6u64)),
-                component(6, 18),
+                component(18, 6),
             );
             let token_in = create_token("0x0000000000000000000000000000000000000001", "USDC", 6);
             let token_out = create_token("0x0000000000000000000000000000000000000000", "WETH", 18);
