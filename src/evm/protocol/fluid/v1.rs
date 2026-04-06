@@ -943,7 +943,11 @@ fn swap_routing_in(t: U256, x: U256, y: U256, x2: U256, y2: U256) -> U256 {
     let xy_root = (x * y * constant::B_I1E18).root(2);
     let x2y2_root = (x2 * y2 * constant::B_I1E18).root(2);
 
-    let numerator = y2 * xy_root + t * xy_root - y * x2y2_root;
+    // Use saturating_sub to avoid unsigned underflow.
+    // When the result would be negative (debt pool is the better route),
+    // this saturates to 0, which the caller handles as "route through debt pool".
+    // Matches Go's *big.Int semantics where a.Sign() <= 0 triggers the debt path.
+    let numerator = (y2 * xy_root + t * xy_root).saturating_sub(y * x2y2_root);
     let denominator = xy_root + x2y2_root;
     numerator / denominator
 }
@@ -959,9 +963,12 @@ fn swap_routing_out(t: U256, x: U256, y: U256, x2: U256, y2: U256) -> U256 {
     let xy_root = (x * y * constant::B_I1E18).root(2);
     let x2y2_root = (x2 * y2 * constant::B_I1E18).root(2);
 
-    let numerator = t * xy_root + y * x2y2_root - y2 * xy_root;
+    // Use saturating_sub to avoid unsigned underflow.
+    // When the result would be negative (debt pool is the better route),
+    // this saturates to 0, which the caller handles as "route through debt pool".
+    // Matches Go's *big.Int semantics where a.Sign() <= 0 triggers the debt path.
+    let numerator = (t * xy_root + y * x2y2_root).saturating_sub(y2 * xy_root);
     let denominator = xy_root + x2y2_root;
-
     numerator / denominator
 }
 
@@ -2810,5 +2817,62 @@ mod test {
             .unwrap();
 
         assert!(max_amount_in < max_amount_onchain_test);
+    }
+
+    /// Regression test: swap_routing_in must return 0 (route through debt pool)
+    /// when the debt pool offers better pricing than the collateral pool.
+    ///
+    /// Before the fix, the unsigned subtraction wrapped around to a large positive number,
+    /// causing the swap to be incorrectly routed through the collateral pool instead of debt.
+    /// See: https://github.com/KyberNetwork/kyberswap-dex-lib/blob/main/pkg/liquidity-source/fluid/dex-t1/pool_simulator.go#L273
+    #[test]
+    fn test_swap_routing_in_debt_pool_is_better_route() {
+        // Collateral pool: lots of input token, little output → bad for this swap direction
+        // Debt pool: lots of output token, little input → good for this swap direction
+        let col_i_reserve_out = U256::from(100u64) * constant::B_I1E18;
+        let col_i_reserve_in = U256::from(10000u64) * constant::B_I1E18;
+        let debt_i_reserve_out = U256::from(10000u64) * constant::B_I1E18;
+        let debt_i_reserve_in = U256::from(100u64) * constant::B_I1E18;
+        let amount = U256::from(50u64) * constant::B_I1E18;
+
+        let a = swap_routing_in(
+            amount,
+            col_i_reserve_out,
+            col_i_reserve_in,
+            debt_i_reserve_out,
+            debt_i_reserve_in,
+        );
+
+        // Go's big.Int returns a negative value here (a.Sign() <= 0).
+        // With saturating_sub, the result is 0, which the caller treats as "route through debt".
+        assert_eq!(
+            a,
+            U256::ZERO,
+            "swap_routing_in should return 0 when debt pool is the better route, got: {a}"
+        );
+    }
+
+    #[test]
+    fn test_swap_routing_out_debt_pool_is_better_route() {
+        // Debt pool has abundant output (y2=10000), collateral has scarce output (y=100)
+        let col_i_reserve_in = U256::from(1000u64) * constant::B_I1E18;
+        let col_i_reserve_out = U256::from(100u64) * constant::B_I1E18;
+        let debt_i_reserve_in = U256::from(1000u64) * constant::B_I1E18;
+        let debt_i_reserve_out = U256::from(10000u64) * constant::B_I1E18;
+        let amount = U256::from(50u64) * constant::B_I1E18;
+
+        let a = swap_routing_out(
+            amount,
+            col_i_reserve_in,
+            col_i_reserve_out,
+            debt_i_reserve_in,
+            debt_i_reserve_out,
+        );
+
+        assert_eq!(
+            a,
+            U256::ZERO,
+            "swap_routing_out should return 0 when debt pool is the better route, got: {a}"
+        );
     }
 }
