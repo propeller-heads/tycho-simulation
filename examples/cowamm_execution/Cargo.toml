@@ -1,0 +1,25 @@
+[package]
+name = "cowamm_execution"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+alloy = { version = "1.7.3", features = ["sol-types", "providers", "signer-local", "rpc-types-eth", "rand", "eip712"] }
+alloy-rpc-types-eth = "1.7.3"
+app_data = { package = "app-data", git = "https://github.com/cowprotocol/services" }
+anyhow = "1.0.100"
+dotenv = "0.15.0"
+ethrpc = { git = "https://github.com/cowprotocol/services" }
+ethcontract = { git = "https://github.com/cowprotocol/ethcontract-rs", rev = "8e112a88988040cde6110379ee6d1be768a13244", default-features = false, features = ["aws-kms", "derive", "http-rustls-tls"] }
+futures = "0.3.31"
+hex = "0.4.3"
+model = { git = "https://github.com/cowprotocol/services" }
+num-bigint = { version = "0.4.6", features = ["serde"] }
+services_contracts = { package = "contracts", git = "https://github.com/cowprotocol/services" }
+tokio = { version = "1.47.1", features = ["full"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.17", default-features = false, features = ["env-filter", "fmt"] }
+tycho-simulation = { path = "../.." }
