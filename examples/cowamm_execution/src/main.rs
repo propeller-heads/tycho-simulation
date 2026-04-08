@@ -1,7 +1,11 @@
-use std::{collections::HashMap, str::FromStr, time::Duration};
+use std::{collections::HashMap, env, str::FromStr, time::Duration};
 
-use alloy::{primitives::{Address, U256}, sol_types::SolCall};
-use anyhow::{Context, Result, bail};
+use alloy::{
+    primitives::{Address, U256},
+    sol_types::SolCall,
+};
+use anyhow::{bail, Context, Result};
+use clap::Parser;
 use ethcontract::web3;
 use futures::StreamExt;
 use tracing::{info, warn};
@@ -11,79 +15,128 @@ use tycho_simulation::{
     protocol::models::{ProtocolComponent, Update},
     tycho_client::feed::component_tracker::ComponentFilter,
     tycho_common::{
-        Bytes,
-        models::{Chain, ComponentId, token::Token},
+        models::{token::Token, Chain, ComponentId},
         simulation::protocol_sim::ProtocolSim,
+        Bytes,
     },
     utils::{get_default_url, load_all_tokens},
 };
 
-mod support;
+mod contracts;
+mod settlement;
+mod tenderly;
 
-use support::{
-    Amm, BCowHelperContract, DEFAULT_GAS, DEFAULT_SETTLEMENT_ADDRESS, GPv2AllowListAuthenticationContract,
-    GPv2SettlementContract, SettleOutput, biguint_to_u256, bytes_to_address, bytes_to_eth_address,
-    encode_settlement, encode_settlement_call, format_token_amount, prepare_state_overrides,
-    resolve_token, select_pool_order, to_eth_address, u256_to_biguint,
-};
+use contracts::{BCowHelperContract, GPv2AllowListAuthenticationContract, GPv2SettlementContract};
 use services_contracts::alloy::support::Solver;
+use settlement::{
+    biguint_to_u256, bytes_to_address, bytes_to_eth_address, encode_settlement_call,
+    format_token_amount, prepare_state_overrides, resolve_token, select_pool_order, to_eth_address,
+    u256_to_biguint, Amm, SettleOutput, DEFAULT_GAS, DEFAULT_SETTLEMENT_ADDRESS,
+};
+use tenderly::TenderlyConfig;
 
 const STREAM_PROTOCOL: &str = "cowamm";
 const DEFAULT_HELPER_ADDRESS: &str = "0x03362f847b4fabc12e1ce98b6b59f94401e4588e";
-const DEFAULT_TYCHO_URL: &str = "https://tycho-beta.propellerheads.xyz";
 const DEFAULT_TARGET_POOL_ID: &str = "0x9d0e8cdf137976e03ef92ede4c30648d05e25285";
 const DEFAULT_SELL_TOKEN: &str = "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0";
 const DEFAULT_BUY_TOKEN: &str = "0xBAac2B4491727D78D2b78815144570b9f2Fe8899";
-const DEFAULT_SELL_AMOUNT: &str = "10000000000000000";
+const DEFAULT_SELL_AMOUNT: &str = "100000000000000000";
 const DEFAULT_WSTETH_BALANCE_SLOT: u64 = 0;
 const SIMULATED_TRADER: &str = "0x00000000000000000000000000000000C0FfEe01";
 
+struct ExampleDefaults {
+    target_pool: &'static str,
+    sell_token: &'static str,
+    buy_token: &'static str,
+    sell_amount: &'static str,
+    sell_token_balance_slot: u64,
+}
+
+const EXAMPLE_DEFAULTS: ExampleDefaults = ExampleDefaults {
+    target_pool: DEFAULT_TARGET_POOL_ID,
+    sell_token: DEFAULT_SELL_TOKEN,
+    buy_token: DEFAULT_BUY_TOKEN,
+    sell_amount: DEFAULT_SELL_AMOUNT,
+    sell_token_balance_slot: DEFAULT_WSTETH_BALANCE_SLOT,
+};
+
+#[derive(Parser)]
+struct Cli {
+    #[arg(long)]
+    sell_token: Option<String>,
+    #[arg(long)]
+    buy_token: Option<String>,
+    #[arg(long)]
+    target_pool: Option<String>,
+    #[arg(long, default_value = EXAMPLE_DEFAULTS.sell_amount)]
+    sell_amount: String,
+    #[arg(long, default_value_t = EXAMPLE_DEFAULTS.sell_token_balance_slot)]
+    sell_token_balance_slot: u64,
+    #[arg(long)]
+    trader_address: Option<String>,
+}
+
+impl Cli {
+    fn with_defaults(mut self) -> Self {
+        if self.sell_token.is_none() {
+            self.sell_token = Some(EXAMPLE_DEFAULTS.sell_token.to_string());
+        }
+        if self.buy_token.is_none() {
+            self.buy_token = Some(EXAMPLE_DEFAULTS.buy_token.to_string());
+        }
+        if self.target_pool.is_none() {
+            self.target_pool = Some(EXAMPLE_DEFAULTS.target_pool.to_string());
+        }
+        self
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Config {
-    chain: Chain,
     rpc_url: String,
     tycho_url: String,
     tycho_api_key: String,
-    helper_address: Address,
-    settlement_address: Option<Address>,
+    tenderly: TenderlyConfig,
     sell_token: Address,
     buy_token: Address,
     sell_amount: U256,
-    target_pool_id: String,
+    target_pool: String,
     solver_address: Address,
     trader_address: Address,
     sell_token_balance_slot: U256,
 }
 
 impl Config {
-    fn from_env() -> Result<Self> {
-        let chain = chain_from_id(parse_chain_id(&std::env::var("CHAIN_ID").unwrap_or_else(|_| "1".to_string()))?)?;
+    fn from_cli(cli: Cli) -> Result<Self> {
         Ok(Self {
-            chain,
-            rpc_url: std::env::var("RPC_URL").context("missing RPC_URL")?,
-            tycho_url: std::env::var("TYCHO_URL")
-                .unwrap_or_else(|_| get_default_url(&chain).unwrap_or_else(|| DEFAULT_TYCHO_URL.to_string())),
-            tycho_api_key: std::env::var("TYCHO_API_KEY").context("missing TYCHO_API_KEY")?,
-            helper_address: optional_address_env("HELPER_ADDRESS")?.unwrap_or(address(DEFAULT_HELPER_ADDRESS)?),
-            settlement_address: optional_address_env("SETTLEMENT_ADDRESS")?,
-            sell_token: optional_address_env("SELL_TOKEN")?.unwrap_or(address(DEFAULT_SELL_TOKEN)?),
-            buy_token: optional_address_env("BUY_TOKEN")?.unwrap_or(address(DEFAULT_BUY_TOKEN)?),
-            sell_amount: std::env::var("SELL_AMOUNT")
-                .ok()
-                .map(|value| U256::from_str(&value))
-                .transpose()
-                .context("invalid SELL_AMOUNT")?
-                .unwrap_or(U256::from_str(DEFAULT_SELL_AMOUNT).expect("default sell amount")),
-            target_pool_id: std::env::var("TARGET_POOL_ID").unwrap_or_else(|_| DEFAULT_TARGET_POOL_ID.to_string()),
-            solver_address: address(&std::env::var("SOLVER_ADDRESS").context("missing SOLVER_ADDRESS")?)
-                .context("invalid SOLVER_ADDRESS")?,
-            trader_address: optional_address_env("TRADER_ADDRESS")?.unwrap_or(address(SIMULATED_TRADER)?),
-            sell_token_balance_slot: std::env::var("SELL_TOKEN_BALANCE_SLOT")
-                .ok()
-                .map(|value| U256::from_str(&value))
-                .transpose()
-                .context("invalid SELL_TOKEN_BALANCE_SLOT")?
-                .unwrap_or(U256::from(DEFAULT_WSTETH_BALANCE_SLOT)),
+            rpc_url: env::var("RPC_URL").context("missing RPC_URL")?,
+            tycho_url: env::var("TYCHO_URL").unwrap_or_else(|_| {
+                get_default_url(&Chain::Ethereum).expect("missing default Tycho URL for Ethereum")
+            }),
+            tycho_api_key: env::var("TYCHO_API_KEY").context("missing TYCHO_API_KEY")?,
+            tenderly: TenderlyConfig::from_env(),
+            sell_token: address(
+                &cli.sell_token
+                    .expect("sell token defaulted"),
+            )?,
+            buy_token: address(
+                &cli.buy_token
+                    .expect("buy token defaulted"),
+            )?,
+            sell_amount: U256::from_str(&cli.sell_amount).context("invalid --sell-amount")?,
+            target_pool: cli
+                .target_pool
+                .expect("target pool defaulted"),
+            solver_address: address(
+                &env::var("SOLVER_ADDRESS").context("missing SOLVER_ADDRESS")?,
+            )?,
+            trader_address: cli
+                .trader_address
+                .as_deref()
+                .map(address)
+                .transpose()?
+                .unwrap_or(address(SIMULATED_TRADER)?),
+            sell_token_balance_slot: U256::from(cli.sell_token_balance_slot),
         })
     }
 }
@@ -91,42 +144,49 @@ impl Config {
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
-    tracing_subscriber::fmt().with_env_filter(EnvFilter::from_default_env()).init();
-    run(Config::from_env()?).await
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_target(false)
+        .init();
+
+    run(Config::from_cli(Cli::parse().with_defaults())?).await
 }
 
 async fn run(config: Config) -> Result<()> {
     let rpc = ethrpc::Web3::new_from_url(&config.rpc_url);
-    let transport = web3::transports::Http::new(&config.rpc_url).context("failed creating web3 transport")?;
+    let transport =
+        web3::transports::Http::new(&config.rpc_url).context("failed creating web3 transport")?;
     let web3 = web3::Web3::new(transport);
-    let settlement = GPv2SettlementContract::at(
-        &web3,
-        to_eth_address(config.settlement_address.unwrap_or(address(DEFAULT_SETTLEMENT_ADDRESS)?)),
-    );
-    let settlement_address = support::to_address(settlement.address());
-    let authenticator_address = support::to_address(
+    let settlement =
+        GPv2SettlementContract::at(&web3, to_eth_address(address(DEFAULT_SETTLEMENT_ADDRESS)?));
+    let settlement_address = settlement::to_address(settlement.address());
+    let authenticator_address = settlement::to_address(
         settlement
             .authenticator()
             .call()
             .await
             .context("failed fetching authenticator address")?,
     );
-    let is_solver = GPv2AllowListAuthenticationContract::at(&web3, to_eth_address(authenticator_address))
-        .is_solver(to_eth_address(config.solver_address))
-        .call()
-        .await
-        .context("failed checking solver allowlist")?;
+    let is_solver =
+        GPv2AllowListAuthenticationContract::at(&web3, to_eth_address(authenticator_address))
+            .is_solver(to_eth_address(config.solver_address))
+            .call()
+            .await
+            .context("failed checking solver allowlist")?;
+
     let all_tokens = load_all_tokens(
         &config.tycho_url,
         false,
         Some(config.tycho_api_key.as_str()),
         true,
-        config.chain,
+        Chain::Ethereum,
         Some(0),
         Some(365),
     )
     .await
     .context("failed loading Tycho token registry")?;
+    info!(count = all_tokens.len(), "tokens loaded from Tycho");
+
     let mut stream = build_stream(&config, &all_tokens).await?;
     let mut components = HashMap::new();
 
@@ -134,7 +194,7 @@ async fn run(config: Config) -> Result<()> {
         solver = ?config.solver_address,
         trader = ?config.trader_address,
         settlement = ?settlement_address,
-        pool = %config.target_pool_id,
+        pool = %config.target_pool,
         authenticated_solver = is_solver,
         "starting cowamm simulation"
     );
@@ -148,13 +208,16 @@ async fn run(config: Config) -> Result<()> {
             }
         };
         merge_components(&mut components, &update);
-        let Some((pool_id, component, state)) = select_target_state(&config, &components, &update, &all_tokens)? else {
+        let Some((pool_id, component, state)) =
+            select_target_state(&config, &components, &update, &all_tokens)?
+        else {
             continue;
         };
         return simulate_once(
             &config,
             &rpc,
             &web3,
+            update.block_number_or_timestamp,
             settlement_address,
             authenticator_address,
             is_solver,
@@ -169,10 +232,12 @@ async fn run(config: Config) -> Result<()> {
     bail!("stream ended before producing a matching cowamm state")
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn simulate_once(
     config: &Config,
     rpc: &ethrpc::Web3,
     web3: &web3::Web3<web3::transports::Http>,
+    block_number: u64,
     settlement_address: Address,
     authenticator_address: Address,
     is_solver: bool,
@@ -181,13 +246,14 @@ async fn simulate_once(
     component: &ProtocolComponent,
     state: &CowAMMState,
 ) -> Result<()> {
-    let sell_token = resolve_token(&Bytes::from(config.sell_token.as_slice()), component, all_tokens);
+    let sell_token =
+        resolve_token(&Bytes::from(config.sell_token.as_slice()), component, all_tokens);
     let buy_token = resolve_token(&Bytes::from(config.buy_token.as_slice()), component, all_tokens);
     let simulated = state
         .get_amount_out(u256_to_biguint(config.sell_amount), &sell_token, &buy_token)
         .with_context(|| format!("local tycho simulation failed for pool {pool_id}"))?;
 
-    let helper = BCowHelperContract::at(web3, to_eth_address(config.helper_address));
+    let helper = BCowHelperContract::at(web3, to_eth_address(address(DEFAULT_HELPER_ADDRESS)?));
     let amm = Amm::new(bytes_to_eth_address(&state.address)?, &helper)
         .await
         .context("failed instantiating BCowHelper Amm")?;
@@ -209,7 +275,7 @@ async fn simulate_once(
         );
     }
 
-    let settlement = encode_settlement(
+    let settlement = settlement::encode_settlement(
         config.sell_token,
         config.buy_token,
         config.sell_amount,
@@ -228,20 +294,31 @@ async fn simulate_once(
         config.solver_address,
         is_solver,
     );
-    let output = Solver::Solver::new(config.solver_address, rpc.provider.clone())
-        .swap(
-            settlement_address,
-            vec![config.sell_token, config.buy_token],
-            config.trader_address,
-            encode_settlement_call(settlement).abi_encode().into(),
-        )
+    let solver = Solver::Solver::new(config.solver_address, rpc.provider.clone());
+    let swap_call = solver.swap(
+        settlement_address,
+        vec![config.sell_token, config.buy_token],
+        config.trader_address,
+        encode_settlement_call(settlement)
+            .abi_encode()
+            .into(),
+    );
+    let swap_call = swap_call
         .from(config.solver_address)
         .to(config.solver_address)
-        .gas(DEFAULT_GAS)
+        .gas(DEFAULT_GAS);
+    let trace_tx = swap_call
+        .clone()
+        .into_transaction_request();
+    let output = swap_call
         .call()
-        .overrides(overrides)
+        .overrides(overrides.clone())
         .await
         .context("eth_call simulation failed")?;
+    config
+        .tenderly
+        .maybe_submit_simulation(&trace_tx, config.solver_address, block_number + 1, &overrides)
+        .await?;
 
     log_result(
         config,
@@ -259,7 +336,7 @@ fn log_result(
     config: &Config,
     sell_token: &Token,
     buy_token: &Token,
-    pool_template: &support::TemplateOrder,
+    pool_template: &settlement::TemplateOrder,
     tycho_amount: num_bigint::BigUint,
     summary: SettleOutput,
     pool_id: &str,
@@ -270,7 +347,11 @@ fn log_result(
     } else {
         summary.out_amount - tycho_amount
     };
-    let diff_bps = if tycho_amount.is_zero() { U256::ZERO } else { abs_diff * U256::from(10_000u64) / tycho_amount };
+    let diff_bps = if tycho_amount.is_zero() {
+        U256::ZERO
+    } else {
+        abs_diff * U256::from(10_000u64) / tycho_amount
+    };
     info!(
         pool = %pool_id,
         sell_token = %sell_token.symbol,
@@ -294,10 +375,12 @@ fn log_result(
 async fn build_stream(
     config: &Config,
     all_tokens: &HashMap<Bytes, Token>,
-) -> Result<impl futures::Stream<Item = Result<Update, tycho_simulation::evm::decoder::StreamDecodeError>>> {
-    let filter = ComponentFilter::Ids(vec![ComponentId::from_str(&config.target_pool_id)
-        .with_context(|| format!("invalid TARGET_POOL_ID: {}", config.target_pool_id))?]);
-    ProtocolStreamBuilder::new(&config.tycho_url, config.chain)
+) -> Result<
+    impl futures::Stream<Item = Result<Update, tycho_simulation::evm::decoder::StreamDecodeError>>,
+> {
+    let filter = ComponentFilter::Ids(vec![ComponentId::from_str(&config.target_pool)
+        .with_context(|| format!("invalid --target-pool: {}", config.target_pool))?]);
+    ProtocolStreamBuilder::new(&config.tycho_url, Chain::Ethereum)
         .exchange::<CowAMMState>(STREAM_PROTOCOL, filter, None)
         .auth_key(Some(config.tycho_api_key.clone()))
         .skip_state_decode_failures(true)
@@ -325,39 +408,33 @@ fn select_target_state(
     all_tokens: &HashMap<Bytes, Token>,
 ) -> Result<Option<(String, ProtocolComponent, CowAMMState)>> {
     for (id, state) in &update.states {
-        if id != &config.target_pool_id {
+        if id != &config.target_pool {
             continue;
         }
-        let Some(component) = components.get(id) else { continue; };
-        let Some(state) = state.as_any().downcast_ref::<CowAMMState>() else { continue; };
+        let Some(component) = components.get(id) else {
+            continue;
+        };
+        let Some(state) = state
+            .as_any()
+            .downcast_ref::<CowAMMState>()
+        else {
+            continue;
+        };
         let sell = resolve_token(&Bytes::from(config.sell_token.as_slice()), component, all_tokens);
         let buy = resolve_token(&Bytes::from(config.buy_token.as_slice()), component, all_tokens);
-        if component.tokens.iter().any(|token| token.address == sell.address)
-            && component.tokens.iter().any(|token| token.address == buy.address)
+        if component
+            .tokens
+            .iter()
+            .any(|token| token.address == sell.address) &&
+            component
+                .tokens
+                .iter()
+                .any(|token| token.address == buy.address)
         {
             return Ok(Some((id.clone(), component.clone(), state.clone())));
         }
     }
     Ok(None)
-}
-
-fn parse_chain_id(value: &str) -> Result<u64> {
-    match value {
-        "mainnet" | "ethereum" => Ok(1),
-        other => other.parse().with_context(|| format!("unsupported CHAIN_ID: {other}")),
-    }
-}
-
-fn chain_from_id(chain_id: u64) -> Result<Chain> {
-    match chain_id {
-        1 => Ok(Chain::Ethereum),
-        8453 => Ok(Chain::Base),
-        other => bail!("unsupported chain id {other}"),
-    }
-}
-
-fn optional_address_env(name: &str) -> Result<Option<Address>> {
-    std::env::var(name).ok().map(|value| address(&value)).transpose()
 }
 
 fn address(value: &str) -> Result<Address> {

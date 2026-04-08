@@ -5,9 +5,9 @@ use alloy::{
     sol_types::SolCall,
 };
 use alloy_rpc_types_eth::state::{AccountOverride, StateOverride};
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use app_data::AppDataHash;
-use ethcontract::{Address as EthAddress, Bytes as ContractBytes, U256 as EthU256, web3};
+use ethcontract::{web3, Address as EthAddress, Bytes as ContractBytes, U256 as EthU256};
 use model::{
     interaction::InteractionData,
     order::{BuyTokenDestination, OrderData, OrderKind, SellTokenSource},
@@ -17,46 +17,21 @@ use num_bigint::BigUint;
 use services_contracts::alloy::support::{AnyoneAuthenticator, Solver, Spardose, Trader};
 use tycho_simulation::{
     protocol::models::ProtocolComponent,
-    tycho_common::{Bytes, models::token::Token},
+    tycho_common::{models::token::Token, Bytes},
 };
 
-ethcontract::contract!("artifacts/BCowHelper.json", contract = BCowHelper);
-ethcontract::contract!(
-    "artifacts/GPv2AllowListAuthentication.json",
-    contract = GPv2AllowListAuthentication
-);
-ethcontract::contract!("artifacts/GPv2Settlement.json", contract = GPv2Settlement);
-
-pub use self::b_cow_helper::Contract as BCowHelperContract;
-pub use self::g_pv_2_allow_list_authentication::Contract as GPv2AllowListAuthenticationContract;
-pub use self::g_pv_2_settlement::Contract as GPv2SettlementContract;
+use crate::contracts::{BCowHelperContract, RawInteraction, RawOrder};
 
 pub const DEFAULT_SETTLEMENT_ADDRESS: &str = "0x9008d19f58aabd9ed0d60971565aa8510560ab41";
 pub const SPARDOSE: Address = Address::new([
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x02, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x02, 0x00, 0x00,
 ]);
 pub const DEFAULT_GAS: u64 = 12_000_000;
 
 pub type EncodedInteraction = (Address, U256, AlloyBytes);
-pub type EncodedTrade = (U256, U256, Address, U256, U256, u32, [u8; 32], U256, U256, U256, AlloyBytes);
-
-type RawOrder = (
-    EthAddress,
-    EthAddress,
-    EthAddress,
-    EthU256,
-    EthU256,
-    u32,
-    ContractBytes<[u8; 32]>,
-    EthU256,
-    ContractBytes<[u8; 32]>,
-    bool,
-    ContractBytes<[u8; 32]>,
-    ContractBytes<[u8; 32]>,
-);
-
-type RawInteraction = (EthAddress, EthU256, ContractBytes<Vec<u8>>);
+pub type EncodedTrade =
+    (U256, U256, Address, U256, U256, u32, [u8; 32], U256, U256, U256, AlloyBytes);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EncodedSettlement {
@@ -68,7 +43,7 @@ pub struct EncodedSettlement {
 
 #[derive(Clone, Debug)]
 pub struct Amm {
-    helper: BCowHelper,
+    helper: BCowHelperContract,
     address: EthAddress,
 }
 
@@ -86,12 +61,19 @@ pub struct SettleOutput {
 }
 
 impl Amm {
-    pub async fn new(address: EthAddress, helper: &BCowHelper) -> Result<Self, ethcontract::errors::MethodError> {
+    pub async fn new(
+        address: EthAddress,
+        helper: &BCowHelperContract,
+    ) -> Result<Self, ethcontract::errors::MethodError> {
         let _ = helper.tokens(address).call().await?;
         Ok(Self { helper: helper.clone(), address })
     }
 
-    async fn template_order_from_buy_amount(&self, buy_token: EthAddress, buy_amount: EthU256) -> Result<TemplateOrder> {
+    async fn template_order_from_buy_amount(
+        &self,
+        buy_token: EthAddress,
+        buy_amount: EthU256,
+    ) -> Result<TemplateOrder> {
         let (order, pre, post, signature) = self
             .helper
             .order_from_buy_amount(self.address, buy_token, buy_amount)
@@ -100,7 +82,11 @@ impl Amm {
         convert_orders_response(order, signature, pre, post)
     }
 
-    async fn template_order_from_sell_amount(&self, sell_token: EthAddress, sell_amount: EthU256) -> Result<TemplateOrder> {
+    async fn template_order_from_sell_amount(
+        &self,
+        sell_token: EthAddress,
+        sell_amount: EthU256,
+    ) -> Result<TemplateOrder> {
         let (order, pre, post, signature) = self
             .helper
             .order_from_sell_amount(self.address, sell_token, sell_amount)
@@ -156,6 +142,7 @@ pub async fn select_pool_order(
     bail!("helper returned an order with unexpected token direction")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn encode_settlement(
     sell_token: Address,
     buy_token: Address,
@@ -180,9 +167,17 @@ pub fn encode_settlement(
         clearing_prices: vec![pool_template.order.sell_amount, pool_template.order.buy_amount],
         trades: vec![encoded_user, encoded_pool],
         interactions: [
-            pool_template.pre_interactions.iter().map(interaction_data_to_encoded).collect(),
+            pool_template
+                .pre_interactions
+                .iter()
+                .map(interaction_data_to_encoded)
+                .collect(),
             Vec::new(),
-            pool_template.post_interactions.iter().map(interaction_data_to_encoded).collect(),
+            pool_template
+                .post_interactions
+                .iter()
+                .map(interaction_data_to_encoded)
+                .collect(),
         ],
     };
     settlement.interactions[0].push(encode_trade_setup_interaction(
@@ -226,7 +221,8 @@ pub fn prepare_state_overrides(
     if !is_solver {
         overrides.insert(
             authenticator,
-            AccountOverride::default().with_code(AnyoneAuthenticator::AnyoneAuthenticator::DEPLOYED_BYTECODE.clone()),
+            AccountOverride::default()
+                .with_code(AnyoneAuthenticator::AnyoneAuthenticator::DEPLOYED_BYTECODE.clone()),
         );
     }
     overrides
@@ -282,7 +278,11 @@ pub fn format_token_amount(amount: U256, decimals: u8) -> String {
     let split = raw.len() - decimals;
     let integer = &raw[..split];
     let fractional = raw[split..].trim_end_matches('0');
-    if fractional.is_empty() { integer.to_string() } else { format!("{integer}.{fractional}") }
+    if fractional.is_empty() {
+        integer.to_string()
+    } else {
+        format!("{integer}.{fractional}")
+    }
 }
 
 pub fn encode_settlement_call(
@@ -311,10 +311,12 @@ pub fn encode_settlement_call(
         interactions: settlement.interactions.map(|group| {
             group
                 .into_iter()
-                .map(|interaction| services_contracts::alloy::GPv2Settlement::GPv2Interaction::Data {
-                    target: interaction.0,
-                    value: interaction.1,
-                    callData: interaction.2,
+                .map(|interaction| {
+                    services_contracts::alloy::GPv2Settlement::GPv2Interaction::Data {
+                        target: interaction.0,
+                        value: interaction.1,
+                        callData: interaction.2,
+                    }
                 })
                 .collect()
         }),
@@ -345,7 +347,14 @@ fn encode_fake_user_trade(
         sell_token_balance: SellTokenSource::Erc20,
         buy_token_balance: BuyTokenDestination::Erc20,
     };
-    encode_trade(&fake_order, &Signature::default_with(SigningScheme::Eip1271), trader, 0, 1, &sell_amount)
+    encode_trade(
+        &fake_order,
+        &Signature::default_with(SigningScheme::Eip1271),
+        trader,
+        0,
+        1,
+        &sell_amount,
+    )
 }
 
 fn encode_trade_setup_interaction(
@@ -380,13 +389,9 @@ fn add_balance_queries(
     let interaction: EncodedInteraction = (
         solver,
         U256::ZERO,
-        Solver::Solver::storeBalanceCall {
-            token: buy_token,
-            owner: trader,
-            countGas: true,
-        }
-        .abi_encode()
-        .into(),
+        Solver::Solver::storeBalanceCall { token: buy_token, owner: trader, countGas: true }
+            .abi_encode()
+            .into(),
     );
     settlement.interactions[0].push(interaction.clone());
     settlement.interactions[2].insert(0, interaction);
@@ -425,7 +430,9 @@ fn encode_trade(
         order.fee_amount,
         order_flags(order, signature),
         *executed_amount,
-        signature.encode_for_settlement(owner).into(),
+        signature
+            .encode_for_settlement(owner)
+            .into(),
     )
 }
 
@@ -460,23 +467,30 @@ fn convert_orders_response(
     pre_interactions: Vec<RawInteraction>,
     post_interactions: Vec<RawInteraction>,
 ) -> Result<TemplateOrder> {
-    let mut converted = OrderData::default();
-    converted.sell_token = to_address(order.0);
-    converted.buy_token = to_address(order.1);
-    converted.receiver = Some(to_address(order.2));
-    converted.sell_amount = to_u256(order.3);
-    converted.buy_amount = to_u256(order.4);
-    converted.valid_to = order.5;
-    converted.app_data = AppDataHash(order.6.0);
-    converted.fee_amount = to_u256(order.7);
-    converted.kind = convert_kind(&order.8.0)?;
-    converted.partially_fillable = order.9;
-    converted.sell_token_balance = convert_sell_token_source(&order.10.0)?;
-    converted.buy_token_balance = convert_buy_token_destination(&order.11.0)?;
+    let converted = OrderData {
+        sell_token: to_address(order.0),
+        buy_token: to_address(order.1),
+        receiver: Some(to_address(order.2)),
+        sell_amount: to_u256(order.3),
+        buy_amount: to_u256(order.4),
+        valid_to: order.5,
+        app_data: AppDataHash(order.6 .0),
+        fee_amount: to_u256(order.7),
+        kind: convert_kind(&order.8 .0)?,
+        partially_fillable: order.9,
+        sell_token_balance: convert_sell_token_source(&order.10 .0)?,
+        buy_token_balance: convert_buy_token_destination(&order.11 .0)?,
+    };
 
     Ok(TemplateOrder {
         order: converted,
-        signature: Signature::Eip1271(signature.0.into_iter().skip(20).collect()),
+        signature: Signature::Eip1271(
+            signature
+                .0
+                .into_iter()
+                .skip(20)
+                .collect(),
+        ),
         pre_interactions: convert_interactions(pre_interactions),
         post_interactions: convert_interactions(post_interactions),
     })
@@ -488,7 +502,7 @@ fn convert_interactions(interactions: Vec<RawInteraction>) -> Vec<InteractionDat
         .map(|interaction| InteractionData {
             target: to_address(interaction.0),
             value: to_u256(interaction.1),
-            call_data: interaction.2.0,
+            call_data: interaction.2 .0,
         })
         .collect()
 }

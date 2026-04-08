@@ -16,7 +16,12 @@ readme = "README.md"
 rust-version = "1.91.0"
 
 [workspace]
-members = ["tycho-integration-test", "tycho-test", "tycho_simulation_py"]
+members = [
+    "examples/cowamm_execution",
+    "tycho-integration-test",
+    "tycho-test",
+    "tycho_simulation_py",
+]
 
 [workspace.dependencies]
 # Serialization/Deserialization
