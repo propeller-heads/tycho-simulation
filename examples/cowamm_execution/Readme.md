@@ -16,6 +16,12 @@ export SOLVER_ADDRESS=<a-solver-address>
 cargo run --release
 ```
 
+Logging defaults to `info`. Set `RUST_LOG` to override it, for example:
+
+```bash
+RUST_LOG=debug cargo run --release
+```
+
 By default, the example:
 
 - subscribes to the target CowAMM pool through Tycho
