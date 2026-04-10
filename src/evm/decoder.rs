@@ -80,9 +80,10 @@ type FilterFn = fn(&ComponentWithState) -> bool;
 /// - Supports registering exchanges and their associated filters for specific protocol components.
 /// - Allows the addition of client-side filters for custom conditions.
 ///
-/// **Note:** The tokens provided during configuration will be used for decoding, ensuring
-/// efficient handling of protocol components. Protocol components containing tokens which are not
-/// included in this initial list, or added when applying deltas, will not be decoded.
+/// **Note:** The configured token map is primarily used to decode startup snapshots.
+/// It does not act as a permanent token filter for the stream. New snapshots/components
+/// arriving later can include enough token metadata to decode successfully.
+/// Token filtering, when needed, is handled on the consumer side.
 pub struct TychoStreamDecoder<H>
 where
     H: HeaderLike,
@@ -117,10 +118,11 @@ where
         }
     }
 
-    /// Sets the currently known tokens which will be considered during decoding.
+    /// Sets the currently known tokens used for startup snapshot decoding.
     ///
-    /// Protocol components containing tokens which are not included in this initial list, or
-    /// added when applying deltas, will not be decoded.
+    /// This is not a long-lived token filter. Components received later can still decode
+    /// if their streamed payload includes token information.
+    /// Filtering by token, when needed, is done in the stream consumer.
     pub async fn set_tokens(&self, tokens: HashMap<Bytes, Token>) {
         let mut guard = self.state.write().await;
         guard.tokens = tokens;
