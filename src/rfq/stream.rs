@@ -95,10 +95,11 @@ impl RFQStreamBuilder {
         Ok(())
     }
 
-    /// Sets the currently known tokens which to be considered during decoding.
+    /// Sets the initial token map used for startup snapshot decoding.
     ///
-    /// Protocol components containing tokens which are not included in this initial list, or
-    /// added when applying deltas, will not be decoded.
+    /// This is not an RFQ stream token filter. Components/snapshots received after startup
+    /// can still be decoded from streamed token metadata.
+    /// Filtering by token, when needed, is typically done in the consumer.
     pub async fn set_tokens(self, tokens: HashMap<Bytes, Token>) -> Self {
         self.decoder.set_tokens(tokens).await;
         self
