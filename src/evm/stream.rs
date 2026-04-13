@@ -64,6 +64,7 @@
 //! use futures::StreamExt;
 //! use tycho_client::feed::component_tracker::ComponentFilter;
 //! use tycho_simulation::evm::protocol::uniswap_v2::state::UniswapV2State;
+//! use std::collections::HashSet;
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -86,6 +87,7 @@
 //!             .exchange::<UniswapV2State>(
 //!                 "uniswap_v2", ComponentFilter::with_tvl_range(5.0, 10.0), None
 //!             )
+//!             .blocklist_components(HashSet::new())
 //!             .set_tokens(all_tokens)
 //!             .await
 //!             .build()
@@ -98,7 +100,11 @@
 //!     }
 //! }
 //! ```
-use std::{collections::HashMap, sync::Arc, time};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time,
+};
 
 use futures::{Stream, StreamExt};
 use tokio_stream::wrappers::ReceiverStream;
@@ -362,6 +368,15 @@ impl ProtocolStreamBuilder {
         self
     }
 
+    /// Exclude specific component IDs from all registered exchanges.
+    pub fn blocklist_components(mut self, ids: HashSet<String>) -> Self {
+        if !ids.is_empty() {
+            tracing::info!("Blocklisting {} components", ids.len());
+            self.stream_builder = self.stream_builder.blocklisted_ids(ids);
+        }
+        self
+    }
+
     /// Sets the stream end policy.
     ///
     /// Controls when the stream should stop based on synchronizer states.
@@ -392,6 +407,15 @@ impl ProtocolStreamBuilder {
     pub fn skip_state_decode_failures(mut self, skip: bool) -> Self {
         self.decoder
             .skip_state_decode_failures(skip);
+        self
+    }
+
+    /// Sets the minimum token quality for tokens added via the stream.
+    ///
+    /// Tokens arriving in stream deltas below this threshold are ignored. Defaults to 100.
+    /// Set this to the same value used in [`load_all_tokens`] to apply consistent filtering.
+    pub fn min_token_quality(mut self, quality: u32) -> Self {
+        self.decoder.min_token_quality(quality);
         self
     }
 

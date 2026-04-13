@@ -1,4 +1,8 @@
-use std::collections::HashMap;
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::Path,
+};
 
 use tracing::info;
 use tycho_client::{
@@ -122,6 +126,45 @@ pub fn get_default_url(chain: &Chain) -> Option<String> {
         Chain::Unichain => Some("tycho-unichain-beta.propellerheads.xyz".to_string()),
         _ => None,
     }
+}
+
+/// Loads blocklisted component IDs from a TOML file.
+///
+/// If `path` is `Some`, reads from that file and returns an error if
+/// the file is missing or invalid. If `None`, returns the default
+/// blocklist embedded in the library.
+pub fn load_blocklist(path: Option<&Path>) -> Result<HashSet<String>, SimulationError> {
+    let Some(path) = path else {
+        return Ok(default_blocklist());
+    };
+    let contents = fs::read_to_string(path).map_err(|e| {
+        SimulationError::FatalError(format!("Failed to read blocklist {:?}: {e}", path))
+    })?;
+    parse_blocklist(&contents).map_err(|e| {
+        SimulationError::FatalError(format!("Failed to parse blocklist {:?}: {e}", path))
+    })
+}
+
+pub fn default_blocklist() -> HashSet<String> {
+    parse_blocklist(include_str!("../blocklist.toml"))
+        .expect("embedded blocklist.toml is valid TOML")
+}
+
+fn parse_blocklist(contents: &str) -> Result<HashSet<String>, toml::de::Error> {
+    #[derive(Default, serde::Deserialize)]
+    struct Blocklist {
+        #[serde(default)]
+        components: HashSet<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct BlocklistConfig {
+        #[serde(default)]
+        blocklist: Blocklist,
+    }
+
+    let config: BlocklistConfig = toml::from_str(contents)?;
+    Ok(config.blocklist.components)
 }
 
 fn map_rpc_error(err: RPCError, context: &str) -> SimulationError {

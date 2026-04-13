@@ -1,3 +1,27 @@
+## [0.255.0](https://github.com/propeller-heads/tycho-simulation/compare/0.254.0...0.255.0) (2026-04-03)
+
+
+### Features
+
+* add missing components to the blocklist ([5734749](https://github.com/propeller-heads/tycho-simulation/commit/5734749a1900f7ba538693a5e12b09f0db11a03a))
+* embed default blocklist and make custom path optional ([97ec04b](https://github.com/propeller-heads/tycho-simulation/commit/97ec04b30698e74189c481b26a289589798f06c9))
+* expose default blocklist for fynd fallback ([75b61ce](https://github.com/propeller-heads/tycho-simulation/commit/75b61ce67eeac857289977a7d53b428bad99d352))
+
+## [0.254.0](https://github.com/propeller-heads/tycho-simulation/compare/0.253.0...0.254.0) (2026-04-01)
+
+
+### Features
+
+* make min_token_quality configurable on TychoStreamDecoder ([d5015ce](https://github.com/propeller-heads/tycho-simulation/commit/d5015ce6cee2d17164a33cfeeedc82fba7c92dbc))
+
+## [0.253.0](https://github.com/propeller-heads/tycho-simulation/compare/0.252.0...0.253.0) (2026-04-01)
+
+
+### Features
+
+* add blocklisting components ([f574988](https://github.com/propeller-heads/tycho-simulation/commit/f5749889ac8e1e267872e745a301b10853502ccf))
+* add cli arg for blocklist-config ([3482023](https://github.com/propeller-heads/tycho-simulation/commit/34820232bba343092b4434b7069dad1cee36056a))
+
 ## [0.252.0](https://github.com/propeller-heads/tycho-simulation/compare/0.251.1...0.252.0) (2026-03-26)
 
 
