@@ -39,9 +39,13 @@
 //! Select which protocols to synchronize.
 //!
 //! ### Tokens & Minimum Token Quality
-//! Provide an initial set of tokens of interest. The first message includes only
-//! components whose tokens match this set. The stream adds new tokens automatically
-//! when a component is deployed and its quality exceeds `min_token_quality`.
+//! Provide an initial token map used to decode startup snapshots.
+//! This is **not** a live stream filter. New snapshots/components streamed after startup
+//! carry their own token payload and can still be decoded and emitted.
+//! Filtering by token pair, when needed, happens in the stream consumer.
+//!
+//! The stream can still add tokens automatically when a component is deployed and its
+//! quality exceeds `min_token_quality`.
 //!
 //! ### StreamEndPolicy
 //! Control when the stream ends based on worker states. By default, it ends when all
@@ -391,10 +395,13 @@ impl ProtocolStreamBuilder {
         self
     }
 
-    /// Sets the initial tokens to consider during decoding.
+    /// Sets the initial token map used for startup snapshot decoding.
     ///
-    /// Only components containing these tokens will be decoded initially.
-    /// New tokens may be added automatically if they meet the quality threshold.
+    /// This does not filter future streamed components by token.
+    /// Components/snapshots that arrive later include the token data required for decoding.
+    /// Token filtering, when needed, is handled on the consumer side.
+    ///
+    /// New tokens may still be added automatically if they meet the quality threshold.
     pub async fn set_tokens(self, tokens: HashMap<Bytes, Token>) -> Self {
         self.decoder.set_tokens(tokens).await;
         self
