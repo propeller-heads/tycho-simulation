@@ -1,3 +1,10 @@
+## [0.255.1](https://github.com/propeller-heads/tycho-simulation/compare/0.255.0...0.255.1) (2026-04-13)
+
+
+### Bug Fixes
+
+* provide all price levels for the component ([e8a1233](https://github.com/propeller-heads/tycho-simulation/commit/e8a12338c016c33654304caf82102d02a9be10b9))
+
 ## [0.255.0](https://github.com/propeller-heads/tycho-simulation/compare/0.254.0...0.255.0) (2026-04-03)
 
 
