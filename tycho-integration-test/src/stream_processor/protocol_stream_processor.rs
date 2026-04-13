@@ -291,6 +291,13 @@ impl ProtocolStreamProcessor {
             "cowamm" => {
                 stream = stream.exchange::<CowAMMState>("cowamm", tvl_filter.clone(), None);
             }
+            "vm:liquidityparty" => {
+                stream = stream.exchange::<EVMPoolState<PreCachedDB>>(
+                    "vm:liquidityparty",
+                    tvl_filter.clone(),
+                    None,
+                );
+            }
             _ => {
                 return Err(miette::miette!("Unknown protocol: {}", protocol));
             }
