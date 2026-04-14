@@ -17,11 +17,11 @@ assignees: ''
 
 *Don't forget to mention any design choices that ended up shaping these interfaces.*
 
-Technical Details
+## Technical Details
 
 *This is the place for all the technical details we need to make the solution work. Please add a quick bullet-pointed overview of each task here.*
 
-Dialogue / Q&A
+## Dialogue / Q&A
 
 *Maintain a brief summary of discussions and decisions you made either independently or collaboratively. This can often be effectively done using a question-and-answer format. 
 You can also link conversations here, ideally provide a summary if they are very long.*
