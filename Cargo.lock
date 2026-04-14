@@ -7300,36 +7300,9 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber 0.3.20",
- "tycho-common 0.157.3",
+ "tycho-common",
  "uuid",
  "zstd",
-]
-
-[[package]]
-name = "tycho-common"
-version = "0.146.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f0aefa9705f10521e9d4d5681e373472ec8045584b00e15ebedacd94010e6c5"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "chrono",
- "deepsize",
- "hex",
- "itertools 0.10.5",
- "num-bigint",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "strum 0.25.0",
- "strum_macros 0.25.3",
- "thiserror 1.0.69",
- "tiny-keccak",
- "tracing",
- "typetag",
- "utoipa",
- "uuid",
 ]
 
 [[package]]
@@ -7377,15 +7350,15 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
- "tycho-common 0.157.3",
+ "tycho-common",
  "unicode-segmentation",
 ]
 
 [[package]]
 name = "tycho-execution"
-version = "0.165.0"
+version = "0.165.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89406dc3ce6e8b851ad8ca9794070e236cee4378d110a89470eda067a6056ded"
+checksum = "2e6a51bf94daa33f83a46b09881a03e0c06554df630af92e9956d21d3bcb863f"
 dependencies = [
  "alloy",
  "chrono",
@@ -7399,7 +7372,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
- "tycho-common 0.146.0",
+ "tycho-common",
 ]
 
 [[package]]
@@ -7420,7 +7393,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
- "tycho-common 0.157.3",
+ "tycho-common",
 ]
 
 [[package]]
@@ -7443,7 +7416,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.20",
  "tycho-client",
- "tycho-common 0.157.3",
+ "tycho-common",
  "tycho-simulation",
  "tycho-test",
 ]
@@ -7496,9 +7469,9 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.20",
  "tycho-client",
- "tycho-common 0.157.3",
+ "tycho-common",
  "tycho-ethereum",
- "tycho-execution 0.165.0",
+ "tycho-execution 0.165.1",
  "tycho-test",
  "typetag",
  "uuid",
@@ -7522,7 +7495,7 @@ dependencies = [
  "tokio",
  "tokio-retry2",
  "tracing",
- "tycho-common 0.157.3",
+ "tycho-common",
  "tycho-ethereum",
  "tycho-execution 0.175.0",
  "tycho-simulation",
