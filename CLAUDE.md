@@ -36,7 +36,7 @@ Off-chain DeFi protocol simulation library. Computes swap outputs, spot prices, 
   - **Native**: Pure Rust math (`uniswap_v2`, `uniswap_v3`, `uniswap_v4`, `ekubo`, `cowamm`, `fluid`, etc.)
   - **VM** (`vm/`): Generic Solidity adapter executed in `revm` for protocols without native impls
   - Shared: `cpmm.rs`, `clmm.rs`, `safe_math.rs`, `u256_num.rs`
-- **`rfq/`**: RFQ client for off-chain market makers (Bebop, Hashflow)
+- **`rfq/`**: RFQ client for off-chain market makers
 
 ### Simulation Approaches (order of preference)
 1. **Native**: Pure Rust protocol math (fastest)
