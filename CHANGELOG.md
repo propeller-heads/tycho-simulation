@@ -1,3 +1,10 @@
+## [0.256.0](https://github.com/propeller-heads/tycho-simulation/compare/0.255.2...0.256.0) (2026-04-14)
+
+
+### Features
+
+* **integration-test:** add --partial-blocks flag to opt in to flashblock stream updates ([243fbe5](https://github.com/propeller-heads/tycho-simulation/commit/243fbe5b893e95aa640dc7420f6a4f900901ea04))
+
 ## [0.255.2](https://github.com/propeller-heads/tycho-simulation/compare/0.255.1...0.255.2) (2026-04-14)
 
 ## [0.255.1](https://github.com/propeller-heads/tycho-simulation/compare/0.255.0...0.255.1) (2026-04-13)
