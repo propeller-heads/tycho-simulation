@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "_tycho_simulation_py"
-version = "0.255.1"
+version = "0.256.0"
 dependencies = [
  "alloy",
  "num-bigint",
@@ -639,7 +639,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "auto_impl",
- "dashmap 6.1.0",
+ "dashmap",
  "either",
  "futures 0.3.31",
  "futures-utils-wasm",
@@ -2036,12 +2036,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7575182f7272186991736b70173b0ea045398f984bf5ebbb3804736ce1330c9d"
 
 [[package]]
-name = "bytecount"
-version = "0.6.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "175812e0be2bccb6abe50bb8d566126198344f707e304f45c648fd8f2cc0365e"
-
-[[package]]
 name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2088,37 +2082,6 @@ dependencies = [
  "libc",
  "once_cell",
  "serde",
-]
-
-[[package]]
-name = "camino"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "276a59bf2b2c967788139340c9f0c5b12d7fd6630315c15c217e559de85d2609"
-dependencies = [
- "serde_core",
-]
-
-[[package]]
-name = "cargo-platform"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e35af189006b9c0f00a064685c727031e3ed2d8020f7ba284d78cc2671bd36ea"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "cargo_metadata"
-version = "0.14.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4acbb09d9ee8e23699b9634375c72795d095bf268439da88562cf9b501f181fa"
-dependencies = [
- "camino",
- "cargo-platform",
- "semver 1.0.27",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -2592,19 +2555,6 @@ dependencies = [
 
 [[package]]
 name = "dashmap"
-version = "5.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
-dependencies = [
- "cfg-if",
- "hashbrown 0.14.5",
- "lock_api",
- "once_cell",
- "parking_lot_core",
-]
-
-[[package]]
-name = "dashmap"
 version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
@@ -2832,9 +2782,9 @@ dependencies = [
 
 [[package]]
 name = "ekubo_sdk"
-version = "3.1.0"
+version = "3.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38c6060c1b24be171c1cf100bc2cd16bc8b16ebc29c7ef786d5fb9519e34dff5"
+checksum = "5aa1080f5ab48d30a0221e764e51bb7de756251834b639fa1bbd187a60c04608"
 dependencies = [
  "alloy-primitives 0.6.4",
  "alloy-primitives 1.5.0",
@@ -2951,15 +2901,6 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "error-chain"
-version = "0.12.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d2f06b9cac1506ece98fe3231e3cc9c4410ec3d5b1f24ae1c8946f0742cdefc"
-dependencies = [
- "version_check",
 ]
 
 [[package]]
@@ -4196,9 +4137,9 @@ dependencies = [
 
 [[package]]
 name = "lru"
-version = "0.16.3"
+version = "0.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1dc47f592c06f33f8e3aea9591776ec7c9f9e4124778ff8a3c3b87159f7e593"
+checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
 dependencies = [
  "hashbrown 0.16.0",
 ]
@@ -4342,21 +4283,6 @@ checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
 dependencies = [
  "mime",
  "unicase",
-]
-
-[[package]]
-name = "mini-moka"
-version = "0.10.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c325dfab65f261f386debee8b0969da215b3fa0037e74c8a1234db7ba986d803"
-dependencies = [
- "crossbeam-channel",
- "crossbeam-utils",
- "dashmap 5.5.3",
- "skeptic",
- "smallvec",
- "tagptr",
- "triomphe",
 ]
 
 [[package]]
@@ -5104,17 +5030,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9b4db3d6da204ed77bb26ba83b6122a73aeb2e87e25fbf7ad2e84c4ccbf8f72"
 dependencies = [
  "prost 0.14.1",
-]
-
-[[package]]
-name = "pulldown-cmark"
-version = "0.9.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57206b407293d2bcd3af849ce869d52068623f19e1b5ff8e8778e3309439682b"
-dependencies = [
- "bitflags 2.9.4",
- "memchr",
- "unicase",
 ]
 
 [[package]]
@@ -6146,15 +6061,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
 
 [[package]]
-name = "same-file"
-version = "1.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
-dependencies = [
- "winapi-util",
-]
-
-[[package]]
 name = "schannel"
 version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6312,10 +6218,6 @@ name = "semver"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
-dependencies = [
- "serde",
- "serde_core",
-]
 
 [[package]]
 name = "semver-parser"
@@ -6498,9 +6400,9 @@ dependencies = [
 
 [[package]]
 name = "shell-words"
-version = "1.1.0"
+version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24188a676b6ae68c3b2cb3a01be17fbf7240ce009799bb56d5b1409051e78fde"
+checksum = "dc6fe69c597f9c37bfeeeeeb33da3530379845f10be461a66d16d03eca2ded77"
 
 [[package]]
 name = "shlex"
@@ -6571,21 +6473,6 @@ name = "siphasher"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
-
-[[package]]
-name = "skeptic"
-version = "0.13.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16d23b015676c90a0f01c197bfdc786c20342c73a0afdda9025adb0bc42940a8"
-dependencies = [
- "bytecount",
- "cargo_metadata",
- "error-chain",
- "glob",
- "pulldown-cmark",
- "tempfile",
- "walkdir",
-]
 
 [[package]]
 name = "sketches-ddsketch"
@@ -6815,12 +6702,6 @@ dependencies = [
  "core-foundation-sys",
  "libc",
 ]
-
-[[package]]
-name = "tagptr"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
 
 [[package]]
 name = "tap"
@@ -7351,12 +7232,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "triomphe"
-version = "0.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd69c5aa8f924c7519d6372789a74eac5b94fb0f8fcf0d4a97eb0bfc3e785f39"
-
-[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7402,9 +7277,9 @@ dependencies = [
 
 [[package]]
 name = "tycho-client"
-version = "0.153.0"
+version = "0.157.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93ba71c393d7236d79055c72c0d6101822a0a64487ede90cb9b023ebaaa05af3"
+checksum = "472be430f437a97a814a86ff58e3b9b825330173bee5a2155fb12e7852bc9c4f"
 dependencies = [
  "async-trait",
  "backoff",
@@ -7413,7 +7288,7 @@ dependencies = [
  "futures 0.3.31",
  "hex",
  "hyper 0.14.32",
- "lru 0.16.3",
+ "lru 0.16.4",
  "reqwest",
  "serde",
  "serde_json",
@@ -7432,9 +7307,9 @@ dependencies = [
 
 [[package]]
 name = "tycho-common"
-version = "0.153.0"
+version = "0.157.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11988023320d8623bd339d4239297fbd0a42e0307d9c46a1fd9f6afbf4b7b6c0"
+checksum = "6f13147060d99c15cea6ab5bde4a8fa62ed76bd8c10f7535ca697a0347f3a106"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7459,9 +7334,9 @@ dependencies = [
 
 [[package]]
 name = "tycho-ethereum"
-version = "0.153.0"
+version = "0.157.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1bbf96296aeb6b6739c169be162a5abb2a9f6fc78fe45f6f9b3b0779a8b6092"
+checksum = "10ec65c374dcc95a9630589c8afd9fb50f1d859d79f6495f4c1652fd522a10e6"
 dependencies = [
  "alloy",
  "async-trait",
@@ -7502,9 +7377,9 @@ dependencies = [
 
 [[package]]
 name = "tycho-execution"
-version = "0.171.2"
+version = "0.175.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "427319952aa1fe7665669d20946b29fe5b5c210a4ab2cb534eda29e2ecf5a7cf"
+checksum = "2bb6e6e9f148b7cbb30233f1fb69c14911beda5ffc8ba4f471a1ae27a2265df0"
 dependencies = [
  "alloy",
  "chrono",
@@ -7523,13 +7398,11 @@ dependencies = [
 
 [[package]]
 name = "tycho-integration-test"
-version = "0.255.1"
+version = "0.256.0"
 dependencies = [
  "actix-web",
  "alloy",
- "alloy-chains",
  "clap",
- "colored",
  "dotenv",
  "futures 0.3.31",
  "itertools 0.10.5",
@@ -7539,8 +7412,6 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "rand 0.9.2",
- "serde",
- "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.20",
@@ -7552,7 +7423,7 @@ dependencies = [
 
 [[package]]
 name = "tycho-simulation"
-version = "0.255.1"
+version = "0.256.0"
 dependencies = [
  "alloy",
  "alloy-chains",
@@ -7574,8 +7445,6 @@ dependencies = [
  "hex-literal",
  "http 1.3.1",
  "itertools 0.10.5",
- "lazy_static",
- "mini-moka",
  "mockall",
  "num-bigint",
  "num-traits",
@@ -7591,7 +7460,6 @@ dependencies = [
  "serde_json",
  "strum 0.25.0",
  "strum_macros 0.25.3",
- "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
@@ -7599,7 +7467,6 @@ dependencies = [
  "tokio-tungstenite 0.28.0",
  "toml",
  "tracing",
- "tracing-appender",
  "tracing-subscriber 0.3.20",
  "tycho-client",
  "tycho-common",
@@ -7607,39 +7474,30 @@ dependencies = [
  "tycho-execution 0.165.1",
  "tycho-test",
  "typetag",
- "unicode-width 0.1.14",
  "uuid",
 ]
 
 [[package]]
 name = "tycho-test"
-version = "0.255.1"
+version = "0.256.0"
 dependencies = [
  "alloy",
  "alloy-chains",
  "alloy-rpc-types-trace",
  "async-trait",
  "colored",
- "dotenv",
- "futures 0.3.31",
  "hex",
- "itertools 0.10.5",
- "lru 0.16.3",
  "miette",
  "num-bigint",
- "num-traits",
- "rand 0.9.2",
  "regex",
  "serde",
  "serde_json",
  "tokio",
  "tokio-retry2",
  "tracing",
- "tracing-subscriber 0.3.20",
- "tycho-client",
  "tycho-common",
  "tycho-ethereum",
- "tycho-execution 0.171.2",
+ "tycho-execution 0.175.0",
  "tycho-simulation",
  "urlencoding",
 ]
@@ -7894,16 +7752,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "walkdir"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
-dependencies = [
- "same-file",
- "winapi-util",
-]
-
-[[package]]
 name = "want"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8079,15 +7927,6 @@ name = "winapi-i686-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
-
-[[package]]
-name = "winapi-util"
-version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
-dependencies = [
- "windows-sys 0.61.2",
-]
 
 [[package]]
 name = "winapi-x86_64-pc-windows-gnu"
