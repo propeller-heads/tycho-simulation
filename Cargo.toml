@@ -43,9 +43,9 @@ hex = "0.4.3"
 async-trait = "0.1.88"
 
 # Tycho dependencies
-tycho-client = ">=0.147.1"
-tycho-common = ">=0.147.1"
-tycho-ethereum = ">=0.147.1"
+tycho-client = ">=0.158.0"
+tycho-common = ">=0.158.0"
+tycho-ethereum = ">=0.158.0"
 tycho-execution = "=0.165.1" # pinned until router v3 audit is complete
 
 # EVM dependencies
