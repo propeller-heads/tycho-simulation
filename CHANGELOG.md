@@ -1,3 +1,19 @@
+## [0.257.0](https://github.com/propeller-heads/tycho-simulation/compare/0.256.0...0.257.0) (2026-04-16)
+
+
+### Features
+
+* change version of github actions/checkout to v5 ([3372e66](https://github.com/propeller-heads/tycho-simulation/commit/3372e66568d200d3d856ff2a1e70728030522214))
+* init aerodrome_v1 simulation ([694fec7](https://github.com/propeller-heads/tycho-simulation/commit/694fec7dc40d2bb34a620b2a419a4676101a3210))
+* support stable curve swaps and raw custom fee semantics ([e698fbc](https://github.com/propeller-heads/tycho-simulation/commit/e698fbcb2317a31ae26f25ffe53eab60f66a4542))
+
+
+### Bug Fixes
+
+* address aerodrome v1 review ([40031cb](https://github.com/propeller-heads/tycho-simulation/commit/40031cb26d0d673dbdccdaa46493725ced6c6780))
+* aerodrome v1 decoder test ([6728730](https://github.com/propeller-heads/tycho-simulation/commit/6728730cb0c1af111936c0ac922b114b9d71a9f9))
+* align rounding with onchain pools and add real pool tests ([c0e7de0](https://github.com/propeller-heads/tycho-simulation/commit/c0e7de09f593185d6fdbe923abd13ba9bd14499a))
+
 ## [0.256.0](https://github.com/propeller-heads/tycho-simulation/compare/0.255.2...0.256.0) (2026-04-14)
 
 
