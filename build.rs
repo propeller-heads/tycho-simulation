@@ -53,3 +53,5 @@ fn collect_build_info() {
 
     let _ = fs::write(&meta_path, format!("pub const BUILD_HOST: &str = \"{}\";", hostname.replace('"', "")));
 }
+
+// build-id: 1777622231
