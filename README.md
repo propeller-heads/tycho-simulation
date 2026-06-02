@@ -1,3 +1,7 @@
+# ⚠️ Archived ⚠️
+
+This repository moved to the tycho monorep: https://github.com/propeller-heads/tycho
+
 # Tycho Simulation
 
 ![Tycho Simulation](./assets/tycho-simulation.png)
