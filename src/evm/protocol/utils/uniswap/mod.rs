@@ -39,6 +39,20 @@ pub(crate) struct SwapResults {
     pub(crate) gas_used: U256,
 }
 
+/// Result of a swap-to-trade-price calculation for CLMMs (UniswapV3/V4).
+///
+/// This struct contains the amounts needed to achieve a target trade price,
+/// along with the resulting pool state after the swap.
+#[derive(Debug, Default)]
+pub(crate) struct SwapToTradePriceResult {
+    /// Amount of input token required (with fees included)
+    pub(crate) amount_in: U256,
+    /// Amount of output token received
+    pub(crate) amount_out: U256,
+    /// The resulting pool state after the swap
+    pub(crate) swap_state: SwapResults,
+}
+
 /// Converts a slice of bytes representing a big-endian 24-bit signed integer
 /// to a 32-bit signed integer.
 ///
