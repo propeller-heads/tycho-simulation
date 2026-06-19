@@ -27,32 +27,43 @@ use crate::evm::protocol::{
     utils::add_fee_markup,
 };
 
-const UNISWAP_V2_FEE_BPS: u32 = 30; // 0.3% fee
 const FEE_PRECISION: U256 = U256::from_limbs([10000, 0, 0, 0]);
-const FEE_NUMERATOR: U256 = U256::from_limbs([9970, 0, 0, 0]);
+const DEFAULT_FEE_BPS: u32 = 30;
+
+fn default_fee_bps() -> u32 {
+    DEFAULT_FEE_BPS
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UniswapV2State {
     pub reserve0: U256,
     pub reserve1: U256,
+    #[serde(default = "default_fee_bps")]
+    pub fee_bps: u32,
 }
 
 impl UniswapV2State {
-    /// Creates a new instance of `UniswapV2State` with the given reserves.
-    ///
-    /// # Arguments
-    ///
-    /// * `reserve0` - Reserve of token 0.
-    /// * `reserve1` - Reserve of token 1.
     pub fn new(reserve0: U256, reserve1: U256) -> Self {
-        UniswapV2State { reserve0, reserve1 }
+        UniswapV2State { reserve0, reserve1, fee_bps: DEFAULT_FEE_BPS }
+    }
+
+    pub fn new_with_fee(reserve0: U256, reserve1: U256, fee_bps: u32) -> Self {
+        assert!(
+            fee_bps <= 10000,
+            "fee_bps must be <= 10000 (100%), got {fee_bps}"
+        );
+        UniswapV2State { reserve0, reserve1, fee_bps }
+    }
+
+    fn fee_numerator(&self) -> U256 {
+        U256::from(10000 - self.fee_bps)
     }
 }
 
 #[typetag::serde]
 impl ProtocolSim for UniswapV2State {
     fn fee(&self) -> f64 {
-        cpmm_fee(UNISWAP_V2_FEE_BPS)
+        cpmm_fee(self.fee_bps)
     }
 
     fn spot_price(&self, base: &Token, quote: &Token) -> Result<f64, SimulationError> {
@@ -70,7 +81,7 @@ impl ProtocolSim for UniswapV2State {
         let zero2one = token_in.address < token_out.address;
         let (reserve_in, reserve_out) =
             if zero2one { (self.reserve0, self.reserve1) } else { (self.reserve1, self.reserve0) };
-        let fee = ProtocolFee::new(FEE_NUMERATOR, FEE_PRECISION);
+        let fee = ProtocolFee::new(self.fee_numerator(), FEE_PRECISION);
         let amount_out = cpmm_get_amount_out(amount_in, reserve_in, reserve_out, fee)?;
         let mut new_state = self.clone();
         let (reserve0_mut, reserve1_mut) = (&mut new_state.reserve0, &mut new_state.reserve1);
@@ -93,7 +104,7 @@ impl ProtocolSim for UniswapV2State {
         sell_token: Bytes,
         buy_token: Bytes,
     ) -> Result<(BigUint, BigUint), SimulationError> {
-        cpmm_get_limits(sell_token, buy_token, self.reserve0, self.reserve1, UNISWAP_V2_FEE_BPS)
+        cpmm_get_limits(sell_token, buy_token, self.reserve0, self.reserve1, self.fee_bps)
     }
 
     fn delta_transition(
@@ -121,7 +132,7 @@ impl ProtocolSim for UniswapV2State {
                     (self.reserve1, self.reserve0)
                 };
 
-                let fee = ProtocolFee::new(FEE_NUMERATOR, FEE_PRECISION);
+                let fee = ProtocolFee::new(self.fee_numerator(), FEE_PRECISION);
                 let (amount_in, _) = cpmm_swap_to_price(reserve_in, reserve_out, price, fee)?;
                 if amount_in.is_zero() {
                     return Ok(PoolSwap::new(
@@ -277,6 +288,36 @@ mod tests {
         // Assert that the old state is unchanged
         assert_eq!(state.reserve0, r0);
         assert_eq!(state.reserve1, r1);
+    }
+
+    #[test]
+    #[should_panic(expected = "fee_bps must be <= 10000")]
+    fn test_new_with_fee_exceeds_max() {
+        UniswapV2State::new_with_fee(U256::from(1000u32), U256::from(1000u32), 10001);
+    }
+
+    #[test]
+    fn test_new_with_fee_zero() {
+        let state = UniswapV2State::new_with_fee(
+            U256::from(1000u32),
+            U256::from(1000u32),
+            0,
+        );
+        assert_eq!(state.fee_bps, 0);
+        // fee_numerator should be 10000 (no fee deducted)
+        assert_eq!(state.fee_numerator(), U256::from(10000u32));
+    }
+
+    #[test]
+    fn test_new_with_fee_boundary() {
+        let state = UniswapV2State::new_with_fee(
+            U256::from(1000u32),
+            U256::from(1000u32),
+            10000,
+        );
+        assert_eq!(state.fee_bps, 10000);
+        // fee_numerator should be 0 (100% fee)
+        assert_eq!(state.fee_numerator(), U256::from(0u32));
     }
 
     #[test]
@@ -533,8 +574,8 @@ mod tests {
         let token_out = token_1();
 
         // Calculate spot price with fee (token_out/token_in):
-        // Marginal price = (FEE_NUMERATOR * reserve_out) / (FEE_PRECISION * reserve_in)
-        let spot_price_num = U256::from(1_000_000u32) * FEE_NUMERATOR;
+        // Marginal price = (fee_numerator * reserve_out) / (FEE_PRECISION * reserve_in)
+        let spot_price_num = U256::from(1_000_000u32) * state.fee_numerator();
         let spot_price_den = U256::from(2_000_000u32) * FEE_PRECISION;
 
         let target_price =
@@ -574,10 +615,11 @@ mod tests {
         let token_out = token_1();
 
         // Calculate spot price with fee and subtract small amount to move slightly below
-        // Current spot (token_out/token_in with fees): (FEE_NUMERATOR * reserve_out) /
+        // Current spot (token_out/token_in with fees): (fee_numerator * reserve_out) /
         // (FEE_PRECISION * reserve_in) Target: slightly below current spot (multiply numerator by
         // 99999/100000)
-        let spot_price_num = U256::from(1_000_000u32) * FEE_NUMERATOR * U256::from(99_999u32);
+        let spot_price_num =
+            U256::from(1_000_000u32) * state.fee_numerator() * U256::from(99_999u32);
         let spot_price_den = U256::from(2_000_000u32) * FEE_PRECISION * U256::from(100_000u32);
 
         let target_price =
